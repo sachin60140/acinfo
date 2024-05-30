@@ -57,11 +57,9 @@
                                 <td>{{ $items->id }}</td>
                                 <td>{{ $items->client_name }}</td>
                                 <td>{{ $items->particular }}</td>
-                                <td>{{ $items->txn_date }}</td>
+                                <td>{{ date('d-M-Y', strtotime($items->txn_date))  }}</td>
                                 <td>{{ $items->payment_type }}</td>
                                 <td>{{ $items->amount }}</td>
-                                
-                                
                                 <td>
                                     @php
                                         $tot = $bal += $items->amount;
@@ -108,7 +106,7 @@
         "pageLength": 50,
         order: 
             [
-                [3, 'desc']
+                [0, 'desc']
             ]
     } );
 } );

@@ -18,7 +18,6 @@ class ClientLedgerModel extends Model
                     ->join('client','client.id', 'client_ledger.client_id')
                     ->join('payment_type','payment_type.id', 'client_ledger.payment_by')
                     ->where('client_id', $id)
-                    ->orderBy('txn_date', 'asc')
                     ->get();
                     return $return;
     }
