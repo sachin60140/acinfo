@@ -29,8 +29,5 @@ Route::group(['middleware'=>'admin'],function()
     Route::match(["get","post"],'admin/payment',[AuthController::class, 'payment'])->name('payment');
 
     Route::get('admin/client/statement/{id}',[AuthController::class, 'clientstatement'])->name('clientstatement');
-
-    
-
-      
+ 
 });

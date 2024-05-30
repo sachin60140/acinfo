@@ -66,8 +66,8 @@
                             @csrf
                             <div class="col-md-12">
                                 <label for="empname" class="form-label">Name </label>
-                                <select class="form-select" name="client_name" id="client_name">
-                                    <option value="" selected>Select Client Ledger...</option>
+                                <select class="form-select" name="client_name" id="client_name" autofocus>
+                                    <option value="" selected >Select Client Ledger...</option>
                                     @foreach ($clientlist as $clients )
 
                                     <option {{old('client_name')==$clients->id ? 'selected' : ''}} value="{{ $clients->id }}">{{ $clients->name }}</option>
