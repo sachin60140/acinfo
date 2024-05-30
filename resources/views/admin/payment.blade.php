@@ -95,7 +95,7 @@
                             <div class="col-md-12">
                                 <label for="amount" class="form-label">Amount</label>
                                 <span class="text-danger" id="amount"></span>
-                                <input type="number" min="0.00" max="500000.00" step="100.00" class="form-control" name="amount" value="{{ old('amount') }}">
+                                <input type="number" min="0.00" max="500000.00" step="any" class="form-control" name="amount" value="{{ old('amount') }}">
                             </div>
 
                             <div class="col-md-12">
