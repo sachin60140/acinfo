@@ -17,8 +17,8 @@
         <nav>
             <ol class="breadcrumb">
                 <li class="breadcrumb-item"><a href="{{ url('admin/dashboard') }}">Home</a></li>
-                <li class="breadcrumb-item">Jobs</li>
-                <li class="breadcrumb-item active">View Job Status</li>
+                <li class="breadcrumb-item">Clinets</li>
+                
             </ol>
         </nav>
     </div><!-- End Page Title -->
@@ -32,7 +32,7 @@
                         {{-- <h5 class="card-title"><a href="{{url("admin/employee/generate-pdf")}}" target="_blank" > click me to pdf </a></h5> --}}
 
                         <!-- Table with stripped rows -->
-                        <table class="table display" id="example" style="font-size: 13px;">
+                        <table class="table display" id="example">
                             <thead>
                                 <tr>
                                     <th scope="col">#</th>
@@ -52,22 +52,17 @@
                                         <td>{{ $items->mobile }}</td>
                                         <td style="text-align: right">
                                             @php
-
                                                 $total = DB::table('client_ledger')
                                                     ->where('client_id', $items->id)
                                                     ->sum('amount');
-
                                                 //echo round($total,2 );
                                                 echo number_format((float) $total, 2, '.', '');
                                             @endphp
                                         </td>
-
                                         <td>
                                             <a href="{{ url('admin/client/statement/' . $items->id) }}"
-                                                class="btn btn-link float-end " target="_blank">Statement</a>
+                                                class="link-primary float-end " target="_blank">Statement</a>
                                         </td>
-
-
                                     </tr>
                                 @endforeach
 
