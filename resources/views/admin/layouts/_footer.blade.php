@@ -1,10 +1,10 @@
 <footer id="footer" class="footer">
     <div class="copyright">
-      &copy; Copyright <strong><span>Awani Enterprises</span></strong>. All Rights Reserved
+      &copy; Copyright <strong><span>Ac Info</span></strong>. All Rights Reserved
     </div>
     <div class="credits">
       
-      Designed by <a href="https://sarsinfotech.com">Sars Infotech Pvt Ltd</a>
+      Designed by <a href="https://sarsinfotech.com" target="_blank">Sars Infotech Pvt Ltd</a>
     </div>
   </footer><!-- End Footer -->
 

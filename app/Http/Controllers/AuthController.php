@@ -51,7 +51,9 @@ class AuthController extends Controller
     }
     public function dashboard()
     {
-        return view('admin.dashboard');
+        $data['totaldues'] = DB::table('client_ledger')->sum('amount');
+
+        return view('admin.dashboard',$data);
     }
 
     public function client(Request $req)

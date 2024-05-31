@@ -22,8 +22,8 @@
         <nav>
             <ol class="breadcrumb">
                 <li class="breadcrumb-item"><a href="{{ url('admin/dashboard') }}">Home</a></li>
-                <li class="breadcrumb-item active">Admin</li>
-                <li class="breadcrumb-item active">Add Job</li>
+                <li class="breadcrumb-item active">Payment</li>
+                
             </ol>
         </nav>
     </div><!-- End Page Title -->
@@ -58,14 +58,14 @@
                     @endif
                 </div>
                 <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title text-danger">Payment Entry</h5>
+                    <div class="card-body bg-danger bg-opacity-75">
+                        <h5 class="card-title text-white text-center"><strong>Payment Entry</strong></h5>
         
                         <!-- Multi Columns Form -->
                         <form class="row g-3" action="{{route('payment')}}" method="POST">
                             @csrf
                             <div class="col-md-12">
-                                <label for="empname" class="form-label">Name </label>
+                                <label for="empname" class="form-label text-white"><strong>Name</strong> </label>
                                 <select class="form-select" name="client_name" id="client_name" autofocus>
                                     <option value="" selected>Select Client Ledger...</option>
                                     @foreach ($clientlist as $clients )
@@ -78,7 +78,7 @@
                                 </select>
                             </div>
                             <div class="col-md-12">
-                                <label for="paymentMode" class="form-label">Payment Mode</label>
+                                <label for="paymentMode" class="form-label text-white"><strong>Payment Mode</strong></label>
                                 <select class="form-select" name="paymentMode" >
                                     <option value="" selected>Select Payment Mode...</option>
                                     @foreach ($pay_mode as $items )
@@ -87,19 +87,19 @@
                                 </select>
                             </div>
                             <div class="col-md-12">
-                                <label for="amount" class="form-label">Txn Date</label>
+                                <label for="amount" class="form-label text-white"><strong>Txn Date</strong></label>
                                 <span class="text-danger" id="txn_date"></span>
                                 <input type="date" class="form-control" name="txn_date" value="{{ old('txn_date') }}">
                             </div>
                             
                             <div class="col-md-12">
-                                <label for="amount" class="form-label">Amount</label>
+                                <label for="amount" class="form-label text-white"><strong>Amount</strong></label>
                                 <span class="text-danger" id="amount"></span>
                                 <input type="number" min="0.00" max="500000.00" step="any" class="form-control" name="amount" value="{{ old('amount') }}">
                             </div>
 
                             <div class="col-md-12">
-                                <label for="remarks" class="form-label">Remarks</label>
+                                <label for="remarks" class="form-label text-white"><strong>Remarks</strong></label>
                                 <input type="text" class="form-control" name="remarks" value="{{old('remarks')}}" >
                             </div>
 
