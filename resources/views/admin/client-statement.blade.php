@@ -52,6 +52,7 @@
                         @php
                             $bal = 0;
                         @endphp
+
                         @foreach ($getRecords as $items)
                             <tr>
                                 <td>{{ $items->id }}</td>
