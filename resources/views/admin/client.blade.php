@@ -1,6 +1,6 @@
 @extends('admin.layouts.app')
 
-@section('title', 'Add Job | Awani Enterprises')
+@section('title', 'View Clients | Awani Enterprises')
 
 
 @section('style')
@@ -23,7 +23,7 @@
             <ol class="breadcrumb">
                 <li class="breadcrumb-item"><a href="{{ url('admin/dashboard') }}">Home</a></li>
                 <li class="breadcrumb-item active">Admin</li>
-                <li class="breadcrumb-item active">Add Job</li>
+                <li class="breadcrumb-item active">Add Client</li>
             </ol>
         </nav>
     </div><!-- End Page Title -->
@@ -57,7 +57,7 @@
         </div>
         <div class="card">
             <div class="card-body">
-                <h5 class="card-title">Add Job Details Details</h5>
+                <h5 class="card-title">Add Client Ledger</h5>
 
                 <!-- Multi Columns Form -->
                 <form class="row g-3" action="{{route('addclients')}}" method="POST">

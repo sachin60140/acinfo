@@ -1,6 +1,6 @@
 @extends('admin.layouts.app')
 
-@section('title', 'View Jobs | Awani Enterprises')
+@section('title', 'View Ledger | Ac Info')
 
 
 @section('style')

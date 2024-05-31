@@ -104,7 +104,7 @@
         ],
         "pageLength": 50,
 
-        "aaSorting": [ [9,'asc'], [0,'desc'] ],
+        "aaSorting": [ [3,'desc']],
     } );
 } );
     </script>

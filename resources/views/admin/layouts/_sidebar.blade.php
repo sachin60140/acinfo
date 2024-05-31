@@ -11,9 +11,9 @@
       </li><!-- End Dashboard Nav -->
 
       <li class="nav-item">
-        <a class="nav-link collapsed @if(Request::segment(2) == 'addjobs') active @endif" href="{{url('admin/add-clients')}}">
+        <a class="nav-link collapsed @if(Request::segment(2) == 'add-clients') active @endif" href="{{url('admin/add-clients')}}">
           <i class="bi bi-person"></i>
-          <span>Add Client Ledger</span>
+          <span>Add Client Ledger </span>
         </a>
       </li>
       <li class="nav-item">
