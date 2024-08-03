@@ -17,7 +17,7 @@ class AuthController extends Controller
 {
     function pass()
     {
-        dd(Hash::make('Kumar@70042'));
+        dd(Hash::make('ALTPR4242F@99014'));
     }
 
     public function login()
