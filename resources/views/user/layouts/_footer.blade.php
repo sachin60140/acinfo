@@ -4,7 +4,7 @@
     </div>
     <div class="credits">
       
-      Designed by <a href="https://sarsinfotech.com" target="_blank">Sars Infotech Pvt Ltd</a>
+      
     </div>
   </footer><!-- End Footer -->
 

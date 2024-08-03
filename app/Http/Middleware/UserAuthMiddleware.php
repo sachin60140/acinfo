@@ -18,7 +18,7 @@ class UserAuthMiddleware
         if(! session()->has('username'))
         {
             $request->session()->flash('error', 'User Access Not Permitted');
-            return redirect('/employee');
+            return redirect('/user');
         }
         return $next($request);
     }
