@@ -60,11 +60,11 @@
                                 <td>{{ $items->particular }}</td>
                                 <td>{{ date('d-M-Y', strtotime($items->txn_date))  }}</td>
                                 <td>{{ $items->payment_type }}</td>
-                                <td>{{ $items->amount }}</td>
-                                <td>
+                                <td style="text-align: right">{{number_format((float)  $items->amount, 2, '.', '') }}</td>
+                                <td style="text-align: right">
                                     @php
                                         $tot = $bal += $items->amount;
-                                        echo $tot;
+                                        echo number_format((float)$tot, 2, '.', '');
                                     @endphp
 
                                 </td>
