@@ -29,6 +29,13 @@
               <div class="card">
                 <div class="card-body">
                   <h5 class="card-title">Statement : {{ $clientName }}</h5>
+
+                  <p class="mb-3" style="font-size: 14px;">
+                      Closing Balance:
+                      <strong>{{ number_format((float) $getRecords->sum('amount'), 2, '.', ',') }}</strong>
+                      <span class="text-muted">({{ $getRecords->count() }} entries)</span>
+                  </p>
+
                   <!-- Table with stripped rows -->
                   <table class="table display" id="example" style="font-size: 13px;">
                     <thead>
@@ -52,7 +59,7 @@
                                 <td>{{ $items->id }}</td>
                                 <td>{{ $items->client_name }}</td>
                                 <td>{{ $items->particular }}</td>
-                                <td>{{ date('d-M-Y', strtotime($items->txn_date))  }}</td>
+                                <td data-order="{{ $items->txn_date }}">{{ date('d-M-Y', strtotime($items->txn_date))  }}</td>
                                 <td>{{ $items->payment_type }}</td>
                                 <td>{{ $items->amount }}</td>
                                 <td>
@@ -101,10 +108,13 @@
             'pdfHtml5',
         ],
         "pageLength": 50,
-        order: 
-            [
-                [0, 'desc']
-            ]
+        // Keep the order the server sent (oldest transaction first). The Balance
+        // column is a running total accumulated in that order, so re-sorting the
+        // table would leave each balance attached to the wrong row.
+        order: [],
+        columnDefs: [
+            { orderable: false, targets: 6 }
+        ]
     } );
 } );
     </script>
