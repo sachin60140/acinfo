@@ -7,6 +7,11 @@ use Illuminate\Database\Eloquent\Model;
 
 class ClientModel extends Model
 {
-    public $table="client";
+    public $table = 'client';
+
     use HasFactory;
+
+    protected $hidden = [
+        'password',
+    ];
 }

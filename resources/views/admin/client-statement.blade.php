@@ -29,7 +29,7 @@
     
               <div class="card">
                 <div class="card-body">
-                  <h5 class="card-title">Statement : {{ $getRecords['0']['name'] }}</h5>
+                  <h5 class="card-title">Statement : {{ $clientName }}</h5>
                   
                   
                   <!-- Table with stripped rows -->
@@ -53,7 +53,7 @@
                             $bal = 0;
                         @endphp
 
-                        @foreach ($getRecords as $items)
+                        @forelse ($getRecords as $items)
                             <tr>
                                 <td>{{ $items->id }}</td>
                                 <td>{{ $items->client_name }}</td>
@@ -69,10 +69,13 @@
 
                                 </td>
                                 <td>{{ $items->created_at }}</td>
-                        @endforeach
+                            </tr>
+                        @empty
+                            <tr>
+                                <td colspan="8" class="text-center">No ledger entries found.</td>
+                            </tr>
+                        @endforelse
 
-                    </tbody>
-                      
                     </tbody>
                   </table>
                   <!-- End Table with stripped rows -->

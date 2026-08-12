@@ -23,14 +23,14 @@
         </a>
       </li>
       <li class="nav-item">
-        <a class="nav-link collapsed" href="{{route('receipt')}}">
-          <i class="bi bi-person"></i>
-          <span>Reciept</span>
+        <a class="nav-link collapsed @if(Request::segment(2) == 'receipt') active @endif" href="{{route('receipt')}}">
+          <i class="bi bi-receipt"></i>
+          <span>Receipt</span>
         </a>
       </li>
       <li class="nav-item">
-        <a class="nav-link collapsed" href="{{route('payment')}}">
-          <i class="bi bi-person"></i>
+        <a class="nav-link collapsed @if(Request::segment(2) == 'payment') active @endif" href="{{route('payment')}}">
+          <i class="bi bi-cash-coin"></i>
           <span>Payment</span>
         </a>
       </li>

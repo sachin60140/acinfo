@@ -74,6 +74,14 @@
                         <input type="number" class="form-control" id="inputName5" value="{{ old('mobile_number') }}"
                             name="mobile_number" maxlength="10" required>
                     </div>
+                    <div class="col-md-6">
+                        <label for="password" class="form-label">Password <span style="color: red;">*</span></label>
+                        <input type="password" class="form-control" id="password" name="password" minlength="8" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="password_confirmation" class="form-label">Confirm Password <span style="color: red;">*</span></label>
+                        <input type="password" class="form-control" id="password_confirmation" name="password_confirmation" minlength="8" required>
+                    </div>
                     <div class="col-12">
                         <label for="inputAddress2" class="form-label">Address</label>
                         <input type="text" class="form-control" id="address" name="address"

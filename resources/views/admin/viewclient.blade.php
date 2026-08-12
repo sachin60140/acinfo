@@ -23,6 +23,22 @@
         </nav>
     </div><!-- End Page Title -->
     <section class="section dashboard">
+        @if (Session::has('success'))
+            <div class="alert alert-primary bg-primary text-light border-0 alert-dismissible fade show" role="alert">
+                {{ Session::get('success') }}
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"
+                    aria-label="Close"></button>
+            </div>
+        @endif
+
+        @if (Session::has('error'))
+            <div class="alert alert-danger bg-danger text-light border-0 alert-dismissible fade show" role="alert">
+                {{ Session::get('error') }}
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"
+                    aria-label="Close"></button>
+            </div>
+        @endif
+
         <div class="row">
             <div class="col-lg-12">
 
@@ -40,6 +56,7 @@
                                     <th scope="col">Mobile</th>
                                     <th scope="col" style="text-align: right;">Amount</th>
                                     <th scope="col" style="text-align: right;">Statement</th>
+                                    <th scope="col" style="text-align: right;">Password</th>
 
 
                                 </tr>
@@ -62,6 +79,10 @@
                                         <td>
                                             <a href="{{ url('admin/client/statement/' . $items->id) }}"
                                                 class="link-primary float-end " target="_blank">Statement</a>
+                                        </td>
+                                        <td>
+                                            <a href="{{ route('clientpassword', $items->id) }}"
+                                                class="link-primary float-end">Set Password</a>
                                         </td>
                                     </tr>
                                 @endforeach
