@@ -184,11 +184,18 @@ class AuthController extends Controller
         return view($view, $data);
     }
 
-    public function clientstatement($id)
+    public function clientstatement(Request $req, $id)
     {
+        $req->validate([
+            'from' => 'nullable|date_format:Y-m-d',
+            'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
+        ]);
+
         $client = ClientModel::find($id);
+
+        $data = ClientLedgerModel::statement($id, $req->query('from'), $req->query('to'));
         $data['clientName'] = $client ? $client->name : 'Unknown Client';
-        $data['getRecords'] = ClientLedgerModel::getRecord($id);
+        $data['clientId'] = $id;
 
         return view('admin.client-statement', $data);
     }

@@ -72,12 +72,19 @@ class UserController extends Controller
         return view('user.user-dashboard', compact('totalamount'));
     }
 
-    public function userstatement()
+    public function userstatement(Request $req)
     {
+        $req->validate([
+            'from' => 'nullable|date_format:Y-m-d',
+            'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
+        ]);
+
+        // Always the signed-in client's own id — never taken from the request.
         $clientid = session('userid');
         $client = ClientModel::find($clientid);
+
+        $data = ClientLedgerModel::statement($clientid, $req->query('from'), $req->query('to'));
         $data['clientName'] = $client ? $client->name : session('username', 'Client');
-        $data['getRecords'] = ClientLedgerModel::getRecord($clientid);
 
         return view('user.user-statement', $data);
     }
