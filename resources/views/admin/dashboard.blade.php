@@ -24,75 +24,67 @@
             <div class="col-lg-12">
                 <div class="row">
 
-                    <!-- Sales Card -->
+                    <!-- Net outstanding across every client -->
                     <div class="col-xxl-4 col-md-4">
                         <div class="card info-card sales-card">
 
                             <div class="card-body">
-                                <h5 class="card-title">Total Amount <span>| Today</span></h5>
+                                <h5 class="card-title">Net Outstanding <span>| All Clients</span></h5>
 
                                 <div class="d-flex align-items-center">
                                     <div class="card-icon rounded-circle d-flex align-items-center justify-content-center">
                                         <i class="bi bi-currency-rupee"></i>
                                     </div>
                                     <div class="ps-3">
-                                        <h6>{{$totaldues}}</h6>
+                                        <h6>{{ number_format((float) $totaldues, 2, '.', ',') }}</h6>
                                     </div>
                                 </div>
                             </div>
 
                         </div>
-                    </div><!-- End Sales Card -->
+                    </div><!-- End Net Outstanding Card -->
 
-                    <!-- Revenue Card -->
+                    <!-- Net movement in the current month -->
                     <div class="col-xxl-4 col-md-4">
                         <div class="card info-card revenue-card">
 
-            
-
                             <div class="card-body">
-                                <h5 class="card-title">Revenue <span>| This Month</span></h5>
+                                <h5 class="card-title">Net Movement <span>| {{ now()->format('F Y') }}</span></h5>
 
                                 <div class="d-flex align-items-center">
                                     <div class="card-icon rounded-circle d-flex align-items-center justify-content-center">
-                                        <i class="bi bi-currency-dollar"></i>
+                                        <i class="bi bi-currency-rupee"></i>
                                     </div>
                                     <div class="ps-3">
-                                        <h6>$3,264</h6>
-                                        <span class="text-success small pt-1 fw-bold">8%</span> <span
-                                            class="text-muted small pt-2 ps-1">increase</span>
-
+                                        <h6>{{ number_format((float) $monthnet, 2, '.', ',') }}</h6>
                                     </div>
                                 </div>
                             </div>
 
                         </div>
-                    </div><!-- End Revenue Card -->
+                    </div><!-- End Net Movement Card -->
 
-                    <!-- Customers Card -->
-                    <div class="col-xxl-4 col-xl-12">
+                    <!-- Client count -->
+                    <div class="col-xxl-4 col-md-4">
 
                         <div class="card info-card customers-card">
 
                             <div class="card-body">
-                                <h5 class="card-title">Customers <span>| This Year</span></h5>
+                                <h5 class="card-title">Clients <span>| Total</span></h5>
 
                                 <div class="d-flex align-items-center">
                                     <div class="card-icon rounded-circle d-flex align-items-center justify-content-center">
                                         <i class="bi bi-people"></i>
                                     </div>
                                     <div class="ps-3">
-                                        <h6>1244</h6>
-                                        <span class="text-danger small pt-1 fw-bold">12%</span> <span
-                                            class="text-muted small pt-2 ps-1">decrease</span>
-
+                                        <h6>{{ $clientcount }}</h6>
                                     </div>
                                 </div>
 
                             </div>
                         </div>
 
-                    </div><!-- End Customers Card -->
+                    </div><!-- End Clients Card -->
 
             
 

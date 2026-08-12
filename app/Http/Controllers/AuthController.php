@@ -37,16 +37,28 @@ class AuthController extends Controller
 
     public function authlogin(Request $req)
     {
-        if (Auth::attempt(['email' => $req->email, 'password' => $req->password], true)) {
+        $credentials = $req->validate([
+            'email' => 'required|email',
+            'password' => 'required|string',
+        ]);
+
+        if (Auth::attempt($credentials, $req->boolean('remember'))) {
+            $req->session()->regenerate();
+
             return redirect('admin/dashboard');
-        } else {
-            return redirect()->back()->with('error', 'Email or password is incorrect');
         }
+
+        return redirect()->back()->with('error', 'Email or password is incorrect');
     }
 
     public function dashboard()
     {
         $data['totaldues'] = DB::table('client_ledger')->sum('amount');
+        $data['clientcount'] = DB::table('client')->count();
+        $data['monthnet'] = DB::table('client_ledger')
+            ->whereYear('txn_date', now()->year)
+            ->whereMonth('txn_date', now()->month)
+            ->sum('amount');
 
         return view('admin.dashboard', $data);
     }
@@ -71,7 +83,7 @@ class AuthController extends Controller
             $ClientModel->save();
             $lastid = $ClientModel->id;
 
-            return back()->with('success', ' Client Ledger Created Successfully: '.$lastid);
+            return back()->with('success', 'Client created successfully. Client ID: '.$lastid);
         }
 
         return view('admin.client');
@@ -79,9 +91,22 @@ class AuthController extends Controller
 
     public function viewclient()
     {
-        $data = DB::table('client')->get();
+        $data = $this->clientsWithBalance();
 
         return view('admin.viewclient', compact('data'));
+    }
+
+    /**
+     * Every client with their current ledger balance, in one query.
+     */
+    private function clientsWithBalance()
+    {
+        return DB::table('client')
+            ->leftJoin('client_ledger', 'client_ledger.client_id', '=', 'client.id')
+            ->select('client.id', 'client.name', 'client.mobile', DB::raw('COALESCE(SUM(client_ledger.amount), 0) as current_balance'))
+            ->groupBy('client.id', 'client.name', 'client.mobile')
+            ->orderBy('client.id', 'asc')
+            ->get();
     }
 
     public function clientpassword(Request $req, $id)
@@ -104,49 +129,27 @@ class AuthController extends Controller
 
     public function paymentreceipt(Request $req)
     {
-        if ($req->isMethod('POST')) {
-            $req->validate([
-
-                'client_name' => 'required|integer|exists:client,id',
-                'paymentMode' => 'required|integer|exists:payment_type,id',
-                'txn_date' => 'required|date_format:Y-m-d',
-                'amount' => 'required|numeric|gt:0|max:500000',
-                'remarks' => 'required|string|max:255',
-            ]);
-
-            $ClientLedgerModel = new ClientLedgerModel;
-            $ClientLedgerModel->client_id = $req->client_name;
-            $ClientLedgerModel->payment_by = $req->paymentMode;
-            $ClientLedgerModel->txn_date = $req->txn_date;
-            $ClientLedgerModel->amount = $req->amount;
-            $ClientLedgerModel->particular = $req->remarks;
-
-            $ClientLedgerModel->save();
-            $lastid = $ClientLedgerModel->id;
-
-            return back()->with('success', ' Payment Reciept Successfully txn id is :  '.$lastid);
-        }
-
-        $data['clientlist'] = DB::table('client')
-            ->leftJoin('client_ledger', 'client_ledger.client_id', '=', 'client.id')
-            ->select('client.id', 'client.name', DB::raw('COALESCE(SUM(client_ledger.amount), 0) as current_balance'))
-            ->groupBy('client.id', 'client.name')
-            ->orderBy('client.name', 'asc')
-            ->get();
-
-        $data['pay_mode'] = DB::table('payment_type')
-            ->select('id', 'payment_mode')
-            ->orderBy('payment_mode', 'asc')
-            ->get();
-
-        return view('admin.payment-reciept', $data);
+        // A receipt credits the client: amount is stored positive.
+        return $this->ledgerEntry($req, 1, 'admin.payment-reciept', 'Receipt');
     }
 
     public function payment(Request $req)
     {
+        // A payment debits the client: amount is stored negative.
+        return $this->ledgerEntry($req, -1, 'admin.payment', 'Payment');
+    }
+
+    /**
+     * Shared handler for the receipt and payment screens. They differ only in the
+     * sign applied to the amount, so keeping one implementation stops the two
+     * halves of the ledger drifting apart when validation or the form changes.
+     *
+     * @param  int  $sign  1 to credit the client, -1 to debit
+     */
+    private function ledgerEntry(Request $req, int $sign, string $view, string $label)
+    {
         if ($req->isMethod('POST')) {
             $req->validate([
-
                 'client_name' => 'required|integer|exists:client,id',
                 'paymentMode' => 'required|integer|exists:payment_type,id',
                 'txn_date' => 'required|date_format:Y-m-d',
@@ -158,13 +161,12 @@ class AuthController extends Controller
             $ClientLedgerModel->client_id = $req->client_name;
             $ClientLedgerModel->payment_by = $req->paymentMode;
             $ClientLedgerModel->txn_date = $req->txn_date;
-            $ClientLedgerModel->amount = -$req->amount;
+            $ClientLedgerModel->amount = $sign * (float) $req->amount;
             $ClientLedgerModel->particular = $req->remarks;
 
             $ClientLedgerModel->save();
-            $lastid = $ClientLedgerModel->id;
 
-            return back()->with('success', ' Payment Reciept Successfully txn id is :  '.$lastid);
+            return back()->with('success', $label.' saved successfully. Transaction ID: '.$ClientLedgerModel->id);
         }
 
         $data['clientlist'] = DB::table('client')
@@ -179,7 +181,7 @@ class AuthController extends Controller
             ->orderBy('payment_mode', 'asc')
             ->get();
 
-        return view('admin.payment', $data);
+        return view($view, $data);
     }
 
     public function clientstatement($id)

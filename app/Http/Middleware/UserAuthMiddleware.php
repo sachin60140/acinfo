@@ -15,7 +15,10 @@ class UserAuthMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
-        if (! session()->has('username')) {
+        // Gate on the key that actually identifies the client. The pages behind this
+        // middleware look their data up by 'userid', so gating on anything else lets
+        // a session through that those pages cannot resolve.
+        if (! session()->has('userid')) {
             $request->session()->flash('error', 'User Access Not Permitted');
 
             return redirect('/user');

@@ -47,23 +47,18 @@ class UserController extends Controller
             ['mobile', '=', $username],
         ])->first();
 
-        if ($result && filled($result->password)) {
-            if (Hash::check($userpass, $result->password)) {
-                $req->session()->regenerate();
-                session(['username' => $result->name]);
-                session(['userid' => $result->id]);
-
-                return redirect('user/dashboard');
-            } else {
-                return back()->with('error', 'Please Enter Valid Password Details ');
-            }
-
-        } else {
-            $req->session()->flash('error', 'Please Enter Valid userid Details');
-
-            return redirect('/user');
+        // One message for every failure mode — an unknown mobile, a mobile with no
+        // password set, and a wrong password must be indistinguishable, otherwise
+        // the form can be used to enumerate which numbers are registered clients.
+        if (! $result || ! filled($result->password) || ! Hash::check($userpass, $result->password)) {
+            return back()->with('error', 'Mobile number or password is incorrect.');
         }
 
+        $req->session()->regenerate();
+        session(['username' => $result->name]);
+        session(['userid' => $result->id]);
+
+        return redirect('user/dashboard');
     }
 
     public function userdashboard()

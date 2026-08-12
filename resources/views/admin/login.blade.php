@@ -67,6 +67,16 @@
                                         </div>
                                     @endif
 
+                                    @if ($errors->any())
+                                        <div class="alert alert-danger">
+                                            <ul class="mb-0 ps-3">
+                                                @foreach ($errors->all() as $error)
+                                                    <li>{{ $error }}</li>
+                                                @endforeach
+                                            </ul>
+                                        </div>
+                                    @endif
+
                                     <form class="row g-3 needs-validation" novalidate method="POST"
                                         action="{{ url('admin-login') }}">
                                         @csrf

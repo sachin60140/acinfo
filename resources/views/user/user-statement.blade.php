@@ -16,9 +16,8 @@
         <h1>Dashboard</h1>
         <nav>
             <ol class="breadcrumb">
-                <li class="breadcrumb-item"><a href="{{ url('admin/dashboard') }}">Home</a></li>
-                <li class="breadcrumb-item">Jobs</li>
-                <li class="breadcrumb-item active">View Client Statement</li>
+                <li class="breadcrumb-item"><a href="{{ route('userdashboard') }}">Home</a></li>
+                <li class="breadcrumb-item active">My Statement</li>
                 
             </ol>
         </nav>

@@ -16,18 +16,15 @@ class AdminMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
-        if (! empty(Auth::check())) {
-            if (Auth::user()->user_type == 1) {
-                return $next($request);
-            } else {
-                Auth::logout();
-
-                return redirect(url('/admin'));
-            }
-        } else {
-            Auth::logout();
-
+        if (! Auth::check()) {
             return redirect(url('/admin'));
         }
+
+        // Authorisation failure must not destroy a valid session: redirect only.
+        if (Auth::user()->user_type != 1) {
+            return redirect(url('/admin'))->with('error', 'You do not have access to the admin area.');
+        }
+
+        return $next($request);
     }
 }

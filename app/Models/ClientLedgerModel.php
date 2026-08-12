@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 class ClientLedgerModel extends Model
 {
@@ -13,11 +14,12 @@ class ClientLedgerModel extends Model
 
     public static function getRecord($id)
     {
-        $return = ClientLedgerModel::select('client_ledger.*', 'client.name as client_name', 'payment_mode as payment_type')
+        $return = ClientLedgerModel::select('client_ledger.*', 'client.name as client_name', DB::raw("COALESCE(payment_type.payment_mode, 'Unknown') as payment_type"))
             ->join('client', 'client.id', 'client_ledger.client_id')
-            ->join('payment_type', 'payment_type.id', 'client_ledger.payment_by')
+            ->leftJoin('payment_type', 'payment_type.id', 'client_ledger.payment_by')
             ->where('client_id', $id)
-            ->orderBy('id', 'asc')
+            ->orderBy('client_ledger.txn_date', 'asc')
+            ->orderBy('client_ledger.id', 'asc')
             ->get();
 
         return $return;

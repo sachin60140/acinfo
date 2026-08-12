@@ -68,13 +68,7 @@
                                         <td>{{ $items->name }}</td>
                                         <td>{{ $items->mobile }}</td>
                                         <td style="text-align: right">
-                                            @php
-                                                $total = DB::table('client_ledger')
-                                                    ->where('client_id', $items->id)
-                                                    ->sum('amount');
-                                                //echo round($total,2 );
-                                                echo number_format((float) $total, 2, '.', '');
-                                            @endphp
+                                            {{ number_format((float) $items->current_balance, 2, '.', '') }}
                                         </td>
                                         <td>
                                             <a href="{{ url('admin/client/statement/' . $items->id) }}"
