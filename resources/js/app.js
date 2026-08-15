@@ -3,6 +3,7 @@ import { createApp } from 'vue';
 
 import Loader from './components/Loader.vue';
 import ReceiveFileRows from './components/ReceiveFileRows.vue';
+import StatusBoard from './components/StatusBoard.vue';
 
 /*
  * Vue is mounted into the existing Blade pages rather than taking over routing.
@@ -16,6 +17,7 @@ import ReceiveFileRows from './components/ReceiveFileRows.vue';
 const components = {
     'vue-loader': Loader,
     'vue-receive-rows': ReceiveFileRows,
+    'vue-status-board': StatusBoard,
 };
 
 for (const [selector, component] of Object.entries(components)) {

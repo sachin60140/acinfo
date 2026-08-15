@@ -223,9 +223,17 @@ class DashboardTest extends TestCase
             ->assertSee('data-label="Debit"', false);
 
         // A table of form controls: label above, control full width.
-        $this->get('admin/file/status')
+        $this->get('admin/file/assign')
             ->assertOk()
             ->assertSee('rt-form', false);
+
+        // The status board is a Vue component now and carries its own card
+        // layout for narrow screens, so it has no Blade stacking class to find.
+        // What matters is that its mount point and data are on the page.
+        $this->get('admin/file/status')
+            ->assertOk()
+            ->assertSee('data-vue="vue-status-board"', false)
+            ->assertSee('returnedKey', false);
     }
 
     /**

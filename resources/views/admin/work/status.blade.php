@@ -340,135 +340,39 @@
                         @endif
                     </div>
                 @else
-                    <form action="{{ route('workfile.status') }}" method="POST" id="status_form" enctype="multipart/form-data">
-                        @csrf
-
-                        <div class="table-responsive">
-                            <table class="table board align-middle rt-form">
-                                <thead>
-                                    <tr>
-                                        <th>File</th>
-                                        <th>Vehicle</th>
-                                        <th>Work</th>
-                                        <th>Customer &rarr; Vendor</th>
-                                        <th class="text-end">Charged</th>
-                                        <th style="min-width: 11rem;">Status</th>
-                                        <th style="min-width: 13rem;">Remark</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @foreach ($files as $file)
-                                        <tr data-state="{{ $file->status }}">
-                                            {{-- The number is what you look for; the date is what
-                                                 you confirm with. Both in one cell keeps the row
-                                                 short enough to scan. --}}
-                                            <td data-label="File">
-                                                <a href="{{ route('workfile.edit', $file->id) }}" class="file-link">{{ $file->file_no }}</a>
-                                                <div class="sub-line">{{ date('d-m-Y', strtotime($file->received_date)) }}</div>
-                                            </td>
-
-                                            <td data-label="Vehicle">
-                                                <span class="lead-line">{{ $file->registration_no }}</span>
-                                            </td>
-
-                                            <td data-label="Work">
-                                                <div class="lead-line">{{ $file->workType?->name }}</div>
-                                                @if ($file->description)
-                                                    <div class="sub-line">{{ $file->description }}</div>
-                                                @endif
-                                            </td>
-
-                                            <td data-label="Customer &rarr; Vendor">
-                                                <div class="route">
-                                                    {{ $file->customer?->name }}
-                                                    <span class="arrow">&rarr;</span>
-                                                    @if ($file->vendor)
-                                                        {{ $file->vendor->name }}
-                                                    @else
-                                                        <span class="text-muted">In-house</span>
-                                                    @endif
-                                                </div>
-                                            </td>
-
-                                            <td data-label="Charged" class="text-end">
-                                                <span class="charged">{{ number_format((float) $file->customer_amount, 2, '.', ',') }}</span>
-                                            </td>
-
-                                            <td data-label="Status">
-                                                <select class="form-select js-status" name="statuses[{{ $file->id }}]" data-was="{{ $file->status }}" data-amount="{{ $file->customer_amount }}">
-                                                    @foreach ($statuses as $key => $text)
-                                                        {{-- Returning to a customer has its own screen, where the refund
-                                                             and the reason are asked for properly. It stays in this list
-                                                             only for a file already returned, so it can still be undone. --}}
-                                                        @continue($key === $work::RETURNED && $file->status !== $key)
-                                                        <option value="{{ $key }}" {{ $file->status === $key ? 'selected' : '' }}>{{ $text }}</option>
-                                                    @endforeach
-                                                </select>
-
-                                                {{-- Shown only when the chosen status is the one that needs it. --}}
-                                                <div class="status-extra js-shot-box" style="display: none;">
-                                                    <label class="shot-label">Approval screenshot <span class="required-mark">*</span></label>
-                                                    <input type="file" class="form-control form-control-sm js-shot"
-                                                        name="screenshots[{{ $file->id }}]" accept="image/*,application/pdf">
-                                                    @if ($file->approval_screenshot)
-                                                        <div class="shot-have">
-                                                            <i class="bi bi-paperclip"></i>
-                                                            <a href="{{ $file->screenshotUrl() }}" target="_blank" rel="noopener">screenshot on file</a>
-                                                            &mdash; choose a file only to replace it
-                                                        </div>
-                                                    @endif
-                                                </div>
-
-                                                <div class="status-extra js-return-box" style="display: none;">
-                                                    <label class="shot-label">Refund to customer</label>
-                                                    <div class="input-group input-group-sm">
-                                                        <span class="input-group-text">INR</span>
-                                                        <input type="number" min="0.01" step="0.01"
-                                                            max="{{ $file->customer_amount }}"
-                                                            class="form-control text-end js-refund"
-                                                            name="refunds[{{ $file->id }}]"
-                                                            value="{{ old('refunds.' . $file->id, $file->returned_amount) }}"
-                                                            placeholder="{{ number_format((float) $file->customer_amount, 2, '.', '') }}">
-                                                    </div>
-                                                    <div class="cr fw-bold mt-1 js-return-note">
-                                                        Full {{ number_format((float) $file->customer_amount, 2, '.', ',') }} goes back
-                                                        &mdash; reduce it if you are keeping part
-                                                    </div>
-                                                </div>
-
-                                                <div class="status-extra js-cancel-note" style="display: none;">
-                                                    <span class="cr fw-bold">Removes this file from both ledgers</span>
-                                                </div>
-                                            </td>
-
-                                            <td data-label="Remark">
-                                                <input type="text" class="form-control js-remark"
-                                                    name="remarks[{{ $file->id }}]" value="{{ old('remarks.' . $file->id) }}"
-                                                    maxlength="255" placeholder="Why, or what is pending">
-                                                @if (! empty($lastRemarks[$file->id]))
-                                                    <div class="last-remark" title="Most recent remark on this file">
-                                                        <i class="bi bi-clock-history"></i> {{ $lastRemarks[$file->id] }}
-                                                    </div>
-                                                @endif
-                                            </td>
-                                        </tr>
-                                    @endforeach
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <div class="save-bar" id="save_bar">
-                            <span class="save-note" id="change_count"></span>
-                            <div class="d-flex gap-2">
-                                {{-- Reloads this same view, so Reset never quietly
-                                     changes which files are on screen. --}}
-                                <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId])) }}" class="btn btn-outline-secondary">Reset</a>
-                                <button type="submit" class="btn btn-primary" id="save_button" disabled>
-                                    <i class="bi bi-check2-circle me-1"></i> Save Status
-                                </button>
-                            </div>
-                        </div>
-                    </form>
+                    {{--
+                        Rendered by Vue. The field names are the ones
+                        WorkFileController::status() already validates, so the form
+                        still posts normally and the server still checks every
+                        value — which is what makes converting a screen on a live
+                        ledger safe: only the rendering moves.
+                    --}}
+                    <div data-vue="vue-status-board" data-props="{{ json_encode([
+                        'action' => route('workfile.status'),
+                        'csrf' => csrf_token(),
+                        'resetUrl' => route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId])),
+                        'statuses' => $statuses,
+                        'returnedKey' => $work::RETURNED,
+                        'approvedKey' => $work::APPROVED,
+                        'cancelledKey' => $work::CANCELLED,
+                        'files' => $files->map(fn ($file) => [
+                            'id' => $file->id,
+                            'file_no' => $file->file_no,
+                            'received_date' => date('d-m-Y', strtotime($file->received_date)),
+                            'registration_no' => $file->registration_no,
+                            'work_type' => $file->workType?->name,
+                            'description' => $file->description,
+                            'customer' => $file->customer?->name,
+                            'vendor' => $file->vendor?->name,
+                            'customer_amount' => (float) $file->customer_amount,
+                            'returned_amount' => $file->returned_amount === null ? null : (float) $file->returned_amount,
+                            'status' => $file->status,
+                            'has_screenshot' => (bool) $file->approval_screenshot,
+                            'screenshot_url' => $file->screenshotUrl(),
+                            'edit_url' => route('workfile.edit', $file->id),
+                            'last_remark' => $lastRemarks[$file->id] ?? null,
+                        ])->values(),
+                    ]) }}"></div>
                 @endif
 
             </div>
@@ -477,142 +381,4 @@
 @endsection
 
 @section('script')
-    <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            const form = document.getElementById('status_form');
-
-            if (!form) {
-                return;
-            }
-
-            const saveBar = document.getElementById('save_bar');
-            const saveButton = document.getElementById('save_button');
-            const changeCount = document.getElementById('change_count');
-
-            const refresh = function () {
-                let changed = 0;
-                let returning = 0;
-                let cancelling = 0;
-                let noted = 0;
-                let needsReason = 0;
-
-                form.querySelectorAll('.js-status').forEach(function (select) {
-                    const cell = select.parentElement;
-                    const row = select.closest('tr');
-                    const shotBox = cell.querySelector('.js-shot-box');
-                    const shot = cell.querySelector('.js-shot');
-                    const remark = row.querySelector('.js-remark');
-                    const isChanged = select.value !== select.dataset.was;
-                    const hasRemark = remark.value.trim() !== '';
-
-                    // The edge colour follows the choice, not the stored value, so
-                    // the row shows where it is heading.
-                    row.dataset.state = select.value;
-                    row.classList.toggle('changed', isChanged);
-                    row.classList.toggle('noted', !isChanged && hasRemark);
-                    changed += isChanged ? 1 : 0;
-                    noted += (!isChanged && hasRemark) ? 1 : 0;
-
-                    // The upload box appears whenever Approval Done is selected —
-                    // including when it is already the stored status, so a missing
-                    // or wrong screenshot can still be attached afterwards.
-                    const needsShot = select.value === 'approval_done';
-                    shotBox.style.display = needsShot ? '' : 'none';
-                    // A file input left enabled would still post its file after the
-                    // user changed their mind about the status.
-                    shot.disabled = !needsShot;
-                    if (!needsShot) {
-                        shot.value = '';
-                    }
-
-                    // The refund box appears whenever Paper Returned is selected,
-                    // including when already stored, so a part refund stays editable.
-                    const isReturning = select.value === 'paper_returned';
-                    const returnBox = cell.querySelector('.js-return-box');
-                    const refund = cell.querySelector('.js-refund');
-                    returnBox.style.display = isReturning ? '' : 'none';
-                    refund.disabled = !isReturning;
-
-                    // Only explain what a blank means while it is actually blank.
-                    cell.querySelector('.js-return-note').style.display =
-                        (isReturning && refund.value.trim() === '') ? '' : 'none';
-
-                    const cancelNote = isChanged && select.value === 'cancelled';
-                    cell.querySelector('.js-cancel-note').style.display = cancelNote ? '' : 'none';
-                    returning += (isChanged && isReturning) ? 1 : 0;
-                    cancelling += cancelNote ? 1 : 0;
-
-                    // Cancelling and returning move the customer's balance, so the
-                    // server insists on a reason. Say so here rather than letting
-                    // the save bounce back.
-                    const consequential = isChanged && (select.value === 'cancelled' || isReturning);
-                    remark.classList.toggle('is-invalid', consequential && !hasRemark);
-                    needsReason += (consequential && !hasRemark) ? 1 : 0;
-                });
-
-                let uploads = 0;
-                form.querySelectorAll('.js-shot').forEach(function (shot) {
-                    uploads += (!shot.disabled && shot.files.length) ? 1 : 0;
-                });
-
-                const nothing = changed === 0 && uploads === 0 && noted === 0;
-                saveButton.disabled = nothing || needsReason > 0;
-                saveBar.classList.toggle('dirty', !nothing);
-
-                if (needsReason) {
-                    changeCount.className = 'save-note warn';
-                    changeCount.textContent = needsReason === 1
-                        ? 'Add a remark explaining the cancellation or return.'
-                        : 'Add a remark for the ' + needsReason + ' files being cancelled or returned.';
-
-                    return;
-                }
-
-                changeCount.className = 'save-note';
-
-                if (nothing) {
-                    changeCount.textContent = 'No changes yet.';
-
-                    return;
-                }
-
-                const parts = [];
-                if (changed) {
-                    parts.push(changed + (changed === 1 ? ' file' : ' files') + ' will be updated');
-                }
-                if (noted) {
-                    parts.push(noted + ' remark' + (noted === 1 ? '' : 's') + ' added');
-                }
-                if (uploads) {
-                    parts.push(uploads + ' screenshot' + (uploads === 1 ? '' : 's') + ' attached');
-                }
-                if (returning) {
-                    parts.push(returning + ' credited back to customer');
-                }
-                if (cancelling) {
-                    parts.push(cancelling + ' cancelled');
-                }
-                changeCount.textContent = parts.join(', ') + '.';
-            };
-
-            // Picking Paper Returned fills in the full charge so the figure going
-            // back is visible. Only on the dropdown changing — refresh() runs on
-            // every keystroke, so filling in there would make it unclearable.
-            form.addEventListener('change', function (event) {
-                if (event.target.classList.contains('js-status') && event.target.value === 'paper_returned') {
-                    const refund = event.target.parentElement.querySelector('.js-refund');
-
-                    if (refund.value.trim() === '') {
-                        refund.value = Number(event.target.dataset.amount || 0).toFixed(2);
-                    }
-                }
-
-                refresh();
-            });
-
-            form.addEventListener('input', refresh);
-
-            refresh();
-        });
-    </script>
 @endsection

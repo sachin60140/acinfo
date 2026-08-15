@@ -1,0 +1,623 @@
+/*
+ * Ac Info design system.
+ *
+ * This is a ledger people use all day, often standing at a counter with a
+ * customer waiting. So the priorities are, in order: figures that are unambiguous,
+ * hierarchy you can scan without reading, density that fits a working day's rows
+ * on one screen, and touch targets that survive a phone. Decoration comes last
+ * and mostly does not come at all.
+ *
+ * Tokens first, then primitives. Nothing below uses a raw hex value: a colour
+ * that appears twice is a token, so a change lands everywhere at once.
+ *
+ * It layers over the NiceAdmin Bootstrap the unconverted screens still use, so
+ * both can be on screen during the migration without either breaking.
+ */
+
+:root {
+    /* ---- Colour -------------------------------------------------------- */
+
+    /* One brand hue, used for action and for "you are here". Never for money. */
+    --ink-900: #0b1b3f;
+    --ink-800: #012970;
+    --ink-700: #1e3a8a;
+    --brand-600: #3546d3;
+    --brand-500: #4154f1;
+    --brand-400: #6b7bf5;
+    --brand-100: #e5e9ff;
+    --brand-050: #f4f6ff;
+
+    /* Money has exactly two directions and they never change meaning:
+       debit is what is owed to you, credit is what you owe. */
+    --dr-700: #146c43;
+    --dr-600: #198754;
+    --dr-050: #e8f6ee;
+    --cr-700: #b02a37;
+    --cr-600: #dc3545;
+    --cr-050: #fdecee;
+
+    --warn-600: #b45309;
+    --warn-500: #f59e0b;
+    --warn-050: #fffbeb;
+    --info-500: #0ea5e9;
+
+    /* Neutrals carry almost the whole interface. */
+    --n-000: #ffffff;
+    --n-025: #fbfcfe;
+    --n-050: #f8fafc;
+    --n-100: #f1f5f9;
+    --n-200: #e5e9f2;
+    --n-300: #cbd5e1;
+    --n-400: #94a3b8;
+    --n-500: #64748b;
+    --n-600: #475569;
+    --n-700: #334155;
+    --n-900: #0f172a;
+
+    /* ---- Type ---------------------------------------------------------- */
+
+    --font: "Open Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    /* Figures line up in columns only if the digits are the same width. */
+    --font-num: "Open Sans", ui-monospace, system-ui, sans-serif;
+
+    --t-xs: 0.72rem;
+    --t-sm: 0.8rem;
+    --t-base: 0.875rem;
+    --t-md: 1rem;
+    --t-lg: 1.15rem;
+    --t-xl: 1.4rem;
+    --t-2xl: 1.75rem;
+
+    /* ---- Space --------------------------------------------------------- */
+
+    /* A 4px scale. Everything is a multiple, so nothing is ever "about right". */
+    --s-1: 0.25rem;
+    --s-2: 0.5rem;
+    --s-3: 0.75rem;
+    --s-4: 1rem;
+    --s-5: 1.25rem;
+    --s-6: 1.5rem;
+    --s-8: 2rem;
+    --s-10: 2.5rem;
+
+    /* ---- Shape and depth ----------------------------------------------- */
+
+    --r-sm: 5px;
+    --r-md: 8px;
+    --r-lg: 12px;
+    --r-pill: 999px;
+
+    /* Shadows are tinted with the brand hue rather than pure black: grey
+       shadows on a blue-white page read as dirt. */
+    --shadow-1: 0 1px 2px rgba(1, 41, 112, 0.06);
+    --shadow-2: 0 4px 16px rgba(1, 41, 112, 0.08);
+    --shadow-3: 0 12px 32px rgba(1, 41, 112, 0.14);
+
+    --ring: 0 0 0 3px var(--brand-100);
+
+    --tap: 44px; /* nothing interactive is smaller than this on touch */
+}
+
+/* ---- Base -------------------------------------------------------------- */
+
+.ui {
+    font-family: var(--font);
+    font-size: var(--t-base);
+    color: var(--n-700);
+}
+
+.ui *,
+.ui *::before,
+.ui *::after {
+    box-sizing: border-box;
+}
+
+/* Every focusable thing shows where focus is. Keyboard users are not a
+   special case; anyone tabbing a form at speed depends on it. */
+.ui :focus-visible {
+    outline: 2px solid var(--brand-500);
+    outline-offset: 2px;
+    border-radius: var(--r-sm);
+}
+
+/* ---- Page furniture ---------------------------------------------------- */
+
+.ui-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+}
+
+.ui-page__head {
+    align-items: flex-start;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    justify-content: space-between;
+}
+
+.ui-page__title {
+    color: var(--ink-800);
+    font-size: var(--t-2xl);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+    margin: 0;
+}
+
+.ui-page__sub {
+    color: var(--n-500);
+    font-size: var(--t-sm);
+    margin-top: var(--s-1);
+}
+
+.ui-card {
+    background: var(--n-000);
+    border: 1px solid var(--n-200);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-1);
+}
+
+.ui-card__head {
+    align-items: flex-start;
+    border-bottom: 1px solid var(--n-100);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    justify-content: space-between;
+    padding: var(--s-4) var(--s-5);
+}
+
+.ui-card__title {
+    color: var(--ink-800);
+    font-size: var(--t-md);
+    font-weight: 700;
+    margin: 0;
+}
+
+.ui-card__body {
+    padding: var(--s-5);
+}
+
+/* Sits at the bottom of a long form and stays reachable. */
+.ui-card__foot {
+    align-items: center;
+    background: var(--n-025);
+    border-top: 1px solid var(--n-200);
+    border-radius: 0 0 var(--r-lg) var(--r-lg);
+    bottom: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    justify-content: space-between;
+    padding: var(--s-3) var(--s-5);
+    position: sticky;
+    z-index: 5;
+}
+
+.ui-card__foot--dirty {
+    background: var(--warn-050);
+    border-top-color: var(--warn-500);
+}
+
+/* ---- Buttons ----------------------------------------------------------- */
+
+.ui-btn {
+    align-items: center;
+    background: var(--n-000);
+    border: 1px solid var(--n-300);
+    border-radius: var(--r-sm);
+    color: var(--n-700);
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: var(--t-sm);
+    font-weight: 600;
+    gap: var(--s-2);
+    justify-content: center;
+    line-height: 1;
+    min-height: 38px;
+    padding: 0 var(--s-4);
+    text-decoration: none;
+    transition: background .12s ease, border-color .12s ease, color .12s ease;
+    white-space: nowrap;
+}
+
+.ui-btn:hover:not(:disabled) {
+    background: var(--n-050);
+    border-color: var(--n-400);
+    color: var(--ink-800);
+}
+
+.ui-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.ui-btn--primary {
+    background: var(--brand-500);
+    border-color: var(--brand-500);
+    color: var(--n-000);
+}
+
+.ui-btn--primary:hover:not(:disabled) {
+    background: var(--brand-600);
+    border-color: var(--brand-600);
+    color: var(--n-000);
+}
+
+.ui-btn--danger {
+    background: var(--n-000);
+    border-color: var(--cr-600);
+    color: var(--cr-700);
+}
+
+.ui-btn--danger:hover:not(:disabled) {
+    background: var(--cr-050);
+}
+
+.ui-btn--ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--brand-500);
+}
+
+.ui-btn--ghost:hover:not(:disabled) {
+    background: var(--brand-050);
+    border-color: transparent;
+}
+
+.ui-btn--sm {
+    font-size: var(--t-xs);
+    min-height: 32px;
+    padding: 0 var(--s-3);
+}
+
+.ui-btn--icon {
+    padding: 0;
+    width: 38px;
+}
+
+/* ---- Fields ------------------------------------------------------------ */
+
+.ui-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    min-width: 0;
+}
+
+.ui-label {
+    color: var(--n-500);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.ui-label__req {
+    color: var(--cr-600);
+}
+
+.ui-input,
+.ui-select,
+.ui-textarea {
+    background: var(--n-000);
+    border: 1px solid var(--n-300);
+    border-radius: var(--r-sm);
+    color: var(--n-900);
+    font-family: inherit;
+    font-size: var(--t-base);
+    min-height: 40px;
+    padding: 0 var(--s-3);
+    transition: border-color .12s ease, box-shadow .12s ease;
+    width: 100%;
+}
+
+.ui-textarea {
+    line-height: 1.5;
+    padding: var(--s-2) var(--s-3);
+    resize: vertical;
+}
+
+.ui-input:focus,
+.ui-select:focus,
+.ui-textarea:focus {
+    border-color: var(--brand-500);
+    box-shadow: var(--ring);
+    outline: none;
+}
+
+.ui-input:disabled,
+.ui-select:disabled {
+    background: var(--n-100);
+    color: var(--n-400);
+    cursor: not-allowed;
+}
+
+.ui-input--invalid,
+.ui-select--invalid {
+    border-color: var(--cr-600);
+}
+
+.ui-input--invalid:focus {
+    box-shadow: 0 0 0 3px var(--cr-050);
+}
+
+/* Amounts are read as columns of figures, so they align right and share a
+   digit width. */
+.ui-input--amount {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.ui-hint {
+    color: var(--n-500);
+    font-size: var(--t-xs);
+}
+
+.ui-hint--error {
+    color: var(--cr-700);
+    font-weight: 600;
+}
+
+/* ---- Money ------------------------------------------------------------- */
+
+.ui-money {
+    font-family: var(--font-num);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.ui-money--dr { color: var(--dr-700); }
+.ui-money--cr { color: var(--cr-700); }
+.ui-money--nil { color: var(--n-400); }
+
+.ui-money--void {
+    color: var(--n-400);
+    text-decoration: line-through;
+}
+
+.ui-money--strong {
+    color: var(--n-900);
+    font-weight: 700;
+}
+
+/* ---- Badges and chips -------------------------------------------------- */
+
+.ui-badge {
+    align-items: center;
+    border-radius: var(--r-pill);
+    display: inline-flex;
+    font-size: var(--t-xs);
+    font-weight: 700;
+    gap: var(--s-1);
+    line-height: 1;
+    padding: 0.3em 0.7em;
+    white-space: nowrap;
+}
+
+.ui-badge--neutral { background: var(--n-100); color: var(--n-600); }
+.ui-badge--brand   { background: var(--brand-100); color: var(--ink-700); }
+.ui-badge--dr      { background: var(--dr-050); color: var(--dr-700); }
+.ui-badge--cr      { background: var(--cr-050); color: var(--cr-700); }
+.ui-badge--warn    { background: var(--warn-050); color: var(--warn-600); }
+.ui-badge--info    { background: #e0f2fe; color: #0369a1; }
+.ui-badge--dark    { background: var(--ink-900); color: var(--n-000); }
+
+.ui-chip {
+    align-items: center;
+    background: var(--n-000);
+    border: 1px solid var(--n-200);
+    border-radius: var(--r-pill);
+    color: var(--n-600);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: var(--t-sm);
+    font-weight: 600;
+    gap: var(--s-2);
+    line-height: 1;
+    padding: 0.45rem 0.7rem;
+    text-decoration: none;
+    transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+
+.ui-chip:hover {
+    background: var(--brand-050);
+    border-color: var(--brand-100);
+    color: var(--brand-500);
+}
+
+.ui-chip--on {
+    background: var(--brand-500);
+    border-color: var(--brand-500);
+    color: var(--n-000);
+}
+
+.ui-chip__n {
+    background: var(--n-100);
+    border-radius: var(--r-pill);
+    color: var(--n-500);
+    font-size: var(--t-xs);
+    min-width: 1.3rem;
+    padding: 0.05rem 0.3rem;
+    text-align: center;
+}
+
+.ui-chip--on .ui-chip__n {
+    background: rgba(255, 255, 255, 0.24);
+    color: var(--n-000);
+}
+
+/* Nothing behind it: still reachable, no longer competing for attention. */
+.ui-chip--empty {
+    border-style: dashed;
+    color: var(--n-300);
+}
+
+.ui-chip--empty .ui-chip__n {
+    background: transparent;
+    color: var(--n-300);
+}
+
+/* ---- Stat tiles -------------------------------------------------------- */
+
+.ui-stats {
+    display: grid;
+    gap: var(--s-3);
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+
+.ui-stat {
+    background: var(--n-025);
+    border: 1px solid var(--n-200);
+    border-radius: var(--r-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    padding: var(--s-3) var(--s-4);
+}
+
+.ui-stat--accent {
+    background: var(--brand-050);
+    border-color: var(--brand-500);
+}
+
+.ui-stat__label {
+    color: var(--n-500);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.ui-stat__value {
+    color: var(--n-900);
+    font-family: var(--font-num);
+    font-size: var(--t-lg);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+.ui-stat__note {
+    color: var(--n-400);
+    font-size: var(--t-xs);
+}
+
+/* ---- Tables ------------------------------------------------------------ */
+
+.ui-table-wrap {
+    overflow-x: auto;
+}
+
+.ui-table {
+    border-collapse: collapse;
+    font-size: var(--t-base);
+    width: 100%;
+}
+
+.ui-table thead th {
+    background: var(--n-050);
+    border-bottom: 1px solid var(--n-200);
+    color: var(--n-500);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: var(--s-2) var(--s-3);
+    text-align: left;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.ui-table tbody td {
+    border-bottom: 1px solid var(--n-100);
+    padding: var(--s-3);
+    vertical-align: middle;
+}
+
+.ui-table tbody tr:hover td {
+    background: var(--n-025);
+}
+
+.ui-table .num {
+    font-family: var(--font-num);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+/* Two facts per cell: the one you scan for, and the one you confirm with. */
+.ui-lead {
+    color: var(--ink-800);
+    font-weight: 700;
+}
+
+.ui-sub {
+    color: var(--n-400);
+    font-size: var(--t-xs);
+    margin-top: 0.1rem;
+}
+
+.ui-link {
+    color: var(--brand-500);
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.ui-link:hover {
+    text-decoration: underline;
+}
+
+/* ---- Notices ----------------------------------------------------------- */
+
+.ui-note {
+    border-left: 3px solid var(--n-300);
+    border-radius: 0 var(--r-sm) var(--r-sm) 0;
+    background: var(--n-050);
+    color: var(--n-600);
+    font-size: var(--t-sm);
+    padding: var(--s-3) var(--s-4);
+}
+
+.ui-note--ok    { background: var(--dr-050); border-left-color: var(--dr-600); color: var(--dr-700); }
+.ui-note--warn  { background: var(--warn-050); border-left-color: var(--warn-500); color: var(--warn-600); }
+.ui-note--error { background: var(--cr-050); border-left-color: var(--cr-600); color: var(--cr-700); }
+.ui-note--info  { background: var(--brand-050); border-left-color: var(--brand-500); color: var(--ink-700); }
+
+.ui-empty {
+    color: var(--n-500);
+    padding: var(--s-10) var(--s-4);
+    text-align: center;
+}
+
+.ui-empty__icon {
+    color: var(--n-300);
+    font-size: var(--t-2xl);
+}
+
+.ui-empty__title {
+    color: var(--n-700);
+    font-weight: 700;
+    margin-top: var(--s-2);
+}
+
+/* ---- Touch and motion -------------------------------------------------- */
+
+@media (pointer: coarse) {
+    .ui-btn,
+    .ui-input,
+    .ui-select,
+    .ui-chip {
+        min-height: var(--tap);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ui *,
+    .ui *::before,
+    .ui *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+    }
+}
