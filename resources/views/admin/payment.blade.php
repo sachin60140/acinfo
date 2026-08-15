@@ -185,11 +185,11 @@
                             </div>
                             <div class="col-md-6">
                                 <label for="txn_date_display" class="form-label">Transaction Date <span class="required-mark">*</span></label>
-                                <div class="input-group">
-                                    <span class="input-group-text"><i class="bi bi-calendar3"></i></span>
-                                    <input type="text" class="form-control" id="txn_date_display" value="{{ date('d/m/Y', strtotime(old('txn_date', date('Y-m-d')))) }}" placeholder="dd/mm/yyyy" inputmode="numeric" pattern="\d{2}/\d{2}/\d{4}" required>
-                                    <input type="hidden" id="txn_date" name="txn_date" value="{{ old('txn_date', date('Y-m-d')) }}">
-                                </div>
+                                @include('partials._datefield', [
+                                    'name' => 'txn_date',
+                                    'value' => old('txn_date', date('Y-m-d')),
+                                    'required' => true,
+                                ])
                             </div>
 
                             <div class="col-md-6">
@@ -283,32 +283,9 @@
                 return selected ? selected.dataset.balance : 0;
             };
 
-            const parseDisplayDate = function (value) {
-                const match = value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-                if (!match) {
-                    return '';
-                }
-
-                const day = Number(match[1]);
-                const month = Number(match[2]);
-                const year = Number(match[3]);
-                const parsed = new Date(year, month - 1, day);
-
-                if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
-                    return '';
-                }
-
-                return year + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
-            };
-
-            const syncDateValue = function () {
-                const parsed = parseDisplayDate(dateDisplay.value);
-                date.value = parsed;
-                dateDisplay.setCustomValidity(parsed ? '' : 'Enter date as dd/mm/yyyy');
-            };
-
+            // The date field parses and validates itself, and keeps its hidden
+            // Y-m-d value in step — see assets/js/datepicker.js.
             const updateSummary = function () {
-                syncDateValue();
                 setText('summary_client', client.value ? selectedText(client) : 'Not selected');
                 setText('summary_mode', mode.value ? selectedText(mode) : 'Not selected');
                 setText('summary_balance', client.value ? formatAmount(getSelectedBalance()) : 'INR 0.00');
@@ -322,21 +299,8 @@
                 field.addEventListener('change', updateSummary);
             });
 
-            dateDisplay.addEventListener('input', function () {
-                let value = dateDisplay.value.replace(/\D/g, '').slice(0, 8);
-                if (value.length >= 5) {
-                    value = value.slice(0, 2) + '/' + value.slice(2, 4) + '/' + value.slice(4);
-                } else if (value.length >= 3) {
-                    value = value.slice(0, 2) + '/' + value.slice(2);
-                }
-                dateDisplay.value = value;
-                updateSummary();
-            });
+            dateDisplay.addEventListener('input', updateSummary);
             dateDisplay.addEventListener('change', updateSummary);
-
-            form.addEventListener('submit', function () {
-                syncDateValue();
-            });
 
             form.addEventListener('reset', function () {
                 window.setTimeout(updateSummary, 0);

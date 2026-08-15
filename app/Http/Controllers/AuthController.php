@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\ClientLedgerModel;
 use App\Models\ClientModel;
+use App\Models\PartyModel;
+use App\Models\WorkFileModel;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -59,6 +61,11 @@ class AuthController extends Controller
             ->whereYear('txn_date', now()->year)
             ->whereMonth('txn_date', now()->month)
             ->sum('amount');
+
+        // Vendor & customer ledgers and work files. Read-only, and kept in their
+        // own models so this method stays a list of figures rather than queries.
+        $data['outstanding'] = PartyModel::outstanding();
+        $data['work'] = WorkFileModel::summary();
 
         return view('admin.dashboard', $data);
     }

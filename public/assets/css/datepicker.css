@@ -1,0 +1,145 @@
+/* Calendar popup for .js-datefield inputs. See assets/js/datepicker.js. */
+
+.dp-popup {
+    position: absolute;
+    z-index: 1080;
+    width: 17.5rem;
+    padding: 0.6rem;
+    background: #fff;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    box-shadow: 0 8px 28px rgba(1, 41, 112, 0.18);
+    font-family: "Open Sans", system-ui, sans-serif;
+    font-size: 0.85rem;
+    color: #2f3d4a;
+}
+
+.dp-head {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-bottom: 0.5rem;
+}
+
+.dp-head select {
+    flex: 1;
+    min-width: 0;
+    padding: 0.3rem 0.35rem;
+    border: 1px solid #dbe3ef;
+    border-radius: 5px;
+    background: #fff;
+    font-size: 0.82rem;
+    color: #2f3d4a;
+}
+
+.dp-nav {
+    flex: 0 0 auto;
+    width: 1.85rem;
+    height: 1.85rem;
+    padding: 0;
+    border: 1px solid #dbe3ef;
+    border-radius: 5px;
+    background: #f8fafc;
+    color: #4154f1;
+    font-size: 1.05rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.dp-nav:hover {
+    background: #eef2ff;
+    border-color: #4154f1;
+}
+
+.dp-grid {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.dp-grid th {
+    padding: 0.2rem 0;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #8b95a5;
+    text-align: center;
+}
+
+.dp-grid td {
+    padding: 1px;
+    text-align: center;
+}
+
+.dp-day {
+    width: 100%;
+    padding: 0.35rem 0;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    color: #2f3d4a;
+    font-size: 0.82rem;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+}
+
+.dp-day:hover:not(:disabled) {
+    background: #eef2ff;
+    border-color: #c7d2fe;
+}
+
+/* Today is outlined; the chosen day is filled. Both can apply at once. */
+.dp-day.dp-today {
+    border-color: #4154f1;
+    font-weight: 700;
+}
+
+.dp-day.dp-selected {
+    background: #4154f1;
+    border-color: #4154f1;
+    color: #fff;
+    font-weight: 700;
+}
+
+.dp-day.dp-disabled,
+.dp-day:disabled {
+    color: #c5ccd6;
+    cursor: not-allowed;
+}
+
+.dp-foot {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid #eef1f6;
+}
+
+.dp-action {
+    flex: 1;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid #dbe3ef;
+    border-radius: 5px;
+    background: #f8fafc;
+    color: #4154f1;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.dp-action:hover {
+    background: #eef2ff;
+    border-color: #4154f1;
+}
+
+/* The typed box shows dd-mm-yyyy; give the digits an even rhythm. */
+.js-datefield {
+    font-variant-numeric: tabular-nums;
+}
+
+@media print {
+    .dp-popup {
+        display: none !important;
+    }
+}

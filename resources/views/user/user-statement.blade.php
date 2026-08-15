@@ -39,9 +39,9 @@
                                 <div class="statement-period">
                                     @if ($from || $to)
                                         Period:
-                                        {{ $from ? date('d-M-Y', strtotime($from)) : 'Beginning' }}
+                                        {{ $from ? date('d-m-Y', strtotime($from)) : 'Beginning' }}
                                         &ndash;
-                                        {{ $to ? date('d-M-Y', strtotime($to)) : 'Till date' }}
+                                        {{ $to ? date('d-m-Y', strtotime($to)) : 'Till date' }}
                                     @else
                                         Period: All transactions
                                     @endif
@@ -58,11 +58,11 @@
                         <form method="GET" action="{{ $base }}" class="row g-2 align-items-end statement-filter mb-3">
                             <div class="col-sm-auto">
                                 <label for="from" class="form-label">From</label>
-                                <input type="date" class="form-control" id="from" name="from" value="{{ $from }}" max="{{ $today->toDateString() }}">
+                                @include('partials._datefield', ['name' => 'from', 'value' => $from, 'max' => $today->toDateString()])
                             </div>
                             <div class="col-sm-auto">
                                 <label for="to" class="form-label">To</label>
-                                <input type="date" class="form-control" id="to" name="to" value="{{ $to }}" max="{{ $today->toDateString() }}">
+                                @include('partials._datefield', ['name' => 'to', 'value' => $to, 'max' => $today->toDateString()])
                             </div>
                             <div class="col-sm-auto">
                                 <button type="submit" class="btn btn-primary">Apply</button>
@@ -100,7 +100,7 @@
                         </div>
 
                         <div class="table-responsive">
-                            <table class="table display statement-table" id="example">
+                            <table class="table display statement-table rt" id="example">
                                 <thead>
                                     <tr>
                                         <th scope="col">#</th>
@@ -118,26 +118,27 @@
                                     @forelse ($getRecords as $items)
                                         @php $bal += $items->amount; @endphp
                                         <tr>
-                                            <td>{{ $items->id }}</td>
-                                            <td data-order="{{ $items->txn_date }}">{{ date('d-M-Y', strtotime($items->txn_date)) }}</td>
-                                            <td>{{ $items->particular }}</td>
-                                            <td>{{ $items->payment_type }}</td>
-                                            <td class="text-end pos">{{ $items->amount > 0 ? number_format((float) $items->amount, 2, '.', ',') : '' }}</td>
-                                            <td class="text-end neg">{{ $items->amount < 0 ? number_format((float) abs($items->amount), 2, '.', ',') : '' }}</td>
-                                            <td class="text-end fw-bold {{ $bal < 0 ? 'neg' : '' }}">{{ number_format((float) $bal, 2, '.', ',') }}</td>
+                                            <td data-label="#">{{ $items->id }}</td>
+                                            <td data-label="Date" data-order="{{ $items->txn_date }}">{{ date('d-m-Y', strtotime($items->txn_date)) }}</td>
+                                            <td data-label="Details">{{ $items->particular }}</td>
+                                            <td data-label="Mode">{{ $items->payment_type }}</td>
+                                            <td data-label="Receipt" class="text-end pos">{{ $items->amount > 0 ? number_format((float) $items->amount, 2, '.', ',') : '' }}</td>
+                                            <td data-label="Payment" class="text-end neg">{{ $items->amount < 0 ? number_format((float) abs($items->amount), 2, '.', ',') : '' }}</td>
+                                            <td data-label="Balance" class="text-end fw-bold {{ $bal < 0 ? 'neg' : '' }}">{{ number_format((float) $bal, 2, '.', ',') }}</td>
                                         </tr>
                                     @empty
-                                        <tr>
-                                            <td colspan="7" class="text-center">No transactions in this period.</td>
-                                        </tr>
+                                        {{-- No placeholder row here on purpose: a colspan cell has
+                                             fewer cells than the header, which stops DataTables
+                                             initialising with "Incorrect column count". DataTables
+                                             draws its own message from language.emptyTable below. --}}
                                     @endforelse
                                 </tbody>
                                 <tfoot>
                                     <tr>
                                         <th colspan="4" class="text-end">Period Totals</th>
-                                        <th class="text-end pos">{{ number_format((float) $receipts, 2, '.', ',') }}</th>
-                                        <th class="text-end neg">{{ number_format((float) abs($payments), 2, '.', ',') }}</th>
-                                        <th class="text-end {{ $closing < 0 ? 'neg' : '' }}">{{ number_format((float) $closing, 2, '.', ',') }}</th>
+                                        <th data-label="Receipts" class="text-end pos">{{ number_format((float) $receipts, 2, '.', ',') }}</th>
+                                        <th data-label="Payments" class="text-end neg">{{ number_format((float) abs($payments), 2, '.', ',') }}</th>
+                                        <th data-label="Closing" class="text-end {{ $closing < 0 ? 'neg' : '' }}">{{ number_format((float) $closing, 2, '.', ',') }}</th>
                                     </tr>
                                 </tfoot>
                             </table>
@@ -163,6 +164,7 @@
     <script>
         $(document).ready(function() {
             $('#example').DataTable({
+                language: { emptyTable: 'No transactions in this period.' },
                 dom: 'Bfrtip',
                 buttons: ['copyHtml5', 'excelHtml5', 'csvHtml5', 'pdfHtml5', 'print'],
                 "pageLength": 50,

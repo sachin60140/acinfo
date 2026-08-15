@@ -1,6 +1,12 @@
 /.phpunit.cache
 /node_modules
-/public/build
+
+# public/build is deliberately NOT ignored.
+#
+# acinfo deploys by `git pull` on a host that cannot run composer, and has no
+# npm step either. Built assets therefore have to travel in the repository or
+# they never reach the server at all. Run `npm run build` and commit the result
+# as part of any change that touches resources/js or resources/css.
 /public/hot
 /public/storage
 /storage/*.key

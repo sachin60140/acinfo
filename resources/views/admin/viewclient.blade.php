@@ -48,7 +48,7 @@
                         {{-- <h5 class="card-title"><a href="{{url("admin/employee/generate-pdf")}}" target="_blank" > click me to pdf </a></h5> --}}
 
                         <!-- Table with stripped rows -->
-                        <table class="table display" id="example">
+                        <table class="table display rt" id="example">
                             <thead>
                                 <tr>
                                     <th scope="col">#</th>
@@ -64,10 +64,10 @@
                             <tbody>
                                 @foreach ($data as $items)
                                     <tr>
-                                        <td>{{ $items->id }}</td>
-                                        <td>{{ $items->name }}</td>
-                                        <td>{{ $items->mobile }}</td>
-                                        <td style="text-align: right">
+                                        <td data-label="#">{{ $items->id }}</td>
+                                        <td data-label="Name">{{ $items->name }}</td>
+                                        <td data-label="Mobile">{{ $items->mobile }}</td>
+                                        <td data-label="Amount" style="text-align: right">
                                             {{ number_format((float) $items->current_balance, 2, '.', '') }}
                                         </td>
                                         <td>
