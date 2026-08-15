@@ -1332,6 +1332,47 @@ class WorkFileTest extends TestCase
         return $user;
     }
 
+    /**
+     * A file returned to its customer is finished. Taking it "back" from the
+     * vendor used to force the status to In Office, which made syncLedger
+     * withdraw the customer's refund credit and silently re-charge them the
+     * full amount — their balance went from nil back to 5,000.
+     */
+    public function test_taking_a_file_back_from_a_vendor_cannot_undo_a_customer_refund(): void
+    {
+        $file = $this->receive();
+        $this->giveToVendor([$file->id], $this->vendor->id, [$file->id => '3000']);
+        $this->returnToCustomer([$file->id]);
+
+        $this->assertSame(0.0, PartyLedgerModel::currentBalance($this->customer->id), 'charge and refund net off');
+
+        // A finished file is not offered for a vendor return at all.
+        $this->assertFalse(WorkFileModel::withVendor()->contains('id', $file->id));
+
+        // And posting it anyway changes nothing.
+        $this->takeBackFromVendor([$file->id]);
+
+        $fresh = WorkFileModel::find($file->id);
+
+        $this->assertSame(0.0, PartyLedgerModel::currentBalance($this->customer->id), 'the refund still stands');
+        $this->assertSame('paper_returned', $fresh->status, 'and the file is still returned');
+        $this->assertNull($fresh->vendor_returned_on);
+    }
+
+    public function test_a_vendor_return_still_works_on_a_file_still_in_play(): void
+    {
+        $file = $this->receive();
+        $this->giveToVendor([$file->id], $this->vendor->id, [$file->id => '3000']);
+
+        $this->assertTrue(WorkFileModel::withVendor()->contains('id', $file->id));
+
+        $this->takeBackFromVendor([$file->id]);
+
+        $fresh = WorkFileModel::find($file->id);
+        $this->assertSame('in_office', $fresh->status);
+        $this->assertSame(0.0, PartyLedgerModel::currentBalance($this->vendor->id));
+    }
+
     public function test_the_listing_resolves_names_and_filters(): void
     {
         $file = $this->receive(['status' => 'under_verification']);

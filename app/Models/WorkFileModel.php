@@ -444,7 +444,10 @@ class WorkFileModel extends Model
             ->with('workType', 'customer', 'vendor')
             ->whereNotNull('vendor_id')
             ->whereNull('vendor_returned_on')
-            ->where('status', '!=', self::CANCELLED)
+            // Only work still in play. A file that has been returned to its
+            // customer, approved or cancelled is finished, and taking it "back"
+            // from a vendor would drag it into a state it has already left.
+            ->whereIn('status', self::OPEN_STATUSES)
             ->orderBy('vendor_date', 'asc')
             ->orderBy('id', 'asc')
             ->get();

@@ -330,7 +330,9 @@ class WorkFileController extends Controller
                 $files = WorkFileModel::whereIn('id', $req->input('files'))
                     ->whereNotNull('vendor_id')
                     ->whereNull('vendor_returned_on')
-                    ->where('status', '!=', WorkFileModel::CANCELLED)
+                    // Same condition the screen was built with, so a stale page
+                    // cannot act on a file that has since finished.
+                    ->whereIn('status', WorkFileModel::OPEN_STATUSES)
                     ->with('vendor')
                     ->get();
 
@@ -343,8 +345,17 @@ class WorkFileController extends Controller
                     $file->vendor_returned_on = $req->returned_on;
                     // Blank, or the whole booking, both mean reverse it all.
                     $file->vendor_returned_amount = self::partialOrNull($amount, $file->vendor_amount);
-                    // Back on our desk, and workable again.
-                    $file->status = WorkFileModel::IN_OFFICE;
+
+                    /*
+                     * Back on our desk — but only if it was still in play.
+                     * Forcing In Office unconditionally rewrote the status of a
+                     * file that had already been returned to its customer, and
+                     * syncLedger then withdrew that customer's refund and
+                     * silently re-charged them the full amount.
+                     */
+                    if (in_array($file->status, WorkFileModel::OPEN_STATUSES, true)) {
+                        $file->status = WorkFileModel::IN_OFFICE;
+                    }
                     $file->save();
                     $file->syncLedger();
 
