@@ -21,6 +21,8 @@
     --ink-900: #0b1b3f;
     --ink-800: #012970;
     --ink-700: #1e3a8a;
+    /* Dark enough to carry small uppercase text on --brand-050 (8.8:1). */
+    --brand-700: #2a37a8;
     --brand-600: #3546d3;
     --brand-500: #4154f1;
     --brand-400: #6b7bf5;

@@ -177,26 +177,87 @@ class ReportTest extends TestCase
         $this->assertSame($plain->id, $rows->firstWhere('id', $plain->id)->id);
     }
 
-    public function test_the_report_page_renders_grouped_with_totals_and_exports(): void
+    /**
+     * What the grid on the report page was handed.
+     *
+     * The report is rendered by a component now, so the page carries its data as
+     * JSON rather than as markup. Asserting against this is stricter than
+     * matching strings in HTML ever was: it is the actual contract, so a column
+     * quietly dropped from the export shows up as a missing entry rather than
+     * hiding behind a heading that still happens to appear somewhere on screen.
+     */
+    private function gridProps(string $url): array
+    {
+        $html = $this->get($url)->assertOk()->getContent();
+
+        $this->assertSame(
+            1,
+            preg_match('#data-vue="vue-work-report" data-props="(.*?)"></div>#s', $html, $mount),
+            'the report page does not mount the grid'
+        );
+
+        $props = json_decode(html_entity_decode($mount[1], ENT_QUOTES, 'UTF-8'), true);
+
+        $this->assertSame(JSON_ERROR_NONE, json_last_error(), 'the report props are not valid JSON');
+
+        return $props;
+    }
+
+    /** @return array<int, string> the column headings, in order, that reach a file */
+    private function exportedLabels(array $props): array
+    {
+        $exported = array_filter(
+            $props['columns'],
+            fn ($column) => ($column['exportable'] ?? true) !== false && empty($column['hidden'])
+        );
+
+        return array_values(array_map(fn ($column) => $column['label'], $exported));
+    }
+
+    public function test_the_report_page_renders_grouped_with_totals(): void
     {
         $this->actingAs($this->admin());
 
         $this->file($this->customerA, 5000, $this->vendor, 3500);
         $this->file($this->customerB, 2000);
 
-        $response = $this->get(route('report.files', ['party_type' => 'customer']));
+        $props = $this->gridProps(route('report.files', ['party_type' => 'customer']));
 
-        $response->assertOk()
-            ->assertSee($this->customerA->name)
-            ->assertSee($this->customerB->name)
-            ->assertSee('Grand Total')
-            // The export buttons are the deliverable, not decoration.
-            ->assertSee('excelHtml5', false)
-            ->assertSee('pdfHtml5', false);
+        // Banded per party, with the money subtotalled per band and overall.
+        $this->assertSame('party_id', $props['groupBy']);
+        $this->assertSame(['billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum'], $props['totals']);
 
-        $vendorReport = $this->get(route('report.files', ['party_type' => 'vendor']));
+        $names = array_column($props['rows'], 'party_name');
+        $this->assertContains($this->customerA->name, $names);
+        $this->assertContains($this->customerB->name, $names);
 
-        $vendorReport->assertOk()->assertSee($this->vendor->name);
+        // The grand total is rendered by the page, outside the grid.
+        $this->get(route('report.files', ['party_type' => 'customer']))->assertSee('Grand Total');
+
+        $vendorNames = array_column($this->gridProps(route('report.files', ['party_type' => 'vendor']))['rows'], 'party_name');
+        $this->assertContains($this->vendor->name, $vendorNames);
+    }
+
+    /**
+     * A party split across two pages would be banded twice and subtotalled
+     * twice, each time over half its files — two bands for one customer, each
+     * showing a total that is not their total.
+     */
+    public function test_the_report_is_never_paged(): void
+    {
+        $this->actingAs($this->admin());
+
+        $this->file($this->customerA, 5000);
+        $this->file($this->customerA, 1000);
+        $this->file($this->customerB, 2000);
+
+        $props = $this->gridProps(route('report.files', ['party_type' => 'customer']));
+
+        $this->assertGreaterThanOrEqual(
+            count($props['rows']),
+            $props['perPage'],
+            'a page shorter than the report would split a party across bands'
+        );
     }
 
     /**
@@ -211,29 +272,35 @@ class ReportTest extends TestCase
 
         $this->file($this->customerA, 5000, $this->vendor, 3000);
 
-        $customerWise = $this->get(route('report.files', ['party_type' => 'customer']))->assertOk()->getContent();
-        $vendorWise = $this->get(route('report.files', ['party_type' => 'vendor']))->assertOk()->getContent();
+        $customerWise = $this->gridProps(route('report.files', ['party_type' => 'customer']));
+        $vendorWise = $this->gridProps(route('report.files', ['party_type' => 'vendor']));
+
+        $visible = function (array $props) {
+            return array_values(array_map(
+                fn ($column) => $column['label'],
+                array_filter($props['columns'], fn ($column) => empty($column['hidden']))
+            ));
+        };
 
         // Only the machine-facing grouping key is hidden, so the reported party
         // is a real column on screen and in the export.
-        foreach ([$customerWise, $vendorWise] as $html) {
-            $this->assertStringContainsString('targets: 0, visible: false', $html);
-            $this->assertStringNotContainsString('targets: [0, 1], visible: false', $html);
-        }
+        $hidden = array_filter($customerWise['columns'], fn ($column) => ! empty($column['hidden']));
+        $this->assertCount(1, $hidden, 'exactly one column is hidden');
+        $this->assertSame('party_id', reset($hidden)['key'], 'and it is the grouping key');
 
         // Customer-wise names the customer and shows the vendor as "Given To".
-        $this->assertStringContainsString('>Customer</th>', $customerWise);
-        $this->assertStringContainsString('>Given To</th>', $customerWise);
-        $this->assertStringContainsString($this->customerA->name, $customerWise);
+        $this->assertContains('Customer', $visible($customerWise));
+        $this->assertContains('Given To', $visible($customerWise));
+        $this->assertContains($this->customerA->name, array_column($customerWise['rows'], 'party_name'));
 
         // Vendor-wise is the mirror image.
-        $this->assertStringContainsString('>Vendor</th>', $vendorWise);
-        $this->assertStringContainsString('>Received From</th>', $vendorWise);
-        $this->assertStringContainsString($this->vendor->name, $vendorWise);
+        $this->assertContains('Vendor', $visible($vendorWise));
+        $this->assertContains('Received From', $visible($vendorWise));
+        $this->assertContains($this->vendor->name, array_column($vendorWise['rows'], 'party_name'));
 
         // And neither borrows the other's column headings.
-        $this->assertStringNotContainsString('>Received From</th>', $customerWise);
-        $this->assertStringNotContainsString('>Given To</th>', $vendorWise);
+        $this->assertNotContains('Received From', $visible($customerWise));
+        $this->assertNotContains('Given To', $visible($vendorWise));
     }
 
     /**
@@ -252,23 +319,56 @@ class ReportTest extends TestCase
 
         // Scoped to this customer: the report otherwise spans every file in the
         // database, and a real one may legitimately carry the earlier wording.
-        $html2 = $this->get(route('report.files', [
+        $props = $this->gridProps(route('report.files', [
             'party_type' => 'customer',
             'party_id' => $this->customerA->id,
-        ]))->assertOk()->getContent();
+        ]));
 
-        $this->assertStringContainsString('Remarks', $html2, 'the column exists');
+        $remarks = array_column($props['rows'], 'remark');
+
         // The most recent note, not the first one.
-        $this->assertStringContainsString('Insurance copy awaited from customer', $html2);
-        $this->assertStringNotContainsString('Received from customer', $html2, 'superseded by the later note');
+        $this->assertContains('Insurance copy awaited from customer', $remarks);
+        $this->assertNotContains('Received from customer', $remarks, 'superseded by the later note');
 
         // A file with nothing said about it simply leaves the cell empty.
         $this->assertNotNull(WorkFileModel::find($quiet->id));
 
-        // Every column except the internal grouping key is exported, which is
-        // what carries Remarks into Excel and the PDF.
-        $this->assertStringContainsString('columns: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]', $html2);
-        $this->assertStringNotContainsString('columns: [0,', $html2, 'the grouping key must never be exported');
+        $exported = $this->exportedLabels($props);
+
+        // The seven the user asked for, by name.
+        foreach (['File No.', 'Received', 'Work Type', 'Details', 'Given To', 'Status', 'Remarks'] as $required) {
+            $this->assertContains($required, $exported, "$required must reach Excel and the PDF");
+        }
+
+        $this->assertNotContains('Customer Id', $exported, 'the internal grouping key must never be exported');
+    }
+
+    /**
+     * A spreadsheet has no bands.
+     *
+     * On screen the rows are grouped under a heading naming the party, so the
+     * party column can look redundant. Exported, that grouping is gone and every
+     * row is flat — so without the party column the only party left in a
+     * customer-wise file is the vendor, and the whole export reads as a vendor
+     * report. Losing which customer a row belongs to is not a cosmetic loss; it
+     * is the column that makes the rest of the row mean anything.
+     */
+    public function test_the_export_names_the_party_each_row_belongs_to(): void
+    {
+        $this->actingAs($this->admin());
+
+        $this->file($this->customerA, 5000, $this->vendor, 3500);
+
+        $customerWise = $this->exportedLabels($this->gridProps(route('report.files', ['party_type' => 'customer'])));
+        $vendorWise = $this->exportedLabels($this->gridProps(route('report.files', ['party_type' => 'vendor'])));
+
+        $this->assertContains('Customer', $customerWise, 'a customer-wise export with no customer column');
+        $this->assertContains('Vendor', $vendorWise, 'a vendor-wise export with no vendor column');
+
+        // The money is the point of the report, so it travels too.
+        foreach (['Billed', 'Cost', 'Margin'] as $figure) {
+            $this->assertContains($figure, $customerWise, "$figure must reach the export");
+        }
     }
 
     /**
@@ -295,57 +395,74 @@ class ReportTest extends TestCase
         $rows = WorkFileModel::report('customer')->whereIn('party_id', [$one->id, $two->id]);
         $this->assertSame(2, $rows->pluck('party_id')->unique()->count(), 'two distinct parties');
 
-        $html = $this->get(route('report.files', ['party_type' => 'customer']))->assertOk()->getContent();
+        $props = $this->gridProps(route('report.files', ['party_type' => 'customer']));
 
-        // The grouping key the view hands RowGroup must separate them, so the
-        // key has to be the id. Both ids appear once per file row.
-        preg_match('#<tbody>(.*?)</tbody>#s', $html, $body);
-        preg_match_all('#<tr[^>]*>\s*<td[^>]*>(\d+)</td>#s', $body[1], $keys);
+        // The key the grid bands on must separate them, so it has to be the id.
+        $this->assertSame('party_id', $props['groupBy']);
 
-        $this->assertContains((string) $one->id, $keys[1], 'first party keyed by its own id');
-        $this->assertContains((string) $two->id, $keys[1], 'second party keyed by its own id');
+        $mine = array_filter($props['rows'], fn ($row) => in_array($row['party_id'], [$one->id, $two->id], true));
 
-        // And the subtotal map the bands read from must hold both, not one.
-        $this->assertSame(1, preg_match('#const meta = (\{.*?\});#s', $html, $meta));
-        $decoded = json_decode($meta[1], true);
+        $this->assertCount(2, $mine, 'one row each');
+        $this->assertSame(
+            2,
+            count(array_unique(array_column($mine, 'party_id'))),
+            'banded under two distinct keys, not merged into one'
+        );
 
-        $this->assertArrayHasKey($one->id, $decoded);
-        $this->assertArrayHasKey($two->id, $decoded);
-        $this->assertSame(5000.0, (float) $decoded[$one->id]['billed']);
-        $this->assertSame(3000.0, (float) $decoded[$two->id]['billed']);
+        // Each keeps its own money rather than the two being added together.
+        $byParty = [];
+        foreach ($mine as $row) {
+            $byParty[$row['party_id']] = (float) $row['billed'];
+        }
+
+        $this->assertSame(5000.0, $byParty[$one->id]);
+        $this->assertSame(3000.0, $byParty[$two->id]);
     }
 
     /**
-     * DataTables counts cells per row and has no notion of colspan in a body.
-     * A single grouping row written as a merged cell stops the table
-     * initialising and throws "Incorrect column count" at the user — a failure
-     * that renders a perfectly good-looking page, so only a cell count catches
-     * it. The grouping bands are drawn by RowGroup after init instead.
+     * Every row must carry a value for every column the grid is told to draw.
+     *
+     * The old table failed here in a way that looked fine: DataTables counts
+     * cells per row, and one short row stopped it initialising with "Incorrect
+     * column count" on a perfectly good-looking page. The grid does its own
+     * layout so it cannot fail that way, but the underlying mistake — a column
+     * configured with no matching field on the row — still shows as a column of
+     * dashes where the data should be, which is quieter and worse.
      */
-    public function test_every_body_row_has_exactly_as_many_cells_as_the_header(): void
+    public function test_every_row_carries_a_field_for_every_column(): void
     {
         $this->actingAs($this->admin());
 
         $this->file($this->customerA, 5000, $this->vendor, 3500);
         $this->file($this->customerB, 2000);
 
-        $html = $this->get(route('report.files', ['party_type' => 'customer']))->assertOk()->getContent();
+        $props = $this->gridProps(route('report.files', ['party_type' => 'customer']));
 
-        $this->assertSame(1, preg_match('#<table[^>]*id="report".*?</table>#s', $html, $table), 'report table found');
+        $this->assertNotEmpty($props['rows'], 'the report produced no rows');
 
-        preg_match('#<thead>.*?</thead>#s', $table[0], $head);
-        // The delimiter matters: '<th' alone also matches '<thead'.
-        $columns = preg_match_all('#<th[\s>]#', $head[0]);
-        $this->assertSame(13, $columns);
+        foreach ($props['columns'] as $column) {
+            foreach ($props['rows'] as $index => $row) {
+                $this->assertArrayHasKey(
+                    $column['key'],
+                    $row,
+                    "row $index has no \"{$column['key']}\" for the \"{$column['label']}\" column"
+                );
+            }
+        }
 
-        preg_match('#<tbody>(.*?)</tbody>#s', $table[0], $body);
-        preg_match_all('#<tr[^>]*>(.*?)</tr>#s', $body[1], $rows, PREG_SET_ORDER);
+        // A badge colours itself from the raw key beside the label, so a status
+        // column without one renders every file in the same neutral grey.
+        $status = array_filter($props['columns'], fn ($column) => ($column['type'] ?? '') === 'badge');
 
-        $this->assertNotEmpty($rows, 'the report rendered no rows');
+        foreach ($status as $column) {
+            foreach ($props['rows'] as $index => $row) {
+                $this->assertArrayHasKey($column['key'].'_key', $row, "row $index has no raw key for its badge");
+            }
+        }
 
-        foreach ($rows as $index => $row) {
-            $this->assertSame($columns, preg_match_all('#<td[\s>]#', $row[1]), 'row '.$index.' cell count');
-            $this->assertStringNotContainsString('colspan', $row[1], 'row '.$index.' must not merge cells');
+        // And the grouping key must reach every row, or a file lands in no band.
+        foreach ($props['rows'] as $index => $row) {
+            $this->assertNotEmpty($row[$props['groupBy']], "row $index has no grouping key");
         }
     }
 

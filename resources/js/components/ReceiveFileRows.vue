@@ -266,12 +266,12 @@ watch(total, (value) => {
                         </thead>
                         <tbody>
                             <tr v-for="past in row.history.files" :key="past.id">
-                                <td class="fw-bold">{{ past.file_no }}</td>
-                                <td>{{ past.received_date }}</td>
-                                <td>{{ past.work_type }}</td>
-                                <td>{{ past.customer }}</td>
-                                <td><span class="badge" :class="past.status_badge">{{ past.status_label }}</span></td>
-                                <td class="text-end">
+                                <td class="fw-bold" data-label="File No.">{{ past.file_no }}</td>
+                                <td data-label="Received">{{ past.received_date }}</td>
+                                <td data-label="Type of Work">{{ past.work_type }}</td>
+                                <td data-label="Customer">{{ past.customer }}</td>
+                                <td data-label="Status"><span class="badge" :class="past.status_badge">{{ past.status_label }}</span></td>
+                                <td class="text-end" data-label="Amount">
                                     <span v-if="past.was_returned" class="rf-history__void">{{ past.charged }}</span>
                                     {{ past.net }}
                                 </td>
@@ -433,9 +433,50 @@ watch(total, (value) => {
         flex: 1 1 100%;
     }
 
-    .rf-history__table {
+    /* This table exists so someone can check what was charged for this vehicle
+       last time before pricing it again. Scrolling it sideways puts Amount —
+       the one figure it is here for — off the edge of the screen, so on a phone
+       each earlier file becomes a card instead. */
+    .rf-history__table,
+    .rf-history__table tbody,
+    .rf-history__table tr,
+    .rf-history__table td {
         display: block;
-        overflow-x: auto;
+        width: 100%;
+    }
+
+    .rf-history__table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+    }
+
+    .rf-history__table tbody tr {
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        padding: 8px 12px;
+    }
+
+    .rf-history__table tbody td {
+        border: 0;
+        display: flex;
+        gap: 12px;
+        justify-content: space-between;
+        padding: 2px 0;
+        text-align: right;
+    }
+
+    .rf-history__table tbody td::before {
+        color: #64748b;
+        content: attr(data-label);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-align: left;
+        text-transform: uppercase;
     }
 }
 </style>

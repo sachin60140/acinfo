@@ -3,10 +3,28 @@
 @section('title', 'Work Files | Ac Info')
 
 @section('style')
-    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
-    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css">
     @include('admin.layouts._statement-style')
     @include('admin.party._style')
+
+    <style>
+        /*
+         * DataGrid colours a status badge from the raw status key it carries in
+         * data-state, while the shared sheet holds the palette as modifier
+         * classes. The map between the two therefore lives with the screen that
+         * knows what a work status is. The pairs are the ones
+         * WorkFileModel::STATUS_BADGES has always used, in their design-system
+         * equivalents — so the badge on this list still means what it meant.
+         */
+        .ui-badge[data-state="in_office"] { background: var(--n-100); color: var(--n-600); }
+        .ui-badge[data-state="paper_pendency"] { background: var(--warn-050); color: var(--warn-600); }
+        /* Mirrors .ui-badge--info, which the sheet states as literals. */
+        .ui-badge[data-state="file_dispatch"] { background: #e0f2fe; color: #0369a1; }
+        .ui-badge[data-state="part_pesi_required"] { background: var(--warn-050); color: var(--warn-600); }
+        .ui-badge[data-state="under_verification"] { background: var(--brand-100); color: var(--ink-700); }
+        .ui-badge[data-state="approval_done"] { background: var(--dr-050); color: var(--dr-700); }
+        .ui-badge[data-state="paper_returned"] { background: var(--ink-900); color: var(--n-000); }
+        .ui-badge[data-state="cancelled"] { background: var(--cr-050); color: var(--cr-700); }
+    </style>
 @endsection
 
 @section('content')
@@ -23,6 +41,8 @@
         $billed = 0.0;
         $cost = 0.0;
         $closedCount = 0;
+        $rows = [];
+
         foreach ($files as $f) {
             if (in_array($f->status, [$work::CANCELLED, $work::RETURNED], true)) {
                 $closedCount++;
@@ -31,9 +51,85 @@
             // Part refunds and vendor returns both change what a file really
             // earned and cost. Leaving those out made this page disagree with
             // the statements and the dashboard it is meant to summarise.
-            $billed += $work::netCustomer($f->status, $f->customer_amount, $f->returned_amount);
-            $cost += $work::netVendor($f->status, $f->vendor_amount, $f->vendor_returned_on !== null, $f->vendor_returned_amount);
+            $netCustomer = $work::netCustomer($f->status, $f->customer_amount, $f->returned_amount);
+            $netVendor = $work::netVendor($f->status, $f->vendor_amount, $f->vendor_returned_on !== null, $f->vendor_returned_amount);
+
+            $billed += $netCustomer;
+            $cost += $netVendor;
+
+            $rows[] = [
+                'id' => $f->id,
+                'file_no' => $f->file_no,
+                'edit_url' => route('workfile.edit', $f->id),
+                'registration_no' => $f->registration_no,
+                'received' => date('d-m-Y', strtotime($f->received_date)),
+                'work_type' => $f->work_type,
+                'description' => $f->description,
+                'customer' => $f->customer_name,
+                'customer_url' => route('party.statement', $f->customer_id),
+
+                /*
+                 * The figures that count, not the ones the file was entered with,
+                 * so the column and the totals under it agree with the summary
+                 * above and with the party statements. Where the two differ the
+                 * original is kept on a second line: a part refund or a
+                 * cancellation is easier to trust when the row shows its working.
+                 */
+                'charged' => $netCustomer,
+                'charged_was' => abs($netCustomer - (float) $f->customer_amount) > 0.005
+                    ? 'was '.number_format((float) $f->customer_amount, 2, '.', ',')
+                    : null,
+
+                'vendor' => $f->vendor_name ?? 'In-house',
+                'vendor_url' => $f->vendor_id ? route('party.statement', $f->vendor_id) : null,
+                'cost' => $netVendor,
+                'cost_was' => abs($netVendor - (float) $f->vendor_amount) > 0.005
+                    ? 'was '.number_format((float) $f->vendor_amount, 2, '.', ',')
+                    : null,
+
+                'margin' => $netCustomer - $netVendor,
+
+                'status' => $work::STATUSES[$f->status] ?? $f->status,
+                // The badge colours itself from the raw key, not the label.
+                'status_key' => $f->status,
+                'screenshot' => $f->approval_screenshot ? 'Approval screenshot on file' : null,
+
+                'action' => 'Edit',
+            ];
         }
+
+        $props = [
+            // Names the export file and heads the PDF and the print sheet.
+            'title' => 'Work Files',
+            'perPage' => 50,
+            'emptyText' => 'No files in this view — use Receive Files above.',
+            'totals' => ['charged' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
+            'columns' => [
+                ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
+                ['key' => 'registration_no', 'label' => 'Vehicle'],
+                // A date shown dd-mm-yyyy cannot also sort chronologically as a
+                // string, and the grid sorts on the value it prints. Left
+                // unsortable rather than sorting by day-of-month: the server
+                // already sends newest first, and File No. runs in the same order.
+                ['key' => 'received', 'label' => 'Received', 'sortable' => false],
+                ['key' => 'work_type', 'label' => 'Work Type'],
+                ['key' => 'description', 'label' => 'Details'],
+                ['key' => 'customer', 'label' => 'Customer', 'type' => 'link', 'linkTo' => 'customer_url'],
+                // Debit green, credit red — the same two directions the rest of
+                // the ledger uses, carried by the class the sheet already defines.
+                ['key' => 'charged', 'label' => 'Charged', 'type' => 'money', 'class' => 'dr', 'sub' => 'charged_was'],
+                ['key' => 'vendor', 'label' => 'Vendor', 'type' => 'link', 'linkTo' => 'vendor_url'],
+                ['key' => 'cost', 'label' => 'Cost', 'type' => 'money', 'class' => 'cr', 'sub' => 'cost_was'],
+                // A margin has a side: earned reads Dr, lost reads Cr, and neither
+                // needs a minus sign to be read correctly.
+                ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold'],
+                ['key' => 'status', 'label' => 'Status', 'type' => 'badge', 'sub' => 'screenshot'],
+                // A column of the word "Edit" is noise in a spreadsheet.
+                ['key' => 'action', 'label' => 'Action', 'type' => 'link', 'linkTo' => 'edit_url',
+                    'sortable' => false, 'exportable' => false],
+            ],
+            'rows' => $rows,
+        ];
     @endphp
 
     <div class="pagetitle">
@@ -126,141 +222,18 @@
                             </div>
                         </div>
 
-                        <div class="table-responsive">
-                            <table class="table display statement-table rt" id="example">
-                                <thead>
-                                    <tr>
-                                        <th scope="col">File No.</th>
-                                        <th scope="col">Vehicle</th>
-                                        <th scope="col">Received</th>
-                                        <th scope="col">Work Type</th>
-                                        <th scope="col">Details</th>
-                                        <th scope="col">Customer</th>
-                                        <th scope="col" class="text-end">Charged</th>
-                                        <th scope="col">Vendor</th>
-                                        <th scope="col" class="text-end">Cost</th>
-                                        <th scope="col" class="text-end">Margin</th>
-                                        <th scope="col">Status</th>
-                                        <th scope="col" class="text-end">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @forelse ($files as $items)
-                                        @php
-                                            $netCustomer = $work::netCustomer($items->status, $items->customer_amount, $items->returned_amount);
-                                            $netVendor = $work::netVendor($items->status, $items->vendor_amount, $items->vendor_returned_on !== null, $items->vendor_returned_amount);
-                                            $fileMargin = $netCustomer - $netVendor;
-                                            // Struck through where the figure no longer stands at all; where only
-                                            // part of it came back, both are shown so the row explains itself.
-                                            $voidCustomer = $netCustomer <= 0 && (float) $items->customer_amount > 0;
-                                            $voidVendor = $netVendor <= 0 && (float) $items->vendor_amount > 0;
-                                            $partCustomer = ! $voidCustomer && abs($netCustomer - (float) $items->customer_amount) > 0.005;
-                                            $partVendor = ! $voidVendor && abs($netVendor - (float) $items->vendor_amount) > 0.005;
-                                            $isClosed = in_array($items->status, [$work::CANCELLED, $work::RETURNED], true);
-                                        @endphp
-                                        <tr class="{{ $isClosed ? 'text-muted' : '' }}">
-                                            <td data-label="File No.">{{ $items->file_no }}</td>
-                                            <td data-label="Vehicle">{{ $items->registration_no }}</td>
-                                            {{-- data-order keeps the raw Y-m-d so any sort stays chronological
-                                                 while the reader sees dd-mm-yyyy. --}}
-                                            <td data-label="Received" data-order="{{ $items->received_date }}">{{ date('d-m-Y', strtotime($items->received_date)) }}</td>
-                                            <td data-label="Work Type">{{ $items->work_type }}</td>
-                                            <td data-label="Details">{{ $items->description }}</td>
-                                            <td data-label="Customer">
-                                                <a href="{{ route('party.statement', $items->customer_id) }}" class="link-primary" target="_blank">{{ $items->customer_name }}</a>
-                                            </td>
-                                            {{-- Struck through rather than blanked: the figures the file was
-                                                 entered with are still worth seeing, they just no longer count. --}}
-                                            <td data-label="Charged" class="text-end {{ $voidCustomer ? 'text-decoration-line-through' : 'dr' }}">
-                                                @if ($partCustomer)
-                                                    <span class="text-muted text-decoration-line-through">{{ number_format((float) $items->customer_amount, 2, '.', ',') }}</span>
-                                                    <span class="dr">{{ number_format($netCustomer, 2, '.', ',') }}</span>
-                                                @else
-                                                    {{ number_format((float) $items->customer_amount, 2, '.', ',') }}
-                                                @endif
-                                            </td>
-                                            <td data-label="Vendor">
-                                                @if ($items->vendor_id)
-                                                    <a href="{{ route('party.statement', $items->vendor_id) }}" class="link-primary" target="_blank">{{ $items->vendor_name }}</a>
-                                                @else
-                                                    <span class="text-muted">In-house</span>
-                                                @endif
-                                            </td>
-                                            <td data-label="Cost" class="text-end {{ $voidVendor ? 'text-decoration-line-through' : 'cr' }}">
-                                                @if ($items->vendor_amount === null)
-                                                @elseif ($partVendor)
-                                                    <span class="text-muted text-decoration-line-through">{{ number_format((float) $items->vendor_amount, 2, '.', ',') }}</span>
-                                                    <span class="cr">{{ number_format($netVendor, 2, '.', ',') }}</span>
-                                                @else
-                                                    {{ number_format((float) $items->vendor_amount, 2, '.', ',') }}
-                                                @endif
-                                            </td>
-                                            <td data-label="Margin" class="text-end fw-bold {{ abs($fileMargin) < 0.005 ? '' : ($fileMargin < 0 ? 'cr' : 'dr') }}">{{ number_format($fileMargin, 2, '.', ',') }}</td>
-                                            <td data-label="Status">
-                                                <span class="badge {{ $work::STATUS_BADGES[$items->status] ?? 'bg-secondary' }}">
-                                                    {{ $work::STATUSES[$items->status] ?? $items->status }}
-                                                </span>
-                                                @if ($items->approval_screenshot)
-                                                    <a href="{{ url($items->approval_screenshot) }}" target="_blank" rel="noopener" class="link-primary ms-1" title="Approval screenshot">
-                                                        <i class="bi bi-paperclip"></i>
-                                                    </a>
-                                                @endif
-                                            </td>
-                                            <td class="text-end">
-                                                <a href="{{ route('workfile.edit', $items->id) }}" class="link-primary">Edit</a>
-                                            </td>
-                                        </tr>
-                                    @empty
-                                        {{-- No placeholder row here on purpose: a colspan cell has
-                                             fewer cells than the header, which stops DataTables
-                                             initialising with "Incorrect column count". DataTables
-                                             draws its own message from language.emptyTable below. --}}
-                                    @endforelse
-                                </tbody>
-                                <tfoot>
-                                    <tr>
-                                        <th colspan="6" class="text-end">Totals</th>
-                                        <th data-label="Billed" class="text-end dr">{{ number_format($billed, 2, '.', ',') }}</th>
-                                        <th></th>
-                                        <th data-label="Vendor Cost" class="text-end cr">{{ number_format($cost, 2, '.', ',') }}</th>
-                                        <th data-label="Margin" class="text-end {{ $billed - $cost < 0 ? 'cr' : 'dr' }}">{{ number_format($billed - $cost, 2, '.', ',') }}</th>
-                                        <th colspan="2"></th>
-                                    </tr>
-                                </tfoot>
-                            </table>
-                        </div>
+                        {{--
+                            Rendered by Vue. The grid carries the search, the
+                            paging and every export the CDN stack used to, from the
+                            rows the controller already sent — no second query, and
+                            one definition of how a figure is written on screen and
+                            in the file that comes out of it.
+                        --}}
+                        <div data-vue="vue-files-list" data-props="{{ json_encode($props) }}"></div>
 
                     </div>
                 </div>
             </div>
         </div>
     </section>
-@endsection
-
-@section('script')
-    <script src="https://code.jquery.com/jquery-3.7.0.js"></script>
-    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/pdfmake.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/vfs_fonts.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.html5.min.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.print.min.js"></script>
-
-    <script>
-        $(document).ready(function() {
-            $('#example').DataTable({
-                language: { emptyTable: 'No files in this view — use Receive Files above.' },
-                dom: 'Bfrtip',
-                buttons: ['copyHtml5', 'excelHtml5', 'csvHtml5', 'pdfHtml5', 'print'],
-                "pageLength": 50,
-                // Server sends newest first; keep it.
-                order: [],
-                columnDefs: [{
-                    orderable: false,
-                    targets: [11]
-                }]
-            });
-        });
-    </script>
 @endsection

@@ -17,7 +17,6 @@ import { balance, money, side } from '../money';
 const props = defineProps({
     files: { type: Array, default: () => [] },
     statuses: { type: Object, default: () => ({}) },
-    badges: { type: Object, default: () => ({}) },
     action: { type: String, required: true },
     csrf: { type: String, required: true },
     resetUrl: { type: String, required: true },

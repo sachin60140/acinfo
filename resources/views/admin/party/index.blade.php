@@ -3,9 +3,20 @@
 @section('title', $label . 's | Ac Info')
 
 @section('style')
-    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
-    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css">
     @include('admin.party._style')
+
+    <style>
+        /* The green is the affordance — it says "this opens WhatsApp" faster than
+           the number does, and a grid cell is a plain link with no room for the
+           icon the old markup carried. Same value as .wa-link in _style. */
+        .party-list .wa-cell .ui-link {
+            color: #25d366;
+        }
+
+        .party-list .wa-cell .ui-link:hover {
+            color: #128c7e;
+        }
+    </style>
 @endsection
 
 @section('content')
@@ -19,6 +30,69 @@
                 $totalCr += (float) abs($p->current_balance);
             }
         }
+
+        /*
+         * Column order, sortability and the export set are the ones the old
+         * DataTables config carried; several of them were fixes.
+         *
+         * Balance is typed 'balance', so it sorts on the raw signed figure and
+         * prints "1,200.00 Cr" — which is what the data-order attribute on the
+         * old cell existed to achieve. Action is unsortable, as it was, and is
+         * kept out of exports: a column of the word "Edit" is not data.
+         *
+         * No totals row. Netting a customer in debit against one in credit
+         * would report a business with nothing outstanding, when it has money
+         * to collect and money to refund; both sides are shown above instead.
+         */
+        $columns = [
+            ['key' => 'id', 'label' => '#'],
+            ['key' => 'name', 'label' => 'Name', 'type' => 'link', 'linkTo' => 'statement_url', 'sub' => 'inactive_note'],
+            ['key' => 'mobile', 'label' => 'Mobile', 'type' => 'link', 'linkTo' => 'mobile_url'],
+            ['key' => 'whatsapp', 'label' => 'WhatsApp', 'type' => 'link', 'linkTo' => 'whatsapp_url', 'class' => 'wa-cell'],
+            ['key' => 'address', 'label' => 'Address'],
+            ['key' => 'entry_count', 'label' => 'Entries', 'type' => 'count'],
+            ['key' => 'current_balance', 'label' => 'Balance', 'type' => 'balance'],
+            ['key' => 'action', 'label' => 'Action', 'type' => 'link', 'linkTo' => 'edit_url', 'sortable' => false, 'exportable' => false],
+
+            // Carried for searching only: "inactive" finds the deactivated
+            // parties, whose marker is otherwise a quiet line under the name.
+            ['key' => 'inactive_note', 'label' => 'Status', 'hidden' => true],
+        ];
+
+        $rows = $parties->map(function ($party) {
+            // Blank means "no separate WhatsApp number", so the link falls back
+            // to the mobile — which is the same number in most cases.
+            $wa = $party->whatsapp ?: $party->mobile;
+
+            return [
+                'id' => (int) $party->id,
+                'name' => $party->name,
+                'statement_url' => route('party.statement', $party->id),
+                'inactive_note' => $party->is_active ? null : 'Inactive',
+                'mobile' => $party->mobile,
+                'mobile_url' => 'tel:'.$party->mobile,
+                'whatsapp' => $wa,
+                'whatsapp_url' => 'https://wa.me/91'.$wa,
+                'address' => $party->address,
+                'entry_count' => (int) $party->entry_count,
+                'current_balance' => (float) $party->current_balance,
+                'action' => 'Edit',
+                'edit_url' => route('party.edit', $party->id),
+            ];
+        })->values();
+
+        /*
+         * The grid opens unsorted, which lands on name ascending: withBalance()
+         * already orders by name, and that is the order the old table was
+         * configured to sort itself into on load.
+         */
+        $grid = [
+            'columns' => $columns,
+            'rows' => $rows,
+            'title' => $label.' Ledgers',
+            'perPage' => 50,
+            'emptyText' => 'No '.Str::lower($label).'s yet — use the Add button above.',
+        ];
     @endphp
 
     <div class="pagetitle">
@@ -58,61 +132,14 @@
                             </div>
                         </div>
 
-                        <div class="table-responsive">
-                            <table class="table display party-table rt" id="example">
-                                <thead>
-                                    <tr>
-                                        <th scope="col">#</th>
-                                        <th scope="col">Name</th>
-                                        <th scope="col">Mobile</th>
-                                        <th scope="col">WhatsApp</th>
-                                        <th scope="col">Address</th>
-                                        <th scope="col" class="text-end">Entries</th>
-                                        <th scope="col" class="text-end">Balance</th>
-                                        <th scope="col" class="text-end">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @forelse ($parties as $items)
-                                        @php
-                                            // Blank means "no separate WhatsApp number", so the link falls
-                                            // back to the mobile — which is the same number in most cases.
-                                            $wa = $items->whatsapp ?: $items->mobile;
-                                        @endphp
-                                        <tr>
-                                            <td data-label="#">{{ $items->id }}</td>
-                                            <td>
-                                                {{ $items->name }}
-                                                @if (! $items->is_active)
-                                                    <span class="badge bg-secondary ms-1">Inactive</span>
-                                                @endif
-                                            </td>
-                                            <td data-label="Mobile"><a href="tel:{{ $items->mobile }}" class="link-primary">{{ $items->mobile }}</a></td>
-                                            <td>
-                                                <a href="https://wa.me/91{{ $wa }}" target="_blank" rel="noopener" class="wa-link">
-                                                    <i class="bi bi-whatsapp me-1"></i>{{ $wa }}
-                                                </a>
-                                            </td>
-                                            <td data-label="Address">{{ $items->address }}</td>
-                                            <td data-label="Entries" class="text-end">{{ $items->entry_count }}</td>
-                                            <td data-label="Balance" class="text-end fw-bold {{ $items->current_balance < 0 ? 'cr' : 'dr' }}" data-order="{{ $items->current_balance }}">
-                                                {{ \App\Models\PartyLedgerModel::formatBalance($items->current_balance) }}
-                                            </td>
-                                            <td class="text-end">
-                                                <a href="{{ route('party.statement', $items->id) }}" class="link-primary" target="_blank">Statement</a>
-                                                <span class="text-muted mx-1">|</span>
-                                                <a href="{{ route('party.edit', $items->id) }}" class="link-primary">Edit</a>
-                                            </td>
-                                        </tr>
-                                    @empty
-                                        {{-- No placeholder row here on purpose: a colspan cell has
-                                             fewer cells than the header, which stops DataTables
-                                             initialising with "Incorrect column count". DataTables
-                                             draws its own message from language.emptyTable below. --}}
-                                    @endforelse
-                                </tbody>
-                            </table>
-                        </div>
+                        {{--
+                            Rendered by DataGrid, which carries the search, sort,
+                            paging and the Copy/CSV/Excel/PDF/Print exports that
+                            were DataTables' — and none of the megabyte of CDN
+                            script that came with them. The list is read-only, so
+                            the server still owns every figure on it.
+                        --}}
+                        <div class="ui party-list" data-vue="vue-party-list" data-props="{{ json_encode($grid) }}"></div>
 
                     </div>
                 </div>
@@ -122,30 +149,4 @@
 @endsection
 
 @section('script')
-    <script src="https://code.jquery.com/jquery-3.7.0.js"></script>
-    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/pdfmake.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/vfs_fonts.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.html5.min.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.print.min.js"></script>
-
-    <script>
-        $(document).ready(function() {
-            $('#example').DataTable({
-                language: { emptyTable: 'No {{ strtolower($label) }}s yet — use the Add button above.' },
-                dom: 'Bfrtip',
-                buttons: ['copyHtml5', 'excelHtml5', 'csvHtml5', 'pdfHtml5', 'print'],
-                "pageLength": 50,
-                "aaSorting": [
-                    [1, 'asc']
-                ],
-                columnDefs: [{
-                    orderable: false,
-                    targets: [7]
-                }]
-            });
-        });
-    </script>
 @endsection

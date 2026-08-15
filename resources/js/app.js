@@ -1,9 +1,16 @@
 import './bootstrap';
 import { createApp } from 'vue';
 
+import CustomerReturn from './components/CustomerReturn.vue';
+import DataGrid from './components/DataGrid.vue';
+import GiveToVendor from './components/GiveToVendor.vue';
 import Loader from './components/Loader.vue';
+import PartyEntry from './components/PartyEntry.vue';
+import PartyForm from './components/PartyForm.vue';
 import ReceiveFileRows from './components/ReceiveFileRows.vue';
 import StatusBoard from './components/StatusBoard.vue';
+import VendorReturn from './components/VendorReturn.vue';
+import WorkTypes from './components/WorkTypes.vue';
 
 /*
  * Vue is mounted into the existing Blade pages rather than taking over routing.
@@ -16,8 +23,30 @@ import StatusBoard from './components/StatusBoard.vue';
  */
 const components = {
     'vue-loader': Loader,
+
+    // Screens that do one thing to a batch of files.
     'vue-receive-rows': ReceiveFileRows,
+    'vue-give-to-vendor': GiveToVendor,
+    'vue-customer-return': CustomerReturn,
+    'vue-vendor-return': VendorReturn,
     'vue-status-board': StatusBoard,
+
+    // Ledger and reference data.
+    'vue-party-entry': PartyEntry,
+    'vue-party-form': PartyForm,
+    'vue-work-types': WorkTypes,
+
+    /*
+     * Every listing, statement and report is the same grid with a different
+     * column set, so they share one component under several keys. The key says
+     * what the screen is; the props say what it shows.
+     */
+    'vue-party-list': DataGrid,
+    'vue-party-statement': DataGrid,
+    'vue-files-list': DataGrid,
+    'vue-work-report': DataGrid,
+    'vue-client-list': DataGrid,
+    'vue-client-statement': DataGrid,
 };
 
 for (const [selector, component] of Object.entries(components)) {

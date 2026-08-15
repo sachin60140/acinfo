@@ -3,10 +3,21 @@
 @section('title', $party->name . ' Statement | Ac Info')
 
 @section('style')
-    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
-    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css">
     @include('admin.layouts._statement-style')
     @include('admin.party._style')
+
+    <style>
+        /* The shared statement styles hide the DataTables furniture from the
+           browser's own print. The grid's search, exports and pager are the same
+           kind of thing and want the same treatment — its Print button opens a
+           clean document of its own, so this only covers Ctrl+P on the page. */
+        @media print {
+            .grid__bar,
+            .grid__pages {
+                display: none !important;
+            }
+        }
+    </style>
 @endsection
 
 @section('content')
@@ -17,6 +28,67 @@
             : $today->copy()->subYear()->startOfYear()->addMonths(3);
         $base = route('party.statement', $party->id);
         $wa = $party->whatsapp ?: $party->mobile;
+
+        $fromText = $from ? date('d-m-Y', strtotime($from)) : 'Beginning';
+        $toText = $to ? date('d-m-Y', strtotime($to)) : 'Till date';
+        $periodText = $from || $to ? $fromText.' to '.$toText : 'All transactions';
+
+        /*
+         * The running balance is accumulated here, in the order the server sent,
+         * carried forward from the opening balance. That order is the only order
+         * in which these figures mean anything, which is why the grid below is
+         * mounted with sortable => false.
+         */
+        $running = (float) $opening;
+        $entries = [];
+
+        foreach ($getRecords as $entry) {
+            $running += $entry->signedAmount();
+            $isDebit = $entry->entry_type === 'debit';
+
+            $entries[] = [
+                'id' => $entry->id,
+                'txn_date' => date('d-m-Y', strtotime($entry->txn_date)),
+                'particular' => $entry->particular,
+                'payment_mode' => $entry->payment_mode,
+                'ref_no' => $entry->ref_no,
+                // Entries a work file generated link back to it; entries typed
+                // straight into the ledger just carry whatever reference was given.
+                'ref_url' => $entry->work_file_id ? route('workfile.edit', $entry->work_file_id) : null,
+                // The side an entry does not fall on stays null, so it exports as
+                // a blank cell the way the old table did rather than as 0.00.
+                'debit' => $isDebit ? (float) $entry->amount : null,
+                'credit' => $isDebit ? null : (float) $entry->amount,
+                'balance' => round($running, 2),
+            ];
+        }
+
+        $statement = [
+            // Also the export filename and the heading on the PDF and the printout.
+            'title' => $party->name.' Statement '.$periodText,
+            'columns' => [
+                ['key' => 'id', 'label' => '#'],
+                ['key' => 'txn_date', 'label' => 'Txn Date'],
+                ['key' => 'particular', 'label' => 'Particulars', 'width' => '14rem'],
+                ['key' => 'payment_mode', 'label' => 'Mode'],
+                ['key' => 'ref_no', 'label' => 'Ref No.', 'type' => 'link', 'linkTo' => 'ref_url'],
+                // The column colour says which side of the ledger it is; the cell
+                // dims itself on the side an entry did not fall on.
+                ['key' => 'debit', 'label' => 'Debit', 'type' => 'money', 'class' => 'ui-money--dr'],
+                ['key' => 'credit', 'label' => 'Credit', 'type' => 'money', 'class' => 'ui-money--cr'],
+                ['key' => 'balance', 'label' => 'Balance', 'type' => 'balance', 'class' => 'ui-money--strong'],
+            ],
+            'rows' => $entries,
+            'perPage' => 50,
+            /*
+             * Never sortable. Balance is a running total carried forward from the
+             * opening balance, so re-ordering the rows detaches every figure from
+             * the row it belongs to and the statement is quietly wrong.
+             */
+            'sortable' => false,
+            'totals' => ['debit' => 'sum', 'credit' => 'sum'],
+            'emptyText' => 'No transactions in this period.',
+        ];
     @endphp
 
     <div class="pagetitle">
@@ -49,10 +121,7 @@
                                 </div>
                                 <div class="statement-period">
                                     @if ($from || $to)
-                                        Period:
-                                        {{ $from ? date('d-m-Y', strtotime($from)) : 'Beginning' }}
-                                        &ndash;
-                                        {{ $to ? date('d-m-Y', strtotime($to)) : 'Till date' }}
+                                        Period: {{ $fromText }} &ndash; {{ $toText }}
                                     @else
                                         Period: All transactions
                                     @endif
@@ -91,6 +160,9 @@
                             </div>
                         @endif
 
+                        {{-- Opening and closing stay outside the table: the Balance
+                             column starts from the opening figure and the table can
+                             be searched and paged, so neither belongs to a row. --}}
                         <div class="statement-summary mb-3">
                             <div class="stat">
                                 <span class="label">Opening Balance</span>
@@ -110,96 +182,18 @@
                             </div>
                         </div>
 
-                        <div class="table-responsive">
-                            <table class="table display statement-table rt" id="example">
-                                <thead>
-                                    <tr>
-                                        <th scope="col">#</th>
-                                        <th scope="col">Txn Date</th>
-                                        <th scope="col">Particulars</th>
-                                        <th scope="col">Mode</th>
-                                        <th scope="col">Ref No.</th>
-                                        <th scope="col" class="text-end">Debit</th>
-                                        <th scope="col" class="text-end">Credit</th>
-                                        <th scope="col" class="text-end">Balance</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @php $bal = (float) $opening; @endphp
-
-                                    @forelse ($getRecords as $items)
-                                        @php $bal += $items->signedAmount(); @endphp
-                                        <tr>
-                                            <td data-label="#">{{ $items->id }}</td>
-                                            {{-- data-order keeps the raw Y-m-d so any sort stays chronological
-                                                 while the reader sees dd-mm-yyyy. --}}
-                                            <td data-label="Date" data-order="{{ $items->txn_date }}">{{ date('d-m-Y', strtotime($items->txn_date)) }}</td>
-                                            <td data-label="Particulars">{{ $items->particular }}</td>
-                                            <td data-label="Mode">{{ $items->payment_mode }}</td>
-                                            <td>
-                                                {{-- Entries a work file generated link back to it; entries typed
-                                                     straight into the ledger just show whatever reference was given. --}}
-                                                @if ($items->work_file_id)
-                                                    <a href="{{ route('workfile.edit', $items->work_file_id) }}" class="link-primary">{{ $items->ref_no }}</a>
-                                                @else
-                                                    {{ $items->ref_no }}
-                                                @endif
-                                            </td>
-                                            <td data-label="Debit" class="text-end dr">{{ $items->entry_type === 'debit' ? number_format((float) $items->amount, 2, '.', ',') : '' }}</td>
-                                            <td data-label="Credit" class="text-end cr">{{ $items->entry_type === 'credit' ? number_format((float) $items->amount, 2, '.', ',') : '' }}</td>
-                                            <td data-label="Balance" class="text-end fw-bold {{ $bal < 0 ? 'cr' : 'dr' }}">{{ \App\Models\PartyLedgerModel::formatBalance($bal) }}</td>
-                                        </tr>
-                                    @empty
-                                        {{-- No placeholder row here on purpose: a colspan cell has
-                                             fewer cells than the header, which stops DataTables
-                                             initialising with "Incorrect column count". DataTables
-                                             draws its own message from language.emptyTable below. --}}
-                                    @endforelse
-                                </tbody>
-                                <tfoot>
-                                    <tr>
-                                        <th colspan="5" class="text-end">Period Totals</th>
-                                        <th data-label="Total Debit" class="text-end dr">{{ number_format((float) $debits, 2, '.', ',') }}</th>
-                                        <th data-label="Total Credit" class="text-end cr">{{ number_format((float) $credits, 2, '.', ',') }}</th>
-                                        <th data-label="Closing" class="text-end {{ $closing < 0 ? 'cr' : 'dr' }}">{{ \App\Models\PartyLedgerModel::formatBalance($closing) }}</th>
-                                    </tr>
-                                </tfoot>
-                            </table>
-                        </div>
+                        {{--
+                            Rendered by Vue. Search, paging and the Copy/CSV/Excel/
+                            PDF/Print exports are the grid's, so the DataTables
+                            stack this page used to pull from a CDN is gone. The
+                            figures are the same ones the server already computed —
+                            only the rendering moved.
+                        --}}
+                        <div class="ui" data-vue="vue-party-statement" data-props="{{ json_encode($statement) }}"></div>
 
                     </div>
                 </div>
             </div>
         </div>
     </section>
-@endsection
-
-@section('script')
-    <script src="https://code.jquery.com/jquery-3.7.0.js"></script>
-    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/pdfmake.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/vfs_fonts.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.html5.min.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.print.min.js"></script>
-
-    <script>
-        $(document).ready(function() {
-            $('#example').DataTable({
-                language: { emptyTable: 'No transactions in this period.' },
-                dom: 'Bfrtip',
-                buttons: ['copyHtml5', 'excelHtml5', 'csvHtml5', 'pdfHtml5', 'print'],
-                "pageLength": 50,
-                // Keep the order the server sent (oldest transaction first). Balance is a
-                // running total accumulated in that order and carried forward from the
-                // opening balance, so re-sorting would detach each figure from its row.
-                order: [],
-                columnDefs: [{
-                    orderable: false,
-                    targets: [5, 6, 7]
-                }]
-            });
-        });
-    </script>
 @endsection

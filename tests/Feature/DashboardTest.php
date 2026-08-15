@@ -204,36 +204,48 @@ class DashboardTest extends TestCase
             ->assertSee('assets/css/responsive.css', false);
     }
 
-    public function test_wide_tables_are_marked_up_for_stacking_on_mobile(): void
+    /**
+     * A wide table has to become a stack of cards on a phone, or it grows a
+     * sideways scrollbar and the right-hand columns — which on this app are the
+     * money — sit off screen.
+     *
+     * Two mechanisms provide it: the Blade screens use the `rt` classes in
+     * responsive.css, the converted ones carry the rule in the component's own
+     * stylesheet. Screens are moving from the first to the second one at a time,
+     * so this asserts the concern rather than either mechanism, and keeps
+     * passing throughout instead of needing an edit per screen converted.
+     */
+    public function test_wide_tables_stack_on_mobile_by_one_mechanism_or_the_other(): void
     {
         $this->actingAs($this->admin());
 
         $customer = $this->party('customer', '9000000403');
         $this->entry($customer->id, 'debit', 750);
 
-        // A data table: label left, value right.
-        $this->get('admin/parties/customer')
-            ->assertOk()
-            ->assertSee('party-table rt', false)
-            ->assertSee('data-label="Balance"', false);
+        $screens = [
+            'admin/parties/customer',
+            'admin/party/statement/'.$customer->id,
+            'admin/files',
+            'admin/file/assign',
+            'admin/file/customer-return',
+            'admin/file/vendor-return',
+            'admin/file/status',
+        ];
 
-        $this->get('admin/party/statement/'.$customer->id)
-            ->assertOk()
-            ->assertSee('statement-table rt', false)
-            ->assertSee('data-label="Debit"', false);
+        foreach ($screens as $screen) {
+            $html = $this->get($screen)->assertOk()->getContent();
 
-        // A table of form controls: label above, control full width.
-        $this->get('admin/file/assign')
-            ->assertOk()
-            ->assertSee('rt-form', false);
+            if (str_contains($html, 'data-vue="vue-')) {
+                continue; // Covered by VueMountTest, against the component's CSS.
+            }
 
-        // The status board is a Vue component now and carries its own card
-        // layout for narrow screens, so it has no Blade stacking class to find.
-        // What matters is that its mount point and data are on the page.
-        $this->get('admin/file/status')
-            ->assertOk()
-            ->assertSee('data-vue="vue-status-board"', false)
-            ->assertSee('returnedKey', false);
+            $this->assertMatchesRegularExpression(
+                '/class="[^"]*\brt(-form)?\b/',
+                $html,
+                "$screen renders a wide table with no stacking class and is not converted, ".
+                'so its right-hand columns fall off a phone screen.'
+            );
+        }
     }
 
     /**
@@ -258,6 +270,17 @@ class DashboardTest extends TestCase
 
         foreach ($screens as $screen) {
             $html = $this->get($screen)->assertOk()->getContent();
+
+            /*
+             * Converted screens cannot have this fault. It was a DataTables
+             * fault specifically — it counts cells per row and stops dead when
+             * one falls short. The grid that replaced it does its own layout and
+             * spans headings across the full width, so there is nothing to
+             * miscount. VueMountTest covers those screens instead.
+             */
+            if (str_contains($html, 'data-vue="vue-')) {
+                continue;
+            }
 
             $this->assertSame(1, preg_match('#<table[^>]*id="example".*?</table>#s', $html, $table), $screen.' has the table');
             $this->assertSame(1, preg_match('#<tbody>(.*?)</tbody>#s', $table[0], $body), $screen.' has a body');
