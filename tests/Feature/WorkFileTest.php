@@ -1457,7 +1457,16 @@ class WorkFileTest extends TestCase
         $this->assertSame($original, $stored, 'the row still points at the first file');
         $this->assertFileExists(public_path($stored), 'and that file is still on disk');
 
-        WorkFileModel::find($file->id)->deleteScreenshot();
+        /*
+         * The replacement that the rollback abandoned is still on disk, and
+         * deliberately so — nothing is deleted until the row naming it commits.
+         * That is the right trade for evidence, but it does leave the occasional
+         * orphan, so this test clears up after itself rather than dropping
+         * files into the working tree.
+         */
+        foreach (glob(public_path(WorkFileModel::UPLOAD_DIR).'/'.$file->file_no.'-*') as $leftover) {
+            unlink($leftover);
+        }
     }
 
     public function test_the_listing_resolves_names_and_filters(): void
