@@ -134,14 +134,14 @@
                     <div class="col-xxl-3 col-md-6">
                         <div class="card info-card customers-card">
                             <div class="card-body">
-                                <h5 class="card-title">Open Files <span>| Pending &amp; in progress</span></h5>
+                                <h5 class="card-title">Open Files <span>| Work in hand</span></h5>
 
                                 <div class="d-flex align-items-center">
                                     <div class="card-icon rounded-circle d-flex align-items-center justify-content-center">
                                         <i class="bi bi-folder2-open"></i>
                                     </div>
                                     <div class="ps-3">
-                                        <h6><a href="{{ route('workfile.index') }}" class="text-decoration-none text-reset">{{ $work['open'] }}</a></h6>
+                                        <h6><a href="{{ route('workfile.index', ['status' => 'open']) }}" class="text-decoration-none text-reset">{{ $work['open'] }}</a></h6>
                                         <span class="text-muted small pt-2">still to finish</span>
                                     </div>
                                 </div>

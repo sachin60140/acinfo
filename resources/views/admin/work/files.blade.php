@@ -63,7 +63,9 @@
                                         &nbsp;&middot;&nbsp; {{ $closedCount }} cancelled or returned, not counted as billed
                                     @endif
                                     @if ($status)
-                                        &nbsp;&middot;&nbsp; Status: {{ \App\Models\WorkFileModel::STATUSES[$status] }}
+                                        {{-- 'open' is a view of several statuses, not one of them,
+                                             so it has no entry in the list to look up. --}}
+                                        &nbsp;&middot;&nbsp; Status: {{ $status === 'open' ? 'Work in hand' : ($work::STATUSES[$status] ?? $status) }}
                                     @endif
                                 </div>
                             </div>
@@ -88,6 +90,7 @@
                                 <label for="status" class="form-label">Status</label>
                                 <select class="form-select" id="status" name="status">
                                     <option value="">All</option>
+                                    <option value="open" {{ $status === 'open' ? 'selected' : '' }}>Work in hand</option>
                                     @foreach (\App\Models\WorkFileModel::STATUSES as $key => $text)
                                         <option value="{{ $key }}" {{ $status === $key ? 'selected' : '' }}>{{ $text }}</option>
                                     @endforeach

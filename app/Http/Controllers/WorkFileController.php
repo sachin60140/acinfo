@@ -49,7 +49,9 @@ class WorkFileController extends Controller
     public function index(Request $req)
     {
         $req->validate([
-            'status' => ['nullable', Rule::in(array_keys(WorkFileModel::STATUSES))],
+            // 'open' is a view of several statuses rather than one of them, so it
+            // cannot be validated against the stored list.
+            'status' => ['nullable', Rule::in(array_merge(array_keys(WorkFileModel::STATUSES), ['open']))],
             'from' => 'nullable|date_format:Y-m-d',
             'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
         ]);

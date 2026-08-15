@@ -258,6 +258,50 @@ class DashboardTest extends TestCase
         }
     }
 
+    /**
+     * The tile counts work in hand, so following it must land on that same set.
+     * It linked to the unfiltered list, which showed every file ever received —
+     * a count of 3 opening onto 200 rows.
+     */
+    public function test_the_open_files_tile_lands_on_the_files_it_counted(): void
+    {
+        $this->actingAs($this->admin());
+
+        $type = new WorkTypeModel;
+        $type->name = 'Tile Work '.uniqid();
+        $type->is_active = 1;
+        $type->save();
+
+        $customer = $this->party('customer', '9000000501');
+
+        $make = function (string $status) use ($type, $customer) {
+            $file = new WorkFileModel;
+            $file->file_no = 'F-TILE-'.uniqid();
+            $file->received_date = now()->toDateString();
+            $file->work_type_id = $type->id;
+            $file->customer_id = $customer->id;
+            $file->customer_amount = 1000;
+            $file->status = $status;
+            $file->save();
+
+            return $file;
+        };
+
+        $open = $make('paper_pendency');
+        $done = $make('approval_done');
+
+        // The count and the filtered list are the same set.
+        $listed = WorkFileModel::listing('open');
+        $this->assertTrue($listed->contains('id', $open->id));
+        $this->assertFalse($listed->contains('id', $done->id));
+
+        // And the list accepts the filter the tile links with.
+        $this->get(route('workfile.index', ['status' => 'open']))
+            ->assertOk()
+            ->assertSee($open->file_no)
+            ->assertDontSee($done->file_no);
+    }
+
     public function test_an_unknown_party_type_is_not_found(): void
     {
         $this->actingAs($this->admin());

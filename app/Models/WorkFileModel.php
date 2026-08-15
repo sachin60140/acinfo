@@ -868,7 +868,10 @@ class WorkFileModel extends Model
                 'vendor.id as vendor_id'
             );
 
-        if ($status) {
+        if ($status === 'open') {
+            // Work still in hand, the same set the dashboard counts.
+            $query->whereIn('work_file.status', self::OPEN_STATUSES);
+        } elseif ($status) {
             $query->where('work_file.status', $status);
         }
 
