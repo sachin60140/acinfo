@@ -10,6 +10,12 @@
   <meta content="" name="description">
   <meta content="" name="keywords">
 
+  {{-- Google Search Console verification. This lived only in the working copy
+       on the production server, which made every deploy stop with "local
+       changes would be overwritten" and put the tag one careless checkout away
+       from being lost. It belongs in version control. --}}
+  <meta name="google-site-verification" content="oy8-3LsSeZY0liVJALGeSCvoAKVm9mKiB9joXwupCfY" />
+
   <!-- Favicons -->
   <link href="{{url('assets/img/favicon.png')}}" rel="icon">
   <link href="{{url('assets/img/apple-touch-icon.png')}}" rel="apple-touch-icon">
