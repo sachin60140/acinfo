@@ -465,12 +465,21 @@ class WorkFileController extends Controller
                     $from = $file->status;
                     $moved = $from !== $wanted[$file->id];
 
-                    if ($wanted[$file->id] === WorkFileModel::RETURNED) {
+                    /*
+                     * Only touch the refund when one was actually submitted.
+                     *
+                     * A blank box means "the whole charge" and stores null. A key
+                     * that is not posted at all means something different: the
+                     * refund box was not on screen, so the figure already stored
+                     * must stand. Treating the two the same turned un-cancelling a
+                     * part-returned file into a full refund.
+                     */
+                    if ($wanted[$file->id] === WorkFileModel::RETURNED && array_key_exists($file->id, $refunds)) {
                         // Blank and "the whole charge" are the same thing, and both
                         // store null. The form pre-fills the full amount so it can
                         // be seen and edited down; storing that back as a figure
                         // would mark an untouched row dirty and log a phantom change.
-                        $file->returned_amount = self::partialOrNull($refunds[$file->id] ?? null, $file->customer_amount);
+                        $file->returned_amount = self::partialOrNull($refunds[$file->id], $file->customer_amount);
                     }
 
                     // A remark on its own is worth saving: it records chasing a

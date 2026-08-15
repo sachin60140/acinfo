@@ -482,8 +482,23 @@
                     ? "Cancelling removes this file's entries from both ledgers. The file and its number are kept."
                     : 'The papers go back and the full amount is credited to the customer. The original charge stays on the statement beside it.';
 
-                document.getElementById('screenshot_box').style.display =
-                    status.value === 'approval_done' ? '' : 'none';
+                /*
+                 * Hidden is not enough: a file chosen while Approval Done was
+                 * selected still posts after the status is changed away, and
+                 * storeScreenshot() deletes the existing one before saving it —
+                 * so a mis-click could replace the evidence on an approval that
+                 * is no longer even being made. A disabled input posts nothing.
+                 */
+                const screenshotBox = document.getElementById('screenshot_box');
+                const screenshotField = document.getElementById('approval_screenshot');
+                const approving = status.value === 'approval_done';
+
+                screenshotBox.style.display = approving ? '' : 'none';
+                screenshotField.disabled = !approving;
+
+                if (!approving) {
+                    screenshotField.value = '';
+                }
 
                 const refundBox = document.getElementById('refund_box');
                 const refundField = document.getElementById('returned_amount');

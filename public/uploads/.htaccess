@@ -1,0 +1,29 @@
+# Nothing in here is ever meant to run.
+#
+# This directory holds approval screenshots, uploaded by admin users and served
+# straight off the filesystem — storage/app/public is unreachable on this host
+# because symlink() is disabled, so uploads have to live under public/.
+#
+# Filenames are already derived from the file number and the content-guessed
+# extension rather than from anything the browser sent. This is the second lock:
+# even if something malformed did land here, the server will not execute it.
+
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+
+<IfModule mod_php7.c>
+    php_flag engine off
+</IfModule>
+
+<IfModule mod_php8.c>
+    php_flag engine off
+</IfModule>
+
+# LiteSpeed and php-fpm ignore php_flag, so refuse the handler outright.
+<FilesMatch "\.(php|phtml|php3|php4|php5|php7|php8|phps|cgi|pl|py|sh|htaccess)$">
+    Require all denied
+</FilesMatch>
+
+Options -ExecCGI -Indexes
+AddType text/plain .php .phtml .php3 .php4 .php5 .php7 .php8 .phps

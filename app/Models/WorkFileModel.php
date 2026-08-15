@@ -109,12 +109,20 @@ class WorkFileModel extends Model
         static::saving(function (self $file) {
             if ($file->isReturned()) {
                 $file->returned_on = $file->returned_on ?: now()->toDateString();
-            } else {
-                // Undoing a return clears the figure with it, so re-returning the
-                // file later starts from a full refund rather than a stale part one.
+            } elseif (! $file->isCancelled()) {
+                // Genuinely no longer returned, so the figure goes with it and a
+                // later return starts fresh rather than from a stale part one.
                 $file->returned_on = null;
                 $file->returned_amount = null;
             }
+
+            /*
+             * Cancelling keeps them, frozen. syncLedger withdraws every entry a
+             * cancelled file has, so they change nothing while it stays
+             * cancelled — but clearing them meant un-cancelling restored a FULL
+             * refund dated today instead of the part refund actually agreed. A
+             * customer who owed 3,000 came back owing nothing, from an undo.
+             */
 
             if (! $file->vendor_returned_on) {
                 $file->vendor_returned_amount = null;
@@ -285,8 +293,16 @@ class WorkFileModel extends Model
             mkdir($directory, 0755, true);
         }
 
-        $name = $this->file_no.'-'.substr(md5((string) $this->id.microtime()), 0, 8)
-            .'.'.strtolower($upload->getClientOriginalExtension());
+        /*
+         * The extension is guessed from the file's actual content, never taken
+         * from the browser. The validation rule does cross-check the two today,
+         * so a .php name is already rejected — but this directory is web-served,
+         * and what lands in it should not depend on a validation rule elsewhere
+         * staying exactly as it is.
+         */
+        $extension = strtolower($upload->extension() ?: 'bin');
+
+        $name = $this->file_no.'-'.substr(md5((string) $this->id.microtime()), 0, 8).'.'.$extension;
 
         $upload->move($directory, $name);
 

@@ -1373,6 +1373,54 @@ class WorkFileTest extends TestCase
         $this->assertSame(0.0, PartyLedgerModel::currentBalance($this->vendor->id));
     }
 
+    /**
+     * Cancelling used to wipe returned_on and returned_amount. Un-cancelling
+     * then restored a FULL refund dated today rather than the part refund
+     * actually agreed — a customer who owed 3,000 came back owing nothing, from
+     * an undo, with nothing on screen to say the figure had changed.
+     */
+    public function test_cancelling_and_un_cancelling_preserves_a_part_refund(): void
+    {
+        $file = $this->receive();
+        $this->returnToCustomer([$file->id], [$file->id => '2000'], '2026-04-10');
+
+        $this->assertSame(3000.0, PartyLedgerModel::currentBalance($this->customer->id));
+
+        $this->setStatuses([$file->id => 'cancelled']);
+        $this->assertSame(0.0, PartyLedgerModel::currentBalance($this->customer->id), 'cancelled charges nobody');
+
+        $this->setStatuses([$file->id => 'paper_returned']);
+
+        $fresh = WorkFileModel::find($file->id);
+
+        $this->assertSame('2026-04-10', (string) $fresh->returned_on, 'the original date, not today');
+        $this->assertSame(2000.0, (float) $fresh->returned_amount, 'the part refund actually agreed');
+        $this->assertSame(3000.0, PartyLedgerModel::currentBalance($this->customer->id), 'back exactly where it was');
+    }
+
+    /**
+     * The stored name comes from the file's own content, never from the name the
+     * browser sent — this directory is served by the web server.
+     */
+    public function test_a_screenshot_is_stored_under_a_content_derived_extension(): void
+    {
+        $file = $this->receive();
+
+        $this->controller->status(Request::create('/admin/file/status', 'POST',
+            ['statuses' => [$file->id => 'approval_done'], 'remarks' => []],
+            [],
+            // A real image the browser claims is something else entirely.
+            ['screenshots' => [$file->id => UploadedFile::fake()->image('approval.jpg')]]
+        ));
+
+        $stored = WorkFileModel::find($file->id)->approval_screenshot;
+
+        $this->assertNotNull($stored);
+        $this->assertMatchesRegularExpression('#^'.preg_quote(WorkFileModel::UPLOAD_DIR, '#').'/F-\d+-[a-f0-9]{8}\.(jpg|jpeg|png|webp|pdf)$#', $stored);
+
+        WorkFileModel::find($file->id)->deleteScreenshot();
+    }
+
     public function test_the_listing_resolves_names_and_filters(): void
     {
         $file = $this->receive(['status' => 'under_verification']);
