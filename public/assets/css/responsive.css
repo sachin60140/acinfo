@@ -1,0 +1,323 @@
+/*
+ * Mobile layout.
+ *
+ * The template already handles the chrome — off-canvas sidebar, viewport meta,
+ * padding. What it does not handle is this application's tables: eleven columns
+ * of ledger do not fit a phone, and three of the screens are tables of form
+ * controls, which a horizontal scrollbar makes almost unusable.
+ *
+ * So below the large breakpoint every marked table stops being a grid and
+ * becomes one card per row, each cell carrying its own heading from the
+ * data-label attribute in the markup. Nothing is hidden and nothing has to be
+ * scrolled sideways to be read.
+ *
+ *   .rt       a table of data     — label left, value right
+ *   .rt-form  a table of inputs   — label above, control full width
+ *
+ * Both stack at the same width so the two never disagree on screen.
+ */
+
+@media (max-width: 991.98px) {
+
+    /* The off-canvas sidebar sits at left:-300px; without this it can still
+       drag a horizontal scrollbar onto the page on some phones. */
+    body {
+        overflow-x: hidden;
+    }
+
+    .pagetitle h1 {
+        font-size: 1.4rem;
+    }
+
+    /* ---- Tables become cards ------------------------------------------- */
+
+    .rt,
+    .rt-form {
+        border-collapse: separate;
+    }
+
+    .rt thead,
+    .rt-form thead {
+        /* clip rather than display:none — screen readers keep the headings */
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+    }
+
+    .rt,
+    .rt tbody,
+    .rt tr,
+    .rt td,
+    .rt tfoot,
+    .rt-form,
+    .rt-form tbody,
+    .rt-form tr,
+    .rt-form td,
+    .rt-form tfoot {
+        display: block;
+        width: 100%;
+    }
+
+    .rt tr,
+    .rt-form tr {
+        background: #fff;
+        border: 1px solid #e5e9f2;
+        border-radius: 8px;
+        margin-bottom: 0.7rem;
+        padding: 0.45rem 0.75rem;
+    }
+
+    .rt td,
+    .rt-form td {
+        border: 0 !important;
+        padding: 0.3rem 0;
+    }
+
+    /* A cell the server left empty — an unused Debit or Credit column — would
+       otherwise print its heading against nothing. */
+    .rt td:empty,
+    .rt-form td:empty {
+        display: none;
+    }
+
+    .rt td::before,
+    .rt-form td::before {
+        content: attr(data-label);
+        color: #64748b;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    /* Cells with no label are full-width blocks: action links, wide notes. */
+    .rt td:not([data-label])::before,
+    .rt-form td:not([data-label])::before {
+        content: none;
+    }
+
+    /* ---- Data tables: label left, value right --------------------------- */
+
+    .rt td {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        text-align: right;
+    }
+
+    .rt td::before {
+        flex: 0 0 auto;
+        text-align: left;
+    }
+
+    .rt td:not([data-label]) {
+        justify-content: flex-start;
+        text-align: left;
+        padding-top: 0.5rem;
+    }
+
+    /* The first cell reads as the card's title. */
+    .rt tr td:first-child {
+        border-bottom: 1px solid #eef1f6 !important;
+        margin-bottom: 0.25rem;
+        padding-bottom: 0.45rem;
+        font-weight: 700;
+    }
+
+    .rt tfoot tr {
+        background: #f8f9fa;
+        border-color: #adb5bd;
+    }
+
+    .rt tfoot th {
+        border: 0;
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.3rem 0;
+        text-align: right;
+    }
+
+    .rt tfoot th::before {
+        content: attr(data-label);
+        color: #64748b;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        text-align: left;
+    }
+
+    /* A colspan heading cell in the footer has nothing to line up against. */
+    .rt tfoot th[colspan] {
+        display: none;
+    }
+
+    /* ---- Form tables: label above, control full width ------------------- */
+
+    .rt-form td {
+        text-align: left;
+    }
+
+    .rt-form td::before {
+        display: block;
+        margin-bottom: 0.2rem;
+    }
+
+    .rt-form td .form-control,
+    .rt-form td .form-select {
+        width: 100%;
+    }
+
+    /* The row-number and remove-button cells are furniture, not fields. */
+    .rt-form td.row-no {
+        color: #94a3b8;
+        font-weight: 700;
+        padding: 0 0 0.2rem 0;
+        width: auto;
+    }
+
+    .rt-form td.row-no::before {
+        content: "Row ";
+        display: inline;
+    }
+
+    .rt-form tr {
+        padding-bottom: 0.7rem;
+    }
+
+    /* ---- DataTables controls -------------------------------------------- */
+
+    .dataTables_wrapper .dt-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+        float: none;
+        margin-bottom: 0.6rem;
+    }
+
+    .dataTables_wrapper .dt-buttons .dt-button {
+        margin: 0 !important;
+        font-size: 0.75rem;
+        padding: 0.3rem 0.6rem;
+    }
+
+    .dataTables_wrapper .dataTables_filter,
+    .dataTables_wrapper .dataTables_length,
+    .dataTables_wrapper .dataTables_info,
+    .dataTables_wrapper .dataTables_paginate {
+        float: none;
+        text-align: left;
+        width: 100%;
+    }
+
+    .dataTables_wrapper .dataTables_filter label {
+        display: block;
+    }
+
+    .dataTables_wrapper .dataTables_filter input {
+        display: block;
+        margin: 0.2rem 0 0.6rem 0;
+        width: 100%;
+    }
+
+    .dataTables_wrapper .dataTables_paginate {
+        margin-top: 0.5rem;
+    }
+
+    .dataTables_wrapper .dataTables_paginate .paginate_button {
+        padding: 0.25rem 0.6rem;
+        font-size: 0.8rem;
+    }
+
+    /* ---- Everything else ------------------------------------------------ */
+
+    /* Two stat tiles across rather than one, so a summary stays a summary. */
+    .statement-summary {
+        grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+    }
+
+    .statement-summary .value {
+        font-size: 0.95rem;
+    }
+
+    /* Filter bars: full-width fields instead of a cramped inline row. */
+    .statement-filter .col-sm-auto {
+        width: 100%;
+    }
+
+    .statement-filter .btn {
+        width: 100%;
+        margin-bottom: 0.3rem;
+    }
+
+    .quick-ranges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+    }
+
+    .quick-ranges a {
+        margin-left: 0;
+    }
+
+    /* Action buttons in a card header stack to full width rather than
+       squeezing four onto one line. */
+    .card-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.4rem;
+        width: 100%;
+    }
+
+    .card-actions .btn {
+        width: 100%;
+    }
+
+    .batch-total {
+        flex-direction: column;
+        gap: 0.2rem !important;
+    }
+
+    .last-remark {
+        max-width: 100% !important;
+        white-space: normal !important;
+    }
+
+    /* The picker is 17.5rem wide; on a 320px screen that has to give. */
+    .dp-popup {
+        max-width: calc(100vw - 1rem);
+    }
+}
+
+@media (max-width: 575.98px) {
+
+    /* One tile per row once two no longer fit without wrapping the figure. */
+    .statement-summary {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .card-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .card-body {
+        padding: 0.9rem;
+    }
+}
+
+@media print {
+
+    /* Printed statements go back to being tables. */
+    .rt thead,
+    .rt-form thead {
+        position: static;
+        width: auto;
+        height: auto;
+        clip: auto;
+    }
+}
