@@ -2,8 +2,10 @@
 
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
+// Sanctum's own classes are referenced below only as ::class strings, which PHP
+// resolves at compile time without autoloading. Nothing in this file may *call*
+// into the package: it is not installed on the production host.
 use Laravel\Sanctum\Http\Middleware\AuthenticateSession;
-use Laravel\Sanctum\Sanctum;
 
 return [
 
@@ -18,10 +20,23 @@ return [
     |
     */
 
+    /*
+     * Derived from APP_URL rather than from Sanctum::currentApplicationUrlWithPort().
+     *
+     * Config files are evaluated on every boot, so that call needed the Sanctum
+     * class to exist before the framework had finished starting. The production
+     * host has no laravel/sanctum in vendor/ and cannot get one — composer.lock
+     * pins Laravel 13 while that server runs 11.9 — so the moment this file
+     * arrived there, every request died with "Class Laravel\Sanctum\Sanctum not
+     * found", artisan included.
+     *
+     * Reading the host out of APP_URL gives the same answer with no dependency
+     * on the package, which is the shape Laravel itself moved to later.
+     */
     'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', sprintf(
         '%s%s',
         'localhost,localhost:3000,127.0.0.1,127.0.0.1:8000,::1',
-        Sanctum::currentApplicationUrlWithPort()
+        ($sanctumAppUrl = env('APP_URL')) ? ','.parse_url($sanctumAppUrl, PHP_URL_HOST) : ''
     ))),
 
     /*
