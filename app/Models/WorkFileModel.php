@@ -304,10 +304,31 @@ class WorkFileModel extends Model
 
         $name = $this->file_no.'-'.substr(md5((string) $this->id.microtime()), 0, 8).'.'.$extension;
 
+        $previous = $this->approval_screenshot;
+
         $upload->move($directory, $name);
 
-        $this->deleteScreenshot();
         $this->approval_screenshot = self::UPLOAD_DIR.'/'.$name;
+
+        /*
+         * The file it replaces goes only once the row that replaced it has
+         * safely committed.
+         *
+         * Deleting it inline meant a transaction that rolled back afterwards
+         * left the row pointing at a path that no longer existed — the approval
+         * evidence for that file simply gone, with the database none the wiser.
+         * Outside a transaction afterCommit runs immediately, so this is
+         * correct on either path.
+         */
+        if ($previous && $previous !== $this->approval_screenshot) {
+            DB::afterCommit(function () use ($previous) {
+                $path = public_path($previous);
+
+                if (is_file($path)) {
+                    unlink($path);
+                }
+            });
+        }
     }
 
     /**

@@ -375,6 +375,17 @@
             const meta = @json($groupMeta);
             const grandTotal = @json($grandTotalText);
 
+            /*
+             * Party names are typed by a user and land in innerHTML below, so
+             * they are escaped on the way in. A customer named with markup would
+             * otherwise have it run every time this report was opened.
+             */
+            const escape = function (value) {
+                return String(value ?? '').replace(/[&<>"']/g, function (ch) {
+                    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+                });
+            };
+
             const money = function (value) {
                 return (Number(value) || 0).toLocaleString('en-IN', {
                     minimumFractionDigits: 2,
@@ -423,7 +434,7 @@
                         // Prefixed so a band says whose report this is, not just
                         // a bare name that could belong to either side.
                         let text = '<span class="party-key">' + partyLabel + '</span> '
-                            + '<span class="party-name">' + name + '</span>'
+                            + '<span class="party-name">' + escape(name) + '</span>'
                             + '<span class="party-meta"> &middot; ' + files + (files === 1 ? ' file' : ' files');
 
                         if (info.open) {
@@ -439,7 +450,7 @@
                         const name = info.name || rows.data()[0][1];
 
                         return $('<tr/>').append(
-                            '<td colspan="9" class="text-end">' + name + ' total</td>'
+                            '<td colspan="9" class="text-end">' + escape(name) + ' total</td>'
                             + '<td class="text-end dr">' + money(info.billed) + '</td>'
                             + '<td class="text-end cr">' + money(info.cost) + '</td>'
                             + '<td class="text-end">' + money(info.margin) + '</td>'

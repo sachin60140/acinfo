@@ -11,6 +11,7 @@ use App\Models\WorkTypeModel;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ViewErrorBag;
@@ -1417,6 +1418,44 @@ class WorkFileTest extends TestCase
 
         $this->assertNotNull($stored);
         $this->assertMatchesRegularExpression('#^'.preg_quote(WorkFileModel::UPLOAD_DIR, '#').'/F-\d+-[a-f0-9]{8}\.(jpg|jpeg|png|webp|pdf)$#', $stored);
+
+        WorkFileModel::find($file->id)->deleteScreenshot();
+    }
+
+    /**
+     * Replacing a screenshot inside a transaction that later rolls back used to
+     * leave the row pointing at a file that had already been unlinked — the
+     * approval evidence gone, with the database none the wiser.
+     */
+    public function test_a_rollback_cannot_destroy_the_screenshot_the_row_still_points_at(): void
+    {
+        $file = $this->receive();
+
+        $this->controller->status(Request::create('/admin/file/status', 'POST',
+            ['statuses' => [$file->id => 'approval_done'], 'remarks' => []],
+            [], ['screenshots' => [$file->id => UploadedFile::fake()->image('first.jpg')]]
+        ));
+
+        $original = WorkFileModel::find($file->id)->approval_screenshot;
+        $this->assertFileExists(public_path($original));
+
+        // Replace it, then abandon the transaction that did so.
+        try {
+            DB::transaction(function () use ($file) {
+                $fresh = WorkFileModel::find($file->id);
+                $fresh->storeScreenshot(UploadedFile::fake()->image('second.jpg'));
+                $fresh->save();
+
+                throw new \RuntimeException('rolled back');
+            });
+        } catch (\RuntimeException $e) {
+            // expected
+        }
+
+        $stored = WorkFileModel::find($file->id)->approval_screenshot;
+
+        $this->assertSame($original, $stored, 'the row still points at the first file');
+        $this->assertFileExists(public_path($stored), 'and that file is still on disk');
 
         WorkFileModel::find($file->id)->deleteScreenshot();
     }
