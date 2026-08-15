@@ -60,6 +60,21 @@ function onNavigate(event) {
         return;
     }
 
+    /*
+     * Only a real page navigation raises the overlay.
+     *
+     * tel:, mailto:, sms: and friends hand off to the operating system and
+     * leave this page exactly where it was — nothing unloads, so nothing ever
+     * takes the overlay back down. Tapping a customer's phone number on the
+     * party list locked the screen until it was reloaded.
+     *
+     * link.protocol is the browser's own resolution of the href, so this holds
+     * for relative URLs too.
+     */
+    if (link.protocol !== 'http:' && link.protocol !== 'https:') {
+        return;
+    }
+
     show(link.dataset.loading);
 }
 

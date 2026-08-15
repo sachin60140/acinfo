@@ -113,6 +113,17 @@
         // Only ever reached for an existing file — receiving is its own screen now.
         $action = $isEdit ? route('workfile.edit', $file->id) : route('workfile.receive');
         $blocked = $workTypes->isEmpty() || $customers->isEmpty();
+
+        // Built here rather than inline in @json(): that directive splits its
+        // argument on commas and cannot parse a call whose own arguments contain
+        // them, which compiles to a broken script tag.
+        $work = \App\Models\WorkFileModel::class;
+        $alreadyPosted = [
+            'customerId' => $isEdit ? $file->customer_id : null,
+            'vendorId' => $isEdit ? $file->vendor_id : null,
+            'customer' => $isEdit ? $work::netCustomer($file->status, $file->customer_amount, $file->returned_amount) : 0,
+            'vendor' => $isEdit ? $work::netVendor($file->status, $file->vendor_amount, $file->vendor_returned_on !== null, $file->vendor_returned_amount) : 0,
+        ];
     @endphp
 
     <div class="pagetitle">
@@ -427,6 +438,18 @@
                 return;
             }
 
+            /*
+             * What this file already contributes to each party's balance.
+             *
+             * The balance carried on each option is the party's current one,
+             * which for a file being edited already includes that file's own
+             * entries. Adding the amount on top counted it twice, so the panel
+             * promised a balance the statement would never show. Discount the
+             * existing effect first — but only while the party is still the one
+             * those entries were posted against.
+             */
+            const already = @json($alreadyPosted);
+
             const workType = document.getElementById('work_type_id');
             const status = document.getElementById('status');
             const statusHint = document.getElementById('status_hint');
@@ -518,11 +541,19 @@
 
                 setText('summary_customer', customer.value ? textOf(customer) : 'Not selected');
                 setText('summary_debit', money(debit));
-                setText('summary_customer_after', customer.value ? balance(dataOf(customer, 'balance') + debit) : '0.00');
+                // Take this file's existing entries back out before adding the
+                // new ones, so the figure matches what the statement will show.
+                const customerBase = dataOf(customer, 'balance')
+                    - (String(customer.value) === String(already.customerId) ? already.customer : 0);
+                setText('summary_customer_after', customer.value ? balance(customerBase + debit) : '0.00');
 
                 setText('summary_vendor', vendor.value ? textOf(vendor) : 'In-house');
                 setText('summary_credit', money(credit));
-                setText('summary_vendor_after', vendor.value ? balance(dataOf(vendor, 'balance') - credit) : '0.00');
+                // A vendor's balance goes negative as they are owed, so removing
+                // this file's existing cost adds back rather than subtracts.
+                const vendorBase = dataOf(vendor, 'balance')
+                    + (String(vendor.value) === String(already.vendorId) ? already.vendor : 0);
+                setText('summary_vendor_after', vendor.value ? balance(vendorBase - credit) : '0.00');
 
                 setText('summary_margin', money(debit - credit));
             };
