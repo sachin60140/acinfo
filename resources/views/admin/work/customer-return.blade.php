@@ -21,7 +21,7 @@
     <section class="section dashboard party-page">
         @include('admin.party._alerts')
 
-        @if ($files->isEmpty())
+        @if (! $fileCount)
             <div class="alert alert-info">
                 No files are available to return. Everything received has already been returned or cancelled.
                 <a href="{{ route('workfile.receive') }}" class="alert-link">Receive files</a>.
@@ -37,26 +37,7 @@
                 Old input is cast so that a bounced batch always arrives as a
                 JSON array and a JSON object, whatever keys it happens to carry.
             --}}
-            <div data-vue="vue-customer-return" data-props="{{ \App\Support\VueProps::encode([
-                'action' => route('workfile.customerreturn'),
-                'csrf' => csrf_token(),
-                'cancelUrl' => route('workfile.index'),
-                'returnedOn' => old('returned_on', date('Y-m-d')),
-                'oldRemark' => old('remark', ''),
-                'oldFiles' => array_values((array) old('files', [])),
-                'oldAmounts' => (object) old('amounts', []),
-                'files' => $files->map(fn ($file) => [
-                    'id' => $file->id,
-                    'file_no' => $file->file_no,
-                    'received_date' => date('d-m-Y', strtotime($file->received_date)),
-                    'work_type' => $file->workType?->name,
-                    'description' => $file->description,
-                    'customer' => $file->customer?->name,
-                    'status' => $file->status,
-                    'status_label' => $file->statusLabel(),
-                    'customer_amount' => (float) $file->customer_amount,
-                ])->values(),
-            ]) }}"></div>
+            <div data-vue="vue-customer-return" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
         @endif
     </section>
 @endsection

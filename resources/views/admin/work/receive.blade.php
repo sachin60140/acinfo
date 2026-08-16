@@ -75,11 +75,6 @@
 @endsection
 
 @section('content')
-    @php
-        $blocked = $workTypes->isEmpty() || $customers->isEmpty();
-        // On a validation failure the user gets their rows back, not a blank form.
-        $oldRows = old('rows', [['registration_no' => '', 'work_type_id' => '', 'description' => '', 'amount' => '']]);
-    @endphp
 
     <div class="pagetitle">
         <h1>Receive Files</h1>
@@ -166,20 +161,7 @@
                             which is what makes converting one screen at a time
                             safe on a live application.
                         --}}
-                        <div data-vue="vue-receive-rows" data-props="{{ \App\Support\VueProps::encode([
-                            'workTypes' => $workTypes->map(fn ($type) => [
-                                'id' => $type->id,
-                                'name' => $type->name,
-                                'default_rate' => $type->default_rate,
-                            ])->values(),
-                            'historyUrl' => route('api.workfile.history'),
-                            'oldRows' => collect($oldRows)->map(fn ($row) => [
-                                'registration_no' => $row['registration_no'] ?? '',
-                                'work_type_id' => $row['work_type_id'] ?? '',
-                                'description' => $row['description'] ?? '',
-                                'amount' => $row['amount'] ?? '',
-                            ])->values(),
-                        ]) }}"></div>
+                        <div data-vue="vue-receive-rows" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
 
                         <div class="d-flex flex-wrap gap-2 justify-content-end mt-3">
                             <a href="{{ route('workfile.index') }}" class="btn btn-outline-secondary">Cancel</a>

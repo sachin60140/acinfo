@@ -264,10 +264,6 @@
 @endsection
 
 @section('content')
-    @php
-        $tabs = ['open' => 'In Hand'] + $statuses + ['all' => 'All'];
-        $work = \App\Models\WorkFileModel::class;
-    @endphp
 
     <div class="pagetitle">
         <h1>Update Work Status</h1>
@@ -329,7 +325,7 @@
                     </div>
                 </div>
 
-                @if ($files->isEmpty())
+                @if (! $fileCount)
                     <div class="alert alert-info mb-0">
                         @if ($workTypeId)
                             No files under this status for that work type.
@@ -347,32 +343,7 @@
                         value — which is what makes converting a screen on a live
                         ledger safe: only the rendering moves.
                     --}}
-                    <div data-vue="vue-status-board" data-props="{{ \App\Support\VueProps::encode([
-                        'action' => route('workfile.status'),
-                        'csrf' => csrf_token(),
-                        'resetUrl' => route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId])),
-                        'statuses' => $statuses,
-                        'returnedKey' => $work::RETURNED,
-                        'approvedKey' => $work::APPROVED,
-                        'cancelledKey' => $work::CANCELLED,
-                        'files' => $files->map(fn ($file) => [
-                            'id' => $file->id,
-                            'file_no' => $file->file_no,
-                            'received_date' => date('d-m-Y', strtotime($file->received_date)),
-                            'registration_no' => $file->registration_no,
-                            'work_type' => $file->workType?->name,
-                            'description' => $file->description,
-                            'customer' => $file->customer?->name,
-                            'vendor' => $file->vendor?->name,
-                            'customer_amount' => (float) $file->customer_amount,
-                            'returned_amount' => $file->returned_amount === null ? null : (float) $file->returned_amount,
-                            'status' => $file->status,
-                            'has_screenshot' => (bool) $file->approval_screenshot,
-                            'screenshot_url' => $file->screenshotUrl(),
-                            'edit_url' => route('workfile.edit', $file->id),
-                            'last_remark' => $lastRemarks[$file->id] ?? null,
-                        ])->values(),
-                    ]) }}"></div>
+                    <div data-vue="vue-status-board" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
                 @endif
 
             </div>

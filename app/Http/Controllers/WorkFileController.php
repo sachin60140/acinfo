@@ -284,10 +284,33 @@ class WorkFileController extends Controller
                 ->with('success', count($saved).' '.Str::plural('file', count($saved)).' received: '.$numbers);
         }
 
-        return view('admin.work.receive', [
-            'workTypes' => WorkTypeModel::selectList(),
-            'customers' => PartyModel::selectList('customer'),
-        ]);
+        $workTypes = WorkTypeModel::selectList();
+        $customers = PartyModel::selectList('customer');
+
+        // On a validation failure the user gets their rows back, not a blank form.
+        $oldRows = old('rows', [['registration_no' => '', 'work_type_id' => '', 'description' => '', 'amount' => '']]);
+
+        $props = [
+            'workTypes' => $workTypes->map(fn ($type) => [
+                'id' => $type->id,
+                'name' => $type->name,
+                'default_rate' => $type->default_rate,
+            ])->values(),
+            'historyUrl' => route('api.workfile.history'),
+            'oldRows' => collect($oldRows)->map(fn ($row) => [
+                'registration_no' => $row['registration_no'] ?? '',
+                'work_type_id' => $row['work_type_id'] ?? '',
+                'description' => $row['description'] ?? '',
+                'amount' => $row['amount'] ?? '',
+            ])->values(),
+        ];
+
+        return Screen::make('admin.work.receive', 'vue-receive-rows', $props, [
+            'workTypes' => $workTypes,
+            'customers' => $customers,
+            // Nothing can be received without both a work type and a customer.
+            'blocked' => $workTypes->isEmpty() || $customers->isEmpty(),
+        ])->toResponse($req);
     }
 
     /**
@@ -354,10 +377,46 @@ class WorkFileController extends Controller
                 ->with('success', $assigned->count().' '.Str::plural('file', $assigned->count()).' given to the vendor: '.$assigned->pluck('file_no')->implode(', '));
         }
 
-        return view('admin.work.assign', [
-            'files' => WorkFileModel::unassigned(),
-            'vendors' => PartyModel::selectList('vendor'),
-        ]);
+        $files = WorkFileModel::unassigned();
+        $vendors = PartyModel::selectList('vendor');
+
+        // A bounced batch comes back with the date the user chose, not today's.
+        $vendorDate = old('vendor_date', date('Y-m-d'));
+        $vendorDateDisplay = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $vendorDate)
+            ? date('d-m-Y', strtotime($vendorDate))
+            : (string) $vendorDate;
+
+        $props = [
+            'action' => route('workfile.assign'),
+            'csrf' => csrf_token(),
+            'cancelUrl' => route('workfile.index'),
+            'vendorId' => old('vendor_id') ? (int) old('vendor_id') : '',
+            'vendorDate' => $vendorDate,
+            'vendorDateDisplay' => $vendorDateDisplay,
+            'remark' => (string) old('remark'),
+            'pickedFiles' => array_map('intval', (array) old('files', [])),
+            'oldAmounts' => (object) (array) old('amounts', []),
+            'vendors' => $vendors->map(fn ($vendor) => [
+                'id' => (int) $vendor->id,
+                'name' => $vendor->name,
+                'mobile' => $vendor->mobile,
+                'current_balance' => (float) $vendor->current_balance,
+            ])->values(),
+            'files' => $files->map(fn ($file) => [
+                'id' => (int) $file->id,
+                'file_no' => $file->file_no,
+                'received_date' => date('d-m-Y', strtotime($file->received_date)),
+                'work_type' => $file->workType?->name,
+                'description' => $file->description,
+                'customer' => $file->customer?->name,
+                'customer_amount' => (float) $file->customer_amount,
+            ])->values(),
+        ];
+
+        return Screen::make('admin.work.assign', 'vue-give-to-vendor', $props, [
+            'fileCount' => $files->count(),
+            'vendorCount' => $vendors->count(),
+        ])->toResponse($req);
     }
 
     /**
@@ -430,9 +489,32 @@ class WorkFileController extends Controller
                     .' returned to the customer: '.$returned->pluck('file_no')->implode(', '));
         }
 
-        return view('admin.work.customer-return', [
-            'files' => WorkFileModel::returnableToCustomer(),
-        ]);
+        $files = WorkFileModel::returnableToCustomer();
+
+        $props = [
+            'action' => route('workfile.customerreturn'),
+            'csrf' => csrf_token(),
+            'cancelUrl' => route('workfile.index'),
+            'returnedOn' => old('returned_on', date('Y-m-d')),
+            'oldRemark' => old('remark', ''),
+            'oldFiles' => array_values((array) old('files', [])),
+            'oldAmounts' => (object) old('amounts', []),
+            'files' => $files->map(fn ($file) => [
+                'id' => $file->id,
+                'file_no' => $file->file_no,
+                'received_date' => date('d-m-Y', strtotime($file->received_date)),
+                'work_type' => $file->workType?->name,
+                'description' => $file->description,
+                'customer' => $file->customer?->name,
+                'status' => $file->status,
+                'status_label' => $file->statusLabel(),
+                'customer_amount' => (float) $file->customer_amount,
+            ])->values(),
+        ];
+
+        return Screen::make('admin.work.customer-return', 'vue-customer-return', $props, [
+            'fileCount' => $files->count(),
+        ])->toResponse($req);
     }
 
     /**
@@ -529,9 +611,38 @@ class WorkFileController extends Controller
                     .' taken back from the vendor: '.$returned->pluck('file_no')->implode(', '));
         }
 
-        return view('admin.work.vendor-return', [
-            'files' => WorkFileModel::withVendor(),
-        ]);
+        $files = WorkFileModel::withVendor();
+
+        $returnedOn = old('returned_on', date('Y-m-d'));
+        $returnedOnDisplay = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $returnedOn)
+            ? date('d-m-Y', strtotime($returnedOn))
+            : (string) $returnedOn;
+
+        $props = [
+            'action' => route('workfile.vendorreturn'),
+            'csrf' => csrf_token(),
+            'cancelUrl' => route('workfile.index'),
+            'returnedOn' => $returnedOn,
+            'returnedOnDisplay' => $returnedOnDisplay,
+            'remark' => old('remark', ''),
+            // A bounced batch comes back ticked and filled in as it was sent.
+            'pickedIds' => array_map('intval', (array) old('files', [])),
+            'oldAmounts' => (object) (array) old('amounts', []),
+            'files' => $files->map(fn ($file) => [
+                'id' => $file->id,
+                'file_no' => $file->file_no,
+                'vendor' => $file->vendor?->name,
+                'vendor_date' => $file->vendor_date ? date('d-m-Y', strtotime($file->vendor_date)) : null,
+                'work_type' => $file->workType?->name,
+                'description' => $file->description,
+                'customer' => $file->customer?->name,
+                'vendor_amount' => $file->vendor_amount === null ? null : (float) $file->vendor_amount,
+            ])->values(),
+        ];
+
+        return Screen::make('admin.work.vendor-return', 'vue-vendor-return', $props, [
+            'fileCount' => $files->count(),
+        ])->toResponse($req);
     }
 
     /**
@@ -685,16 +796,55 @@ class WorkFileController extends Controller
         $workTypeId = $req->query('work_type');
         $files = WorkFileModel::forStatusBoard($filter, $workTypeId);
 
-        return view('admin.work.status', [
-            'files' => $files,
+        // Fetched for the whole board in one query rather than per row.
+        $lastRemarks = WorkFileModel::latestRemarks($files->pluck('id')->all());
+
+        /*
+         * The field names are the ones status() already validates, so the form
+         * still posts normally and the server still checks every value — which is
+         * what made converting this screen on a live ledger safe: only the
+         * rendering moved, the money logic did not.
+         */
+        $props = [
+            'action' => route('workfile.status'),
+            'csrf' => csrf_token(),
+            'resetUrl' => route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId])),
+            'statuses' => WorkFileModel::STATUSES,
+            'returnedKey' => WorkFileModel::RETURNED,
+            'approvedKey' => WorkFileModel::APPROVED,
+            'cancelledKey' => WorkFileModel::CANCELLED,
+            'files' => $files->map(fn ($file) => [
+                'id' => $file->id,
+                'file_no' => $file->file_no,
+                'received_date' => date('d-m-Y', strtotime($file->received_date)),
+                'registration_no' => $file->registration_no,
+                'work_type' => $file->workType?->name,
+                'description' => $file->description,
+                'customer' => $file->customer?->name,
+                'vendor' => $file->vendor?->name,
+                'customer_amount' => (float) $file->customer_amount,
+                'returned_amount' => $file->returned_amount === null ? null : (float) $file->returned_amount,
+                'status' => $file->status,
+                'has_screenshot' => (bool) $file->approval_screenshot,
+                'screenshot_url' => $file->screenshotUrl(),
+                'edit_url' => route('workfile.edit', $file->id),
+                'last_remark' => $lastRemarks[$file->id] ?? null,
+            ])->values(),
+        ];
+
+        $statuses = WorkFileModel::STATUSES;
+
+        return Screen::make('admin.work.status', 'vue-status-board', $props, [
             'filter' => $filter,
             'workTypeId' => $workTypeId ? (int) $workTypeId : null,
-            'statuses' => WorkFileModel::STATUSES,
+            'statuses' => $statuses,
             'statusCounts' => WorkFileModel::statusCounts($workTypeId),
             'workTypeCounts' => WorkFileModel::workTypeCounts($filter),
-            // Fetched for the whole board in one query rather than per row.
-            'lastRemarks' => WorkFileModel::latestRemarks($files->pluck('id')->all()),
-        ]);
+            'fileCount' => $files->count(),
+            // 'open' and 'all' are tabs rather than stored statuses, so the tab
+            // strip is assembled here rather than in the template.
+            'tabs' => ['open' => 'In Hand'] + $statuses + ['all' => 'All'],
+        ])->toResponse($req);
     }
 
     public function edit(Request $req, $id)
