@@ -453,4 +453,118 @@ class DashboardTest extends TestCase
         $this->assertSame($before['Open Files']['value'] + 1, $after['Open Files']['value']);
     }
 
+
+    /**
+     * How long the longest-waiting file has waited.
+     *
+     * The count alone does not separate three files priced tomorrow from three
+     * nobody has looked at since last month, and only one of those is worth
+     * interrupting a day for.
+     *
+     * The direction matters and is easy to get backwards: Carbon signs a
+     * difference by direction, so the operands the wrong way round make every
+     * age negative — and clamping that at zero reports every file as received
+     * today, which is the exact reassurance this figure exists to withhold.
+     */
+    public function test_the_wait_is_measured_from_the_received_date_to_today(): void
+    {
+        $type = new WorkTypeModel;
+        $type->name = 'Ageing Work '.uniqid();
+        $type->is_active = 1;
+        $type->save();
+
+        $customer = $this->party('customer', '9000000701');
+
+        $received = function (int $daysAgo) use ($type, $customer) {
+            $file = new WorkFileModel;
+            $file->file_no = 'F-AGE-'.uniqid();
+            $file->received_date = now()->copy()->subDays($daysAgo)->toDateString();
+            $file->work_type_id = $type->id;
+            $file->customer_id = $customer->id;
+            $file->customer_amount = 0;
+            $file->status = 'in_office';
+            $file->save();
+
+            return $file;
+        };
+
+        $received(3);
+        $this->assertSame(3, WorkFileModel::longestWaitingDays());
+
+        // The longest wait, not the latest file.
+        $received(40);
+        $received(1);
+        $this->assertSame(40, WorkFileModel::longestWaitingDays());
+
+        // Received today has waited nothing, not a fraction of a day.
+        $today = $received(0);
+        $this->assertSame(40, WorkFileModel::longestWaitingDays());
+
+        $this->assertNotNull($today->id);
+    }
+
+    public function test_nothing_waiting_has_no_wait(): void
+    {
+        // The suite runs against real data, so this only holds once whatever is
+        // pending is priced. Assert the shape rather than a fixed answer.
+        $waiting = WorkFileModel::longestWaitingDays();
+
+        if (WorkFileModel::pendingCounts()['any'] === 0) {
+            $this->assertNull($waiting, 'nothing waiting cannot have been waiting for a length of time');
+        } else {
+            $this->assertIsInt($waiting);
+            $this->assertGreaterThanOrEqual(0, $waiting, 'a wait is never negative');
+        }
+    }
+
+    /**
+     * The pending list is a list of things to chase, so it leads with the one
+     * that has been waiting longest. Every other view leads with the newest,
+     * which here would bury the worst case at the bottom — where it has been
+     * sitting unnoticed all along.
+     */
+    public function test_files_awaiting_a_price_are_listed_oldest_first(): void
+    {
+        $type = new WorkTypeModel;
+        $type->name = 'Chase Work '.uniqid();
+        $type->is_active = 1;
+        $type->save();
+
+        $customer = $this->party('customer', '9000000702');
+
+        $make = function (int $daysAgo) use ($type, $customer) {
+            $file = new WorkFileModel;
+            $file->file_no = 'F-CHASE-'.$daysAgo.'-'.uniqid();
+            $file->received_date = now()->copy()->subDays($daysAgo)->toDateString();
+            $file->work_type_id = $type->id;
+            $file->customer_id = $customer->id;
+            $file->customer_amount = 0;
+            $file->status = 'in_office';
+            $file->save();
+
+            return $file;
+        };
+
+        $recent = $make(2);
+        $oldest = $make(50);
+        $middle = $make(20);
+
+        $listed = WorkFileModel::listing(null, null, null, 'any')
+            ->whereIn('id', [$recent->id, $oldest->id, $middle->id])
+            ->pluck('id')
+            ->values()
+            ->all();
+
+        $this->assertSame([$oldest->id, $middle->id, $recent->id], $listed, 'the longest wait comes first');
+
+        // Unfiltered, the newest still leads — this order is for chasing only.
+        $unfiltered = WorkFileModel::listing()
+            ->whereIn('id', [$recent->id, $oldest->id, $middle->id])
+            ->pluck('id')
+            ->values()
+            ->all();
+
+        $this->assertSame([$recent->id, $middle->id, $oldest->id], $unfiltered);
+    }
+
 }

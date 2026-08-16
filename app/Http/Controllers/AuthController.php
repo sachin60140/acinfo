@@ -171,9 +171,21 @@ class AuthController extends Controller
                 'label' => 'Awaiting Price',
                 'value' => $pending['any'],
                 'type' => 'count',
+                /*
+                 * The age matters more than the count. Three files priced
+                 * tomorrow and three nobody has looked at since last month are
+                 * the same number and not the same situation, and only one of
+                 * them is worth interrupting the day for.
+                 */
                 'note' => trim(implode(' · ', array_filter([
                     $pending['customer'] ? $pending['customer'].' not billed' : null,
                     $pending['vendor'] ? $pending['vendor'].' no vendor rate' : null,
+                    match (true) {
+                        ($waiting = WorkFileModel::longestWaitingDays()) === null => null,
+                        $waiting === 0 => 'all received today',
+                        $waiting === 1 => 'oldest 1 day',
+                        default => 'oldest '.$waiting.' days',
+                    },
                 ]))),
                 // Lands on exactly the files it counted.
                 'href' => route('workfile.index', ['pending' => 'any']),

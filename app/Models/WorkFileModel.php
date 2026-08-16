@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
@@ -904,6 +905,41 @@ class WorkFileModel extends Model
         return $counts;
     }
 
+    /**
+     * How long the longest-waiting file has been waiting, in days.
+     *
+     * A count on its own does not separate three files priced tomorrow from
+     * three nobody has looked at since last month, and those are not the same
+     * situation. Null when nothing is waiting.
+     */
+    public static function longestWaitingDays(): ?int
+    {
+        $query = DB::table('work_file');
+        self::pendingWhere($query, 'any');
+
+        $oldest = $query->min('work_file.received_date');
+
+        if (! $oldest) {
+            return null;
+        }
+
+        /*
+         * From the received date to today, in that order: Carbon signs the
+         * difference by direction, so the operands the other way round make
+         * every age negative — and clamping that at zero would report every
+         * file as received today, which is the exact reassurance this figure
+         * exists to withhold.
+         *
+         * Whole days, and never negative: a file received today has waited
+         * nothing rather than a fraction, and a date typed slightly in the
+         * future is a slip rather than a negative wait.
+         */
+        return max(0, (int) Carbon::parse($oldest)->startOfDay()->diffInDays(
+            now()->startOfDay(),
+            absolute: false
+        ));
+    }
+
     public static function listing(?string $status = null, ?string $from = null, ?string $to = null, ?string $pending = null)
     {
         $query = DB::table('work_file')
@@ -947,6 +983,19 @@ class WorkFileModel extends Model
 
         if ($pending && array_key_exists($pending, self::PENDING)) {
             self::pendingWhere($query, $pending);
+
+            /*
+             * Oldest first, the opposite of every other view.
+             *
+             * Elsewhere the newest file is the interesting one. Here the list is
+             * a list of things to chase, and the one that has been waiting
+             * longest is the one to chase first — newest-first would bury it at
+             * the bottom, which is where it has been all along.
+             */
+            return $query
+                ->orderBy('work_file.received_date', 'asc')
+                ->orderBy('work_file.id', 'asc')
+                ->get();
         }
 
         return $query
