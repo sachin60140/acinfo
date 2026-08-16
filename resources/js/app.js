@@ -5,11 +5,13 @@ import ClientForm from './components/ClientForm.vue';
 import ClientPassword from './components/ClientPassword.vue';
 import CustomerReturn from './components/CustomerReturn.vue';
 import DataGrid from './components/DataGrid.vue';
+import Dashboard from './components/Dashboard.vue';
 import FileForm from './components/FileForm.vue';
 import GiveToVendor from './components/GiveToVendor.vue';
 import Loader from './components/Loader.vue';
 import PartyEntry from './components/PartyEntry.vue';
 import PartyForm from './components/PartyForm.vue';
+import PasswordToggle from './components/PasswordToggle.vue';
 import PaymentForm from './components/PaymentForm.vue';
 import PaymentReceipt from './components/PaymentReceipt.vue';
 import ReceiveFileRows from './components/ReceiveFileRows.vue';
@@ -30,6 +32,13 @@ import WorkTypes from './components/WorkTypes.vue';
 const components = {
     'vue-loader': Loader,
 
+    /*
+     * Login is enhanced, never replaced. The form there is server-rendered HTML
+     * that submits with JavaScript switched off, because the one screen where a
+     * failed mount cannot be allowed to matter is the one that lets people in.
+     */
+    'vue-password-toggle': PasswordToggle,
+
     // Screens that do one thing to a batch of files.
     'vue-receive-rows': ReceiveFileRows,
     'vue-give-to-vendor': GiveToVendor,
@@ -38,6 +47,7 @@ const components = {
     'vue-status-board': StatusBoard,
 
     // Ledger and reference data.
+    'vue-dashboard': Dashboard,
     'vue-party-entry': PartyEntry,
     'vue-party-form': PartyForm,
     'vue-work-types': WorkTypes,

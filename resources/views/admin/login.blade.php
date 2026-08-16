@@ -32,6 +32,7 @@
     <link href="{{url('assets/css/style.css')}}" rel="stylesheet">
 
 
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 
 <body>
@@ -96,6 +97,11 @@
                                             <input type="password" name="password" class="form-control"
                                                 id="yourPassword" required>
                                             <div class="invalid-feedback">Please enter your password!</div>
+                                            {{-- Enhancement only. The input above is server-rendered and
+                                                 submits with JavaScript switched off; this adds the show/hide
+                                                 button and the caps-lock warning beside it. If the bundle never
+                                                 loads, the field is still a plain password box that works. --}}
+                                            <div data-vue="vue-password-toggle" data-props="{{ \App\Support\VueProps::encode(['target' => 'yourPassword']) }}"></div>
                                         </div>
 
                                         <div class="col-12">

@@ -17,161 +17,87 @@
         </nav>
     </div><!-- End Page Title -->
 
-    <section class="section dashboard">
-        <div class="row">
+    @php
+        /*
+         * Every figure here is one the controller already computed. The tiles are
+         * described rather than drawn so the component decides how a figure reads
+         * — grouped, two decimals, Dr/Cr where it is a balance — in one place
+         * instead of six.
+         *
+         * Receivable and payable stay separate and adjacent. Netting them would
+         * report a business owed 10,000 and owing 7,000 as one owed 3,000, which
+         * is a different and much calmer statement than the truth.
+         */
+        $dashboardTiles = [
+            /*
+             * Both are sums over client_ledger, which stores a receipt positive —
+             * so they are negated and written as balances, exactly as the client
+             * list and each client's own statement write the same figures. Left
+             * raw they printed "-446,722.91" here while the list one click away
+             * printed the same money as "446,722.91 Dr".
+             */
+            [
+                'group' => 'Client ledger',
+                'label' => 'Net Outstanding',
+                'value' => round(-(float) $totaldues, 2),
+                'type' => 'balance',
+                'note' => 'Across every client',
+            ],
+            [
+                'group' => 'Client ledger',
+                'label' => 'Net Movement',
+                'value' => round(-(float) $monthnet, 2),
+                'type' => 'balance',
+                'note' => now()->format('F Y'),
+            ],
+            [
+                'group' => 'Client ledger',
+                'label' => 'Clients',
+                'value' => (int) $clientcount,
+                'type' => 'count',
+                'note' => 'On the books',
+            ],
+            [
+                'group' => 'Parties',
+                'label' => 'Receivable',
+                'value' => (float) $outstanding['receivable'],
+                'type' => 'money',
+                'tone' => 'dr',
+                'note' => $outstanding['customers'].' '.Str::plural('customer', $outstanding['customers']),
+                // Lands on the customers this figure was summed from.
+                'href' => route('party.index', 'customer'),
+            ],
+            [
+                'group' => 'Parties',
+                'label' => 'Payable',
+                'value' => (float) $outstanding['payable'],
+                'type' => 'money',
+                'tone' => 'cr',
+                'note' => $outstanding['vendors'].' '.Str::plural('vendor', $outstanding['vendors']),
+                'href' => route('party.index', 'vendor'),
+            ],
+            [
+                'group' => 'Work',
+                'label' => 'Open Files',
+                'value' => (int) $work['open'],
+                'type' => 'count',
+                'note' => 'Work in hand',
+                // The filtered list, not every file ever received — the count and
+                // the screen it opens have to be the same set.
+                'href' => route('workfile.index', ['status' => 'open']),
+            ],
+            [
+                'group' => 'Work',
+                'label' => 'File Margin',
+                'value' => (float) $work['month_margin'],
+                'type' => 'money',
+                'note' => 'on '.number_format($work['month_billed'], 2, '.', ',').' billed · '.now()->format('F Y'),
+            ],
+        ];
+    @endphp
 
-            <!-- Left side columns -->
-            <div class="col-lg-12">
-                <div class="row">
-
-                    <!-- Net outstanding across every client -->
-                    <div class="col-xxl-4 col-md-4">
-                        <div class="card info-card sales-card">
-
-                            <div class="card-body">
-                                <h5 class="card-title">Net Outstanding <span>| All Clients</span></h5>
-
-                                <div class="d-flex align-items-center">
-                                    <div class="card-icon rounded-circle d-flex align-items-center justify-content-center">
-                                        <i class="bi bi-currency-rupee"></i>
-                                    </div>
-                                    <div class="ps-3">
-                                        <h6>{{ number_format((float) $totaldues, 2, '.', ',') }}</h6>
-                                    </div>
-                                </div>
-                            </div>
-
-                        </div>
-                    </div><!-- End Net Outstanding Card -->
-
-                    <!-- Net movement in the current month -->
-                    <div class="col-xxl-4 col-md-4">
-                        <div class="card info-card revenue-card">
-
-                            <div class="card-body">
-                                <h5 class="card-title">Net Movement <span>| {{ now()->format('F Y') }}</span></h5>
-
-                                <div class="d-flex align-items-center">
-                                    <div class="card-icon rounded-circle d-flex align-items-center justify-content-center">
-                                        <i class="bi bi-currency-rupee"></i>
-                                    </div>
-                                    <div class="ps-3">
-                                        <h6>{{ number_format((float) $monthnet, 2, '.', ',') }}</h6>
-                                    </div>
-                                </div>
-                            </div>
-
-                        </div>
-                    </div><!-- End Net Movement Card -->
-
-                    <!-- Client count -->
-                    <div class="col-xxl-4 col-md-4">
-
-                        <div class="card info-card customers-card">
-
-                            <div class="card-body">
-                                <h5 class="card-title">Clients <span>| Total</span></h5>
-
-                                <div class="d-flex align-items-center">
-                                    <div class="card-icon rounded-circle d-flex align-items-center justify-content-center">
-                                        <i class="bi bi-people"></i>
-                                    </div>
-                                    <div class="ps-3">
-                                        <h6>{{ $clientcount }}</h6>
-                                    </div>
-                                </div>
-
-                            </div>
-                        </div>
-
-                    </div><!-- End Clients Card -->
-
-                </div>
-
-                <h5 class="mt-2 mb-3 text-muted" style="font-size: 0.95rem; font-weight: 700;">Vendor &amp; Customer Ledgers</h5>
-
-                <div class="row">
-
-                    <!-- What customers owe you -->
-                    <div class="col-xxl-3 col-md-6">
-                        <div class="card info-card sales-card">
-                            <div class="card-body">
-                                <h5 class="card-title">Receivable <span>| {{ $outstanding['customers'] }} {{ Str::plural('customer', $outstanding['customers']) }}</span></h5>
-
-                                <div class="d-flex align-items-center">
-                                    <div class="card-icon rounded-circle d-flex align-items-center justify-content-center">
-                                        <i class="bi bi-arrow-down-left-circle"></i>
-                                    </div>
-                                    <div class="ps-3">
-                                        <h6><a href="{{ route('party.index', 'customer') }}" class="text-decoration-none text-reset">{{ number_format($outstanding['receivable'], 2, '.', ',') }}</a></h6>
-                                        <span class="text-muted small pt-2">Dr &mdash; to collect</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div><!-- End Receivable Card -->
-
-                    <!-- What you owe vendors -->
-                    <div class="col-xxl-3 col-md-6">
-                        <div class="card info-card revenue-card">
-                            <div class="card-body">
-                                <h5 class="card-title">Payable <span>| {{ $outstanding['vendors'] }} {{ Str::plural('vendor', $outstanding['vendors']) }}</span></h5>
-
-                                <div class="d-flex align-items-center">
-                                    <div class="card-icon rounded-circle d-flex align-items-center justify-content-center">
-                                        <i class="bi bi-arrow-up-right-circle"></i>
-                                    </div>
-                                    <div class="ps-3">
-                                        <h6><a href="{{ route('party.index', 'vendor') }}" class="text-decoration-none text-reset">{{ number_format($outstanding['payable'], 2, '.', ',') }}</a></h6>
-                                        <span class="text-muted small pt-2">Cr &mdash; to pay</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div><!-- End Payable Card -->
-
-                    <!-- Files still being worked on -->
-                    <div class="col-xxl-3 col-md-6">
-                        <div class="card info-card customers-card">
-                            <div class="card-body">
-                                <h5 class="card-title">Open Files <span>| Work in hand</span></h5>
-
-                                <div class="d-flex align-items-center">
-                                    <div class="card-icon rounded-circle d-flex align-items-center justify-content-center">
-                                        <i class="bi bi-folder2-open"></i>
-                                    </div>
-                                    <div class="ps-3">
-                                        <h6><a href="{{ route('workfile.index', ['status' => 'open']) }}" class="text-decoration-none text-reset">{{ $work['open'] }}</a></h6>
-                                        <span class="text-muted small pt-2">still to finish</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div><!-- End Open Files Card -->
-
-                    <!-- Margin earned on files received this month -->
-                    <div class="col-xxl-3 col-md-6">
-                        <div class="card info-card sales-card">
-                            <div class="card-body">
-                                <h5 class="card-title">File Margin <span>| {{ now()->format('F Y') }}</span></h5>
-
-                                <div class="d-flex align-items-center">
-                                    <div class="card-icon rounded-circle d-flex align-items-center justify-content-center">
-                                        <i class="bi bi-graph-up-arrow"></i>
-                                    </div>
-                                    <div class="ps-3">
-                                        <h6>{{ number_format($work['month_margin'], 2, '.', ',') }}</h6>
-                                        <span class="text-muted small pt-2">on {{ number_format($work['month_billed'], 2, '.', ',') }} billed</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div><!-- End File Margin Card -->
-
-                </div>
-            </div>
-
-        </div>
+    <section class="section ui">
+        <div data-vue="vue-dashboard" data-props="{{ \App\Support\VueProps::encode(['tiles' => $dashboardTiles]) }}"></div>
     </section>
 @endsection
 
