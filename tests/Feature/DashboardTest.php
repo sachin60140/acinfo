@@ -209,13 +209,19 @@ class DashboardTest extends TestCase
      * sideways scrollbar and the right-hand columns — which on this app are the
      * money — sit off screen.
      *
-     * Two mechanisms provide it: the Blade screens use the `rt` classes in
-     * responsive.css, the converted ones carry the rule in the component's own
-     * stylesheet. Screens are moving from the first to the second one at a time,
-     * so this asserts the concern rather than either mechanism, and keeps
-     * passing throughout instead of needing an edit per screen converted.
+     * This used to check the `rt` classes in responsive.css, then check either
+     * those or a Vue mount point while screens moved across one at a time. They
+     * have all moved, so the Blade half is gone: the rule now lives in each
+     * component's own stylesheet, and VueMountTest checks it there, against the
+     * stylesheet rather than the page — the CSS is in the bundle, so a rendered
+     * page cannot show whether it survived.
+     *
+     * What is left worth asserting here is the thing a component cannot do for
+     * itself: that a screen carrying a wide table actually mounts something.
+     * A screen that quietly stopped mounting would render an empty space and
+     * still pass every component-level check.
      */
-    public function test_wide_tables_stack_on_mobile_by_one_mechanism_or_the_other(): void
+    public function test_every_wide_table_screen_mounts_a_component(): void
     {
         $this->actingAs($this->admin());
 
@@ -230,20 +236,17 @@ class DashboardTest extends TestCase
             'admin/file/customer-return',
             'admin/file/vendor-return',
             'admin/file/status',
+            'admin/reports/files',
         ];
 
         foreach ($screens as $screen) {
             $html = $this->get($screen)->assertOk()->getContent();
 
-            if (str_contains($html, 'data-vue="vue-')) {
-                continue; // Covered by VueMountTest, against the component's CSS.
-            }
-
             $this->assertMatchesRegularExpression(
-                '/class="[^"]*\brt(-form)?\b/',
+                '/data-vue="vue-[\w-]+"\s+data-props="/',
                 $html,
-                "$screen renders a wide table with no stacking class and is not converted, ".
-                'so its right-hand columns fall off a phone screen.'
+                "$screen shows a wide table but mounts nothing to draw it, so the page renders ".
+                'an empty space where the table should be.'
             );
         }
     }

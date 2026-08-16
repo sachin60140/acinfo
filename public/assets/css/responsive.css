@@ -11,10 +11,9 @@
  * data-label attribute in the markup. Nothing is hidden and nothing has to be
  * scrolled sideways to be read.
  *
- *   .rt       a table of data     — label left, value right
- *   .rt-form  a table of inputs   — label above, control full width
- *
- * Both stack at the same width so the two never disagree on screen.
+ * The tables have since moved to Vue and each component carries its own card
+ * layout, so the rules that did that here have gone with them. What remains is
+ * the chrome around the tables, which is still the template's and still needs it.
  */
 
 @media (max-width: 991.98px) {
@@ -27,167 +26,6 @@
 
     .pagetitle h1 {
         font-size: 1.4rem;
-    }
-
-    /* ---- Tables become cards ------------------------------------------- */
-
-    .rt,
-    .rt-form {
-        border-collapse: separate;
-    }
-
-    .rt thead,
-    .rt-form thead {
-        /* clip rather than display:none — screen readers keep the headings */
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        overflow: hidden;
-        clip: rect(0 0 0 0);
-        white-space: nowrap;
-    }
-
-    .rt,
-    .rt tbody,
-    .rt tr,
-    .rt td,
-    .rt tfoot,
-    .rt-form,
-    .rt-form tbody,
-    .rt-form tr,
-    .rt-form td,
-    .rt-form tfoot {
-        display: block;
-        width: 100%;
-    }
-
-    .rt tr,
-    .rt-form tr {
-        background: #fff;
-        border: 1px solid #e5e9f2;
-        border-radius: 8px;
-        margin-bottom: 0.7rem;
-        padding: 0.45rem 0.75rem;
-    }
-
-    .rt td,
-    .rt-form td {
-        border: 0 !important;
-        padding: 0.3rem 0;
-    }
-
-    /* A cell the server left empty — an unused Debit or Credit column — would
-       otherwise print its heading against nothing. */
-    .rt td:empty,
-    .rt-form td:empty {
-        display: none;
-    }
-
-    .rt td::before,
-    .rt-form td::before {
-        content: attr(data-label);
-        color: #64748b;
-        font-size: 0.68rem;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-    }
-
-    /* Cells with no label are full-width blocks: action links, wide notes. */
-    .rt td:not([data-label])::before,
-    .rt-form td:not([data-label])::before {
-        content: none;
-    }
-
-    /* ---- Data tables: label left, value right --------------------------- */
-
-    .rt td {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 1rem;
-        text-align: right;
-    }
-
-    .rt td::before {
-        flex: 0 0 auto;
-        text-align: left;
-    }
-
-    .rt td:not([data-label]) {
-        justify-content: flex-start;
-        text-align: left;
-        padding-top: 0.5rem;
-    }
-
-    /* The first cell reads as the card's title. */
-    .rt tr td:first-child {
-        border-bottom: 1px solid #eef1f6 !important;
-        margin-bottom: 0.25rem;
-        padding-bottom: 0.45rem;
-        font-weight: 700;
-    }
-
-    .rt tfoot tr {
-        background: #f8f9fa;
-        border-color: #adb5bd;
-    }
-
-    .rt tfoot th {
-        border: 0;
-        display: flex;
-        justify-content: space-between;
-        gap: 1rem;
-        padding: 0.3rem 0;
-        text-align: right;
-    }
-
-    .rt tfoot th::before {
-        content: attr(data-label);
-        color: #64748b;
-        font-size: 0.68rem;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        text-align: left;
-    }
-
-    /* A colspan heading cell in the footer has nothing to line up against. */
-    .rt tfoot th[colspan] {
-        display: none;
-    }
-
-    /* ---- Form tables: label above, control full width ------------------- */
-
-    .rt-form td {
-        text-align: left;
-    }
-
-    .rt-form td::before {
-        display: block;
-        margin-bottom: 0.2rem;
-    }
-
-    .rt-form td .form-control,
-    .rt-form td .form-select {
-        width: 100%;
-    }
-
-    /* The row-number and remove-button cells are furniture, not fields. */
-    .rt-form td.row-no {
-        color: #94a3b8;
-        font-weight: 700;
-        padding: 0 0 0.2rem 0;
-        width: auto;
-    }
-
-    .rt-form td.row-no::before {
-        content: "Row ";
-        display: inline;
-    }
-
-    .rt-form tr {
-        padding-bottom: 0.7rem;
     }
 
     /* ---- Everything else ------------------------------------------------ */
@@ -263,17 +101,5 @@
 
     .card-body {
         padding: 0.9rem;
-    }
-}
-
-@media print {
-
-    /* Printed statements go back to being tables. */
-    .rt thead,
-    .rt-form thead {
-        position: static;
-        width: auto;
-        height: auto;
-        clip: auto;
     }
 }

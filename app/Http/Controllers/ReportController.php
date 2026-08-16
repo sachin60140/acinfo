@@ -15,10 +15,11 @@ use Illuminate\Validation\Rule;
  * helpers the ledger and the dashboard use rather than recomputed. A report
  * that quietly disagrees with the statement it summarises is worse than none.
  *
- * Exports are handled client-side by the DataTables Buttons already used across
- * this application. That is deliberate — the production server runs a pinned
- * vendor/ directory that must not be rebuilt, so a report cannot introduce a
- * composer dependency for Excel or PDF.
+ * Exports are built in the browser, by the grid the report renders through.
+ * That is deliberate and it constrains this class: the production server runs a
+ * pinned vendor/ directory that must not be rebuilt, so a report cannot
+ * introduce a composer dependency for Excel or PDF. It therefore returns rows
+ * and totals, and nothing here formats a file.
  */
 class ReportController extends Controller
 {
@@ -95,33 +96,7 @@ class ReportController extends Controller
             $totals['margin'] += $line['margin'];
         }
 
-        // Keyed by id, never by name. Only (party_type, mobile) is unique on a
-        // party, so two customers may share a name — keying on it merged them
-        // into one band and added their money together.
-        $groupMeta = [];
-        foreach ($groups as $group) {
-            $groupMeta[$group['id']] = [
-                'name' => $group['name'],
-                'files' => $group['files'],
-                'open' => $group['open'],
-                'balance' => $group['balance'],
-                'billed' => $group['billed'],
-                'cost' => $group['cost'],
-                'margin' => $group['margin'],
-            ];
-        }
-
-        // Built here, not in the template: @json() splits its argument on commas
-        // and cannot parse a number_format() call whose separator is itself a
-        // quoted comma, which compiles to a broken script tag.
-        $grandTotalText = $totals['files'].' files'
-            .'   ·   Billed '.number_format($totals['billed'], 2, '.', ',')
-            .'   ·   Cost '.number_format($totals['cost'], 2, '.', ',')
-            .'   ·   Margin '.number_format($totals['margin'], 2, '.', ',');
-
         return view('admin.reports.files', [
-            'groupMeta' => $groupMeta,
-            'grandTotalText' => 'Grand total — '.$grandTotalText,
             'partyType' => $partyType,
             'partyLabel' => PartyModel::label($partyType),
             'partyId' => $partyId ? (int) $partyId : null,
