@@ -55,9 +55,15 @@ class WorkFileController extends Controller
             'status' => ['nullable', Rule::in(array_merge(array_keys(WorkFileModel::STATUSES), ['open']))],
             'from' => 'nullable|date_format:Y-m-d',
             'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
+            'pending' => ['nullable', Rule::in(array_keys(WorkFileModel::PENDING))],
         ]);
 
-        $files = WorkFileModel::listing($req->query('status'), $req->query('from'), $req->query('to'));
+        $files = WorkFileModel::listing(
+            $req->query('status'),
+            $req->query('from'),
+            $req->query('to'),
+            $req->query('pending')
+        );
 
         return $this->filesScreen($files, $req)->toResponse($req);
     }
@@ -214,6 +220,22 @@ class WorkFileController extends Controller
             },
             'base' => route('workfile.index'),
             'maxDate' => now()->toDateString(),
+
+            /*
+             * Files still waiting on a price.
+             *
+             * A file can be taken in and given to a vendor before either figure
+             * is agreed, and the ledgers stay quiet until there is something to
+             * post — correct, and exactly why an unpriced file is invisible
+             * until someone looks for it. Each chip lands on the set it counted.
+             */
+            'pending' => $req->query('pending'),
+            'pendingLabel' => WorkFileModel::PENDING[$req->query('pending')] ?? null,
+            'pendingCounts' => WorkFileModel::pendingCounts(),
+            'pendingLabels' => WorkFileModel::PENDING,
+            'pendingUrls' => collect(WorkFileModel::PENDING)
+                ->map(fn ($label, $key) => route('workfile.index', ['pending' => $key]))
+                ->all(),
         ]);
     }
 

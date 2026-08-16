@@ -842,7 +842,69 @@ class WorkFileModel extends Model
     /**
      * Files for the list, with the names behind every id resolved in one query.
      */
-    public static function listing(?string $status = null, ?string $from = null, ?string $to = null)
+    /**
+     * The three ways a file can be waiting on a price.
+     *
+     * A file may be taken in and given to a vendor before either figure is
+     * agreed — the ledgers stay quiet until there is something to post, which is
+     * correct, and is also why an unpriced file is invisible until someone goes
+     * looking. These are what "go looking" means.
+     */
+    public const PENDING = [
+        'customer' => 'Not billed to the customer',
+        'vendor' => 'Vendor rate not agreed',
+        'any' => 'Any price outstanding',
+    ];
+
+    /**
+     * Narrows a query to files still waiting on a price.
+     *
+     * Cancelled and returned files are never included. A cancelled file is not
+     * owed for and a returned one has been settled and handed back, so both
+     * would read as work needing attention when there is none.
+     */
+    private static function pendingWhere($query, string $which): void
+    {
+        $query->whereNotIn('work_file.status', [self::CANCELLED, self::RETURNED]);
+
+        // Nothing charged yet. Zero rather than null: the column has always been
+        // NOT NULL with a zero default, so "no figure" is stored as 0.00.
+        $unbilled = fn ($q) => $q->where('work_file.customer_amount', '<=', 0);
+
+        // Handed to a vendor without a rate. Only meaningful once there is a
+        // vendor — an in-house file has no rate to agree and never will.
+        $unpriced = fn ($q) => $q->whereNotNull('work_file.vendor_id')
+            ->whereNull('work_file.vendor_amount');
+
+        match ($which) {
+            'customer' => $unbilled($query),
+            'vendor' => $unpriced($query),
+            default => $query->where(fn ($q) => $unbilled($q)->orWhere($unpriced)),
+        };
+    }
+
+    /**
+     * How many files are waiting on each kind of price.
+     *
+     * One query per kind rather than one grouped query, because a file can be
+     * waiting on both and would otherwise be counted once and reported twice.
+     *
+     * @return array{customer: int, vendor: int, any: int}
+     */
+    public static function pendingCounts(): array
+    {
+        $counts = [];
+
+        foreach (array_keys(self::PENDING) as $which) {
+            $query = DB::table('work_file');
+            self::pendingWhere($query, $which);
+            $counts[$which] = $query->count();
+        }
+
+        return $counts;
+    }
+
+    public static function listing(?string $status = null, ?string $from = null, ?string $to = null, ?string $pending = null)
     {
         $query = DB::table('work_file')
             ->join('work_type', 'work_type.id', '=', 'work_file.work_type_id')
@@ -881,6 +943,10 @@ class WorkFileModel extends Model
 
         if ($to) {
             $query->whereDate('work_file.received_date', '<=', $to);
+        }
+
+        if ($pending && array_key_exists($pending, self::PENDING)) {
+            self::pendingWhere($query, $pending);
         }
 
         return $query

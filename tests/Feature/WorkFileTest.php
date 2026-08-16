@@ -1509,4 +1509,83 @@ class WorkFileTest extends TestCase
         $this->assertFalse(WorkFileModel::listing('in_office')->contains('id', $file->id));
         $this->assertFalse(WorkFileModel::listing(null, '2026-05-01')->contains('id', $file->id));
     }
+
+    /**
+     * A file can be taken in, and given to a vendor, before either price is
+     * agreed — and priced afterwards.
+     *
+     * The ledgers stay quiet until there is something to post, which is right
+     * and is also the problem: an unpriced file is invisible until someone goes
+     * looking for it. This covers the working half; the next one covers finding.
+     */
+    public function test_a_file_can_be_priced_after_it_is_received_and_dispatched(): void
+    {
+        $file = $this->receive(['customer_amount' => '0']);
+
+        $this->assertSame(0.0, PartyLedgerModel::currentBalance($this->customer->id), 'nothing charged, nothing posted');
+
+        // Given to the vendor with no rate agreed.
+        $this->giveToVendor([$file->id], $this->vendor->id, [$file->id => '']);
+
+        $this->assertSame(0.0, PartyLedgerModel::currentBalance($this->vendor->id), 'no rate, no entry');
+        $this->assertSame(0, PartyLedgerModel::where('work_file_id', $file->id)->count());
+
+        // Both agreed later.
+        $file->refresh();
+        $file->customer_amount = 5000;
+        $file->vendor_amount = 3500;
+        $file->save();
+        $file->syncLedger();
+
+        $this->assertSame(5000.0, PartyLedgerModel::currentBalance($this->customer->id));
+        $this->assertSame(-3500.0, PartyLedgerModel::currentBalance($this->vendor->id));
+
+        // Correcting a price moves the entry rather than adding a second one.
+        $file->customer_amount = 5500;
+        $file->save();
+        $file->syncLedger();
+
+        $this->assertSame(5500.0, PartyLedgerModel::currentBalance($this->customer->id));
+        $this->assertSame(2, PartyLedgerModel::where('work_file_id', $file->id)->count(), 'one entry a side');
+    }
+
+    public function test_files_awaiting_a_price_can_be_found(): void
+    {
+        $base = WorkFileModel::pendingCounts();
+
+        $unbilled = $this->receive(['customer_amount' => '0']);
+        $priced = $this->receive(['customer_amount' => '4000']);
+        $this->giveToVendor([$priced->id], $this->vendor->id, [$priced->id => '']);
+
+        $now = WorkFileModel::pendingCounts();
+
+        $this->assertSame(1, $now['customer'] - $base['customer'], 'one file nobody has been billed for');
+        $this->assertSame(1, $now['vendor'] - $base['vendor'], 'one file with a vendor and no rate');
+        $this->assertSame(2, $now['any'] - $base['any']);
+
+        // Each count opens exactly the files it counted.
+        $listed = WorkFileModel::listing(null, null, null, 'customer');
+        $this->assertTrue($listed->contains('id', $unbilled->id));
+        $this->assertFalse($listed->contains('id', $priced->id), 'that one is billed');
+
+        $listed = WorkFileModel::listing(null, null, null, 'vendor');
+        $this->assertTrue($listed->contains('id', $priced->id));
+        $this->assertFalse($listed->contains('id', $unbilled->id), 'that one has no vendor at all');
+    }
+
+    /**
+     * A cancelled file is not owed for, and a returned one has been settled and
+     * handed back. Reporting either as awaiting a price would send someone
+     * chasing money that is not owed.
+     */
+    public function test_closed_files_are_never_reported_as_awaiting_a_price(): void
+    {
+        $base = WorkFileModel::pendingCounts();
+
+        $cancelled = $this->receive(['customer_amount' => '0']);
+        $this->setStatuses([$cancelled->id => 'cancelled']);
+
+        $this->assertSame(0, WorkFileModel::pendingCounts()['any'] - $base['any'], 'cancelled is not awaiting anything');
+    }
+
 }

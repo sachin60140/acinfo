@@ -39,7 +39,37 @@
                                     @if ($statusLabel)
                                         &nbsp;&middot;&nbsp; Status: {{ $statusLabel }}
                                     @endif
+                                    @if ($pendingLabel)
+                                        &nbsp;&middot;&nbsp; {{ $pendingLabel }}
+                                    @endif
                                 </div>
+
+                                {{--
+                                    Files waiting on a price.
+
+                                    A file can be taken in and given to a vendor
+                                    before either figure is agreed — the ledgers
+                                    stay quiet until there is something to post,
+                                    which is right, and is also why an unpriced
+                                    file is invisible until someone looks. Each
+                                    chip opens exactly the files it counted.
+                                --}}
+                                @if ($pendingCounts['any'])
+                                    <div class="filter-row mt-2">
+                                        <span class="filter-key">Awaiting price</span>
+                                        @foreach ($pendingLabels as $key => $text)
+                                            @if ($pendingCounts[$key])
+                                                <a href="{{ $pendingUrls[$key] }}"
+                                                   class="chip {{ $pending === $key ? 'active' : '' }}">
+                                                    {{ $text }} <span class="n">{{ $pendingCounts[$key] }}</span>
+                                                </a>
+                                            @endif
+                                        @endforeach
+                                        @if ($pending)
+                                            <a href="{{ $base }}" class="chip">Clear</a>
+                                        @endif
+                                    </div>
+                                @endif
                             </div>
                             <div class="d-flex flex-wrap gap-2 card-actions">
                                 <a href="{{ route('worktype.index') }}" class="btn btn-outline-secondary btn-sm">
