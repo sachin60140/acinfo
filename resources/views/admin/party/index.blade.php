@@ -20,106 +20,6 @@
 @endsection
 
 @section('content')
-    @php
-        $totalDr = 0.0;
-        $totalCr = 0.0;
-        foreach ($parties as $p) {
-            if ($p->current_balance >= 0) {
-                $totalDr += (float) $p->current_balance;
-            } else {
-                $totalCr += (float) abs($p->current_balance);
-            }
-        }
-
-        /*
-         * Column order, sortability and the export set are the ones the old
-         * DataTables config carried; several of them were fixes.
-         *
-         * Balance is typed 'balance', so it sorts on the raw signed figure and
-         * prints "1,200.00 Cr" — which is what the data-order attribute on the
-         * old cell existed to achieve. Its figures follow number_format, the
-         * same convention as the Receivable/Payable line above the grid, so a
-         * balance reads identically whichever of the two the eye lands on.
-         *
-         * Action is unsortable, as it was, kept out of exports and out of the
-         * search text: a column of the word "Edit" is not data, and while it is
-         * searched every row matches anyone typing "edit". It carries both of
-         * the actions the old cell offered — Edit on the line, Statement quietly
-         * beneath it. That way round because a sub-line link always opens in a
-         * new tab, and the statement is the one meant to be read beside the
-         * list; editing replaces it, as it always did.
-         *
-         * No totals row. Netting a customer in debit against one in credit
-         * would report a business with nothing outstanding, when it has money
-         * to collect and money to refund; both sides are shown above instead.
-         */
-        $columns = [
-            ['key' => 'id', 'label' => '#'],
-
-            // The name and the WhatsApp number both leave this page for
-            // somewhere read alongside it, so neither takes the list with it.
-            ['key' => 'name', 'label' => 'Name', 'type' => 'link', 'linkTo' => 'statement_url', 'newTab' => true, 'sub' => 'inactive_note'],
-            ['key' => 'mobile', 'label' => 'Mobile', 'type' => 'link', 'linkTo' => 'mobile_url'],
-            ['key' => 'whatsapp', 'label' => 'WhatsApp', 'type' => 'link', 'linkTo' => 'whatsapp_url', 'newTab' => true, 'class' => 'wa-cell'],
-            ['key' => 'address', 'label' => 'Address'],
-            ['key' => 'entry_count', 'label' => 'Entries', 'type' => 'count'],
-            ['key' => 'current_balance', 'label' => 'Balance', 'type' => 'balance'],
-            [
-                'key' => 'action',
-                'label' => 'Action',
-                'type' => 'link',
-                'linkTo' => 'edit_url',
-                'sub' => 'statement_action',
-                'subLinkTo' => 'statement_url',
-                'sortable' => false,
-                'searchable' => false,
-                'exportable' => false,
-            ],
-
-            // Carried for searching only: "inactive" finds the deactivated
-            // parties, whose marker is otherwise a quiet line under the name.
-            ['key' => 'inactive_note', 'label' => 'Status', 'hidden' => true],
-        ];
-
-        $rows = $parties->map(function ($party) {
-            // Blank means "no separate WhatsApp number", so the link falls back
-            // to the mobile — which is the same number in most cases.
-            $wa = $party->whatsapp ?: $party->mobile;
-
-            return [
-                'id' => (int) $party->id,
-                'name' => $party->name,
-                'statement_url' => route('party.statement', $party->id),
-                'inactive_note' => $party->is_active ? null : 'Inactive',
-                'mobile' => $party->mobile,
-                'mobile_url' => 'tel:'.$party->mobile,
-                'whatsapp' => $wa,
-                'whatsapp_url' => 'https://wa.me/91'.$wa,
-                'address' => $party->address,
-                'entry_count' => (int) $party->entry_count,
-                'current_balance' => (float) $party->current_balance,
-                'action' => 'Edit',
-                'edit_url' => route('party.edit', $party->id),
-
-                // The second action the old cell carried; it reuses the URL the
-                // name already links to.
-                'statement_action' => 'Statement',
-            ];
-        })->values();
-
-        /*
-         * The grid opens unsorted, which lands on name ascending: withBalance()
-         * already orders by name, and that is the order the old table was
-         * configured to sort itself into on load.
-         */
-        $grid = [
-            'columns' => $columns,
-            'rows' => $rows,
-            'title' => $label.' Ledgers',
-            'perPage' => 50,
-            'emptyText' => 'No '.Str::lower($label).'s yet — use the Add button above.',
-        ];
-    @endphp
 
     <div class="pagetitle">
         <h1>{{ $label }}s</h1>
@@ -143,7 +43,7 @@
                             <div>
                                 <h5 class="card-title p-0 m-0">{{ $label }} Ledgers</h5>
                                 <div class="text-muted" style="font-size: 0.85rem;">
-                                    {{ $parties->count() }} {{ Str::plural($label, $parties->count()) }}
+                                    {{ $partyCount }} {{ Str::plural($label, $partyCount) }}
                                     &nbsp;&middot;&nbsp; Receivable <span class="dr fw-bold">{{ number_format($totalDr, 2, '.', ',') }} Dr</span>
                                     &nbsp;&middot;&nbsp; Payable <span class="cr fw-bold">{{ number_format($totalCr, 2, '.', ',') }} Cr</span>
                                 </div>
@@ -165,7 +65,7 @@
                             script that came with them. The list is read-only, so
                             the server still owns every figure on it.
                         --}}
-                        <div class="ui party-list" data-vue="vue-party-list" data-props="{{ \App\Support\VueProps::encode($grid) }}"></div>
+                        <div class="ui party-list" data-vue="vue-party-list" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
 
                     </div>
                 </div>
