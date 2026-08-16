@@ -86,14 +86,28 @@ onMounted(() => {
     window.addEventListener('pageshow', hide);
     window.addEventListener('pagehide', hide);
 
+    /*
+     * A swapped screen never unloads the page, so pageshow and pagehide do not
+     * fire and nothing would ever take the overlay down again. These are the
+     * equivalent pair for a navigation that happens inside the page.
+     */
+    document.addEventListener('acinfo:visit-start', onVisitStart);
+    document.addEventListener('acinfo:visit-end', hide);
+
     window.acinfoLoader = { show, hide };
 });
+
+function onVisitStart() {
+    show();
+}
 
 onBeforeUnmount(() => {
     document.removeEventListener('submit', onSubmit, true);
     document.removeEventListener('click', onNavigate, true);
     window.removeEventListener('pageshow', hide);
     window.removeEventListener('pagehide', hide);
+    document.removeEventListener('acinfo:visit-start', onVisitStart);
+    document.removeEventListener('acinfo:visit-end', hide);
     hide();
 });
 </script>

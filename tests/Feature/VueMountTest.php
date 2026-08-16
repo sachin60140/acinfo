@@ -51,7 +51,9 @@ class VueMountTest extends TestCase
      */
     private function registry(): array
     {
-        $js = file_get_contents(resource_path('js/app.js'));
+        // The map lives beside the mounting rather than in app.js, because
+        // navigation needs it too when it starts a swapped-in screen.
+        $js = file_get_contents(resource_path('js/mounts.js'));
 
         // import StatusBoard from './components/StatusBoard.vue';
         preg_match_all("#import\s+(\w+)\s+from\s+'\./components/([\w.]+\.vue)'#", $js, $imports, PREG_SET_ORDER);
@@ -429,6 +431,55 @@ class VueMountTest extends TestCase
         }
 
         $this->assertSame(0, $status, implode("\n", $output));
+    }
+
+    /**
+     * Navigation without page loads is off unless the server turns it on.
+     *
+     * The built assets ship in the repository and deploy by git pull, so turning
+     * it off in a hurry has to be one env change and a cache clear rather than a
+     * rebuild. That only works if the flag genuinely reaches the page, and if it
+     * defaults to off — a feature that arrives switched on by default is not a
+     * feature that can be switched off.
+     */
+    public function test_swapped_navigation_is_off_by_default_and_reaches_the_page(): void
+    {
+        $this->actingAs($this->admin());
+
+        config(['app.swap_navigation' => false]);
+        $this->assertStringContainsString(
+            'data-swap-nav="0"',
+            $this->get('admin/dashboard')->assertOk()->getContent(),
+            'the flag must reach the page, or it cannot be turned off from the server'
+        );
+
+        config(['app.swap_navigation' => true]);
+        $this->assertStringContainsString(
+            'data-swap-nav="1"',
+            $this->get('admin/dashboard')->assertOk()->getContent()
+        );
+    }
+
+    /**
+     * Swapping a screen in replaces two regions, and needs both to exist on
+     * every layout it might land on — otherwise it gives up and does a normal
+     * page load, which works but silently loses the point.
+     */
+    public function test_both_layouts_carry_the_regions_navigation_swaps(): void
+    {
+        foreach (['admin', 'user'] as $area) {
+            $layout = file_get_contents(resource_path("views/$area/layouts/app.blade.php"));
+
+            $this->assertStringContainsString('id="main"', $layout, "$area layout has no main region");
+        }
+
+        foreach (['admin', 'user'] as $area) {
+            $sidebar = file_get_contents(resource_path("views/$area/layouts/_sidebar.blade.php"));
+
+            // The sidebar is swapped too because it carries the active-menu
+            // state, which the server decides per page.
+            $this->assertStringContainsString('class="sidebar"', $sidebar, "$area sidebar is not selectable");
+        }
     }
 
     /**

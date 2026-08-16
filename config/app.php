@@ -13,6 +13,24 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | Navigation Without Page Loads
+    |--------------------------------------------------------------------------
+    |
+    | When on, following a link fetches the next screen and puts it in place of
+    | the current one instead of reloading the browser. Pages, URLs and the back
+    | button are unchanged either way — this only removes the reload between
+    | them, and any failure falls back to an ordinary page load.
+    |
+    | It is a flag because the built assets ship in the repository and deploy by
+    | git pull: turning it off has to be one env change and a cache clear, not a
+    | rebuild.
+    |
+    */
+
+    'swap_navigation' => (bool) env('SWAP_NAVIGATION', false),
+
     'name' => env('APP_NAME', 'Laravel'),
 
     /*

@@ -85,6 +85,17 @@
             return;
         }
 
+        /*
+         * Built once per field. Screens are swapped in without a page load now,
+         * so this runs again on every navigation — and binding a second time
+         * would leave two sets of listeners writing to the same hidden input.
+         */
+        if (field.dataset.dpBound === '1') {
+            return;
+        }
+
+        field.dataset.dpBound = '1';
+
         var min = field.dataset.min || '';
         var max = field.dataset.max || '';
         var required = field.hasAttribute('required');
@@ -325,7 +336,15 @@
         }
     });
 
-    document.addEventListener('DOMContentLoaded', function () {
+    function bindAll() {
         document.querySelectorAll('.js-datefield').forEach(build);
-    });
+    }
+
+    document.addEventListener('DOMContentLoaded', bindAll);
+
+    /*
+     * Screens arrive without a page load, so DOMContentLoaded fires once for the
+     * whole session. This is how a freshly swapped screen gets its calendars.
+     */
+    document.addEventListener('acinfo:content', bindAll);
 })();

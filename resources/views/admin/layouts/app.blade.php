@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-swap-nav="{{ config('app.swap_navigation') ? '1' : '0' }}">
 
 <head>
   <meta charset="utf-8">
