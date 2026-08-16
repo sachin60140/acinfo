@@ -17,6 +17,17 @@
  */
 import { computed, ref } from 'vue';
 import { balance, money, side } from '../money';
+import {
+    cellText,
+    exportColumns as exportableColumns,
+    exportHeader,
+    exportRows as exportRowsOf,
+    exportValues as exportValuesOf,
+    fileName,
+    isNumeric,
+    toClipboard,
+    toCsv,
+} from '../exports';
 
 const props = defineProps({
     /*
@@ -237,41 +248,19 @@ function toggleSort(column) {
  * kind of quiet wrongness that gets found in a meeting.
  */
 
-const exportColumns = computed(() => props.columns.filter((c) => c.exportable !== false && !c.hidden));
+const money2 = { money, balance };
+
+const exportColumns = computed(() => exportableColumns(props.columns));
 
 function exportRows() {
-    return sorted.value.map((row) => exportColumns.value.map((column) => textOf(row, column)));
+    return exportRowsOf(props.columns, sorted.value, money2);
 }
 
-/**
- * The same rows, but with figures as numbers.
- *
- * A spreadsheet is opened to add things up. Writing "1,23,456.00" into the cell
- * makes it text: the column will not sum, sort or filter, and the reader has to
- * retype it. Only the spreadsheet needs this — CSV, PDF and print are read, not
- * calculated, and there the grouped form is easier on the eye.
- */
 function exportValues() {
-    return sorted.value.map((row) =>
-        exportColumns.value.map((column) => {
-            if (!['money', 'balance', 'count'].includes(column.type)) {
-                return textOf(row, column);
-            }
-
-            // An empty cell, not a zero — Number(null) is 0, which would write a
-            // figure into the spreadsheet that the screen does not show.
-            if (blank(row[column.key])) {
-                return '';
-            }
-
-            const parsed = Number(row[column.key]);
-
-            return Number.isFinite(parsed) ? parsed : textOf(row, column);
-        })
-    );
+    return exportValuesOf(props.columns, sorted.value, money2);
 }
 
-const exportHead = computed(() => exportColumns.value.map((c) => c.label));
+const exportHead = computed(() => exportHeader(props.columns));
 
 const busy = ref('');
 
@@ -305,30 +294,18 @@ function download(blob, extension) {
     const link = document.createElement('a');
 
     link.href = url;
-    link.download = `${props.title.replace(/[^\w-]+/g, '-')}.${extension}`;
+    link.download = fileName(props.title, extension);
     link.click();
 
     URL.revokeObjectURL(url);
 }
 
-function csvCell(value) {
-    // A figure like 1,200.00 carries a comma, so quoting is not optional here.
-    return `"${String(value).replace(/"/g, '""')}"`;
-}
-
-function toCsv() {
-    return [exportHead.value, ...exportRows()]
-        .map((row) => row.map(csvCell).join(','))
-        .join('\r\n');
-}
-
 function exportCsv() {
-    // The BOM is what makes Excel read it as UTF-8 rather than mangling ₹.
-    download(new Blob(['﻿' + toCsv()], { type: 'text/csv;charset=utf-8' }), 'csv');
+    download(new Blob([toCsv(props.columns, sorted.value, money2)], { type: 'text/csv;charset=utf-8' }), 'csv');
 }
 
 async function copy() {
-    const text = [exportHead.value, ...exportRows()].map((row) => row.join('\t')).join('\n');
+    const text = toClipboard(props.columns, sorted.value, money2);
 
     try {
         await navigator.clipboard.writeText(text);
@@ -387,7 +364,7 @@ async function exportExcel() {
 
         const book = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(book, sheet, 'Sheet1');
-        XLSX.writeFile(book, `${props.title.replace(/[^\w-]+/g, '-')}.xlsx`);
+        XLSX.writeFile(book, fileName(props.title, 'xlsx'));
     } catch (error) {
         flash('Excel export unavailable offline');
     } finally {
@@ -402,7 +379,7 @@ async function exportPdf() {
         await load('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/pdfmake.min.js');
         await load('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/vfs_fonts.js');
 
-        const numeric = exportColumns.value.map((c) => ['money', 'balance', 'count'].includes(c.type));
+        const numeric = exportColumns.value.map(isNumeric);
 
         window.pdfmake
             .createPdf({
@@ -433,7 +410,7 @@ async function exportPdf() {
                     head: { fontSize: 9, bold: true, fillColor: '#eef2ff' },
                 },
             })
-            .download(`${props.title.replace(/[^\w-]+/g, '-')}.pdf`);
+            .download(fileName(props.title, 'pdf'));
     } catch (error) {
         flash('PDF export unavailable offline');
     } finally {
@@ -447,7 +424,7 @@ async function exportPdf() {
  * hiding all of it with print CSS has to be redone every time the layout moves.
  */
 function print() {
-    const numeric = exportColumns.value.map((c) => ['money', 'balance', 'count'].includes(c.type));
+    const numeric = exportColumns.value.map(isNumeric);
 
     const table = `
         <table>
