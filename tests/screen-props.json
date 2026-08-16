@@ -370,6 +370,142 @@
             }
         }
     },
+    "files-dated": {
+        "vue-files-list": {
+            "columns": [
+                "file_no:link",
+                "registration_no:text",
+                "received:text",
+                "work_type:text",
+                "description:text",
+                "customer:link",
+                "charged:money",
+                "vendor:link",
+                "cost:money",
+                "margin:balance",
+                "status:badge",
+                "action:link:no-export:no-sort"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rowClass": "string",
+            "rows": {
+                "list_of": {
+                    "action": "string",
+                    "charged": "number",
+                    "charged_was": "null",
+                    "cost": "null",
+                    "cost_was": "null",
+                    "customer": "string",
+                    "customer_url": "string",
+                    "description": "string",
+                    "edit_url": "string",
+                    "file_no": "string",
+                    "id": "number",
+                    "margin": "number",
+                    "received": "string",
+                    "received_raw": "string",
+                    "registration_no": "string",
+                    "row_class": "string",
+                    "screenshot": "null",
+                    "screenshot_url": "null",
+                    "status": "string",
+                    "status_key": "string",
+                    "vendor": "string",
+                    "vendor_url": "null",
+                    "work_type": "string"
+                }
+            },
+            "title": "string",
+            "totals": {
+                "charged": "string",
+                "cost": "string",
+                "margin": "string"
+            }
+        }
+    },
+    "files-filtered": {
+        "vue-files-list": {
+            "columns": [
+                "file_no:link",
+                "registration_no:text",
+                "received:text",
+                "work_type:text",
+                "description:text",
+                "customer:link",
+                "charged:money",
+                "vendor:link",
+                "cost:money",
+                "margin:balance",
+                "status:badge",
+                "action:link:no-export:no-sort"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rowClass": "string",
+            "rows": "[]",
+            "title": "string",
+            "totals": {
+                "charged": "string",
+                "cost": "string",
+                "margin": "string"
+            }
+        }
+    },
+    "files-open": {
+        "vue-files-list": {
+            "columns": [
+                "file_no:link",
+                "registration_no:text",
+                "received:text",
+                "work_type:text",
+                "description:text",
+                "customer:link",
+                "charged:money",
+                "vendor:link",
+                "cost:money",
+                "margin:balance",
+                "status:badge",
+                "action:link:no-export:no-sort"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rowClass": "string",
+            "rows": {
+                "list_of": {
+                    "action": "string",
+                    "charged": "number",
+                    "charged_was": "null",
+                    "cost": "null",
+                    "cost_was": "null",
+                    "customer": "string",
+                    "customer_url": "string",
+                    "description": "string",
+                    "edit_url": "string",
+                    "file_no": "string",
+                    "id": "number",
+                    "margin": "number",
+                    "received": "string",
+                    "received_raw": "string",
+                    "registration_no": "string",
+                    "row_class": "string",
+                    "screenshot": "null",
+                    "screenshot_url": "null",
+                    "status": "string",
+                    "status_key": "string",
+                    "vendor": "string",
+                    "vendor_url": "null",
+                    "work_type": "string"
+                }
+            },
+            "title": "string",
+            "totals": {
+                "charged": "string",
+                "cost": "string",
+                "margin": "string"
+            }
+        }
+    },
     "party-add": {
         "vue-party-form": {
             "action": "string",

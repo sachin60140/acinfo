@@ -1117,10 +1117,15 @@ class WorkFileTest extends TestCase
         $this->assertSame($billed, PartyLedgerModel::currentBalance($this->customer->id));
         $this->assertSame(-$cost, PartyLedgerModel::currentBalance($this->vendor->id));
 
-        // Then assert the rendered page, not a copy of its arithmetic — the bug
-        // this guards against was the view calling the totals differently from
-        // everywhere else, which re-implementing the sum here would not catch.
-        // The shared layout reads Auth::user()->name, so it needs someone signed in.
+        // Then assert what the screen actually produces, not a copy of its
+        // arithmetic — the bug this guards against was the screen calling the
+        // totals differently from everywhere else, which re-implementing the sum
+        // here would not catch.
+        //
+        // It goes through the route rather than rendering the view directly:
+        // the figures are computed in the controller now, so rendering the view
+        // alone would prove nothing about them. Asking for JSON gets the same
+        // payload the page is built from.
         $admin = new User;
         $admin->name = 'List Admin';
         $admin->email = 'list-admin-'.uniqid().'@example.com';
@@ -1129,14 +1134,37 @@ class WorkFileTest extends TestCase
         $admin->save();
         $this->actingAs($admin);
 
-        View::share('errors', new ViewErrorBag);
-        $html = View::make('admin.work.files', [
-            'files' => $rows, 'status' => null, 'from' => null, 'to' => null,
-        ])->render();
+        $screen = $this->getJson(route('workfile.index'))->assertOk()->json();
 
-        $this->assertStringContainsString('>'.number_format($billed, 2, '.', ',').'<', $html, 'billed total on the page');
-        $this->assertStringContainsString('>'.number_format($cost, 2, '.', ',').'<', $html, 'vendor cost total on the page');
-        $this->assertStringContainsString('>'.number_format($billed - $cost, 2, '.', ',').'<', $html, 'margin on the page');
+        $mine = collect($screen['props']['rows'])
+            ->whereIn('id', [$plain->id, $partRefund->id, $vendorBack->id, $fullRefund->id, $cancelled->id]);
+
+        $this->assertCount(5, $mine, 'all five files are listed');
+
+        // Per file, the figures that count rather than the ones entered.
+        $this->assertSame($billed, round($mine->sum('charged'), 2), 'billed across these files');
+        $this->assertSame($cost, round($mine->sum(fn ($row) => (float) $row['cost']), 2), 'cost across these files');
+        $this->assertSame($billed - $cost, round($mine->sum('margin'), 2), 'margin across these files');
+
+        /*
+         * And the summary above the table is the sum of the rows beneath it. This
+         * is the part that catches the original bug: a screen whose headline
+         * figure is computed by a different route than its rows can disagree with
+         * itself while every individual number looks right.
+         */
+        $listed = collect($screen['props']['rows']);
+
+        $this->assertSame(
+            round($listed->sum('charged'), 2),
+            round((float) $screen['page']['billed'], 2),
+            'the billed summary is the sum of the rows shown'
+        );
+
+        $this->assertSame(
+            round($listed->sum(fn ($row) => (float) $row['cost']), 2),
+            round((float) $screen['page']['cost'], 2),
+            'the cost summary is the sum of the rows shown'
+        );
     }
 
     public function test_the_return_screen_returns_a_batch_to_their_customers(): void

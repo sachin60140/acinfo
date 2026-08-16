@@ -70,6 +70,16 @@ class ScreenPropsTest extends TestCase
             'party-edit' => $party ? 'admin/party/edit/'.$party->id : null,
             'party-statement' => $party ? 'admin/party/statement/'.$party->id : null,
             'files' => 'admin/files',
+            /*
+             * Filtered variants, because a view variable used only inside an
+             * @if is invisible to a test that only ever loads the plain screen.
+             * Moving the files list's props into its controller left $work
+             * behind, referenced solely in the branch that names the active
+             * status filter — so the screen was fine until someone filtered it.
+             */
+            'files-filtered' => 'admin/files?status=cancelled',
+            'files-open' => 'admin/files?status=open',
+            'files-dated' => 'admin/files?from=2026-01-01&to=2026-12-31',
             'file-receive' => 'admin/file/receive',
             'file-assign' => 'admin/file/assign',
             'file-vendor-return' => 'admin/file/vendor-return',
