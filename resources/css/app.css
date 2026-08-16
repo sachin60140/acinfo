@@ -429,59 +429,91 @@
 .ui-badge[data-state="paper_returned"]     { background: var(--n-200); color: var(--ink-900); }
 .ui-badge[data-state="cancelled"]          { background: var(--cr-050); color: var(--cr-700); }
 
-.ui-chip {
+/*
+ * A filter chip carrying a count.
+ *
+ * Lives here rather than inside one page's <style>, because two screens use it
+ * and only one of them had the rules — the other rendered its chips as bare
+ * blue text, which is how a filter row stops looking like one.
+ */
+.chip {
     align-items: center;
     background: var(--n-000);
     border: 1px solid var(--n-200);
     border-radius: var(--r-pill);
     color: var(--n-600);
-    cursor: pointer;
     display: inline-flex;
     font-size: var(--t-sm);
     font-weight: 600;
-    gap: var(--s-2);
+    gap: var(--s-1);
     line-height: 1;
-    padding: 0.45rem 0.7rem;
+    padding: 0.34rem 0.62rem;
     text-decoration: none;
-    transition: background .12s ease, border-color .12s ease, color .12s ease;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
-.ui-chip:hover {
+.chip:hover {
     background: var(--brand-050);
     border-color: var(--brand-100);
     color: var(--brand-500);
 }
 
-.ui-chip--on {
+/* The count rides inside the chip, so the label and the figure cannot be read
+   as two separate things. */
+.chip .n {
+    background: var(--n-100);
+    border-radius: var(--r-pill);
+    color: var(--n-500);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    min-width: 1.15rem;
+    padding: 0.05rem 0.3rem;
+    text-align: center;
+}
+
+.chip.active {
     background: var(--brand-500);
     border-color: var(--brand-500);
     color: var(--n-000);
 }
 
-.ui-chip__n {
-    background: var(--n-100);
-    border-radius: var(--r-pill);
-    color: var(--n-500);
-    font-size: var(--t-xs);
-    min-width: 1.3rem;
-    padding: 0.05rem 0.3rem;
-    text-align: center;
-}
-
-.ui-chip--on .ui-chip__n {
-    background: rgba(255, 255, 255, 0.24);
+.chip.active .n {
+    background: rgba(255, 255, 255, 0.22);
     color: var(--n-000);
 }
 
-/* Nothing behind it: still reachable, no longer competing for attention. */
-.ui-chip--empty {
+/* Nothing behind it — reachable, but it stops competing for attention. */
+.chip.empty {
     border-style: dashed;
-    color: var(--n-300);
+    color: var(--n-400);
 }
 
-.ui-chip--empty .ui-chip__n {
+.chip.empty .n {
     background: transparent;
-    color: var(--n-300);
+    color: var(--n-400);
+}
+
+/* A row of chips, with a quiet label naming what they filter. */
+.filter-row {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-1);
+}
+
+.filter-row + .filter-row {
+    border-top: 1px dashed var(--n-200);
+    margin-top: var(--s-2);
+    padding-top: var(--s-2);
+}
+
+.filter-key {
+    color: var(--n-500);
+    flex: 0 0 5.2rem;
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
 }
 
 /* ---- Stat tiles -------------------------------------------------------- */
@@ -631,7 +663,7 @@
     .ui-btn,
     .ui-input,
     .ui-select,
-    .ui-chip {
+    .chip {
         min-height: var(--tap);
     }
 }
