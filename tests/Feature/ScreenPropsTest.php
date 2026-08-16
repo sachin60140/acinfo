@@ -185,6 +185,80 @@ class ScreenPropsTest extends TestCase
     }
 
     /**
+     * A screen served as a page and the same screen served as data are the same
+     * screen.
+     *
+     * This is the property the whole approach rests on. The reason for building
+     * the payload once in the controller, rather than writing a second set of
+     * endpoints for the router to call, is that two implementations drift — and
+     * a column added to the page and forgotten in the API is a report that
+     * disagrees with itself depending on how you arrived at it.
+     *
+     * Nothing enforces that by construction; Screen could be changed tomorrow to
+     * filter one representation and not the other. So it is asserted, on every
+     * screen that has moved, rather than checked once by hand.
+     */
+    public function test_a_screen_served_as_json_matches_the_same_screen_served_as_a_page(): void
+    {
+        $this->actingAs($this->admin());
+
+        $checked = 0;
+
+        foreach ($this->screens() as $name => $url) {
+            $json = $this->getJson($url);
+
+            // Only the screens that have moved to Screen answer with JSON; the
+            // rest still return their Blade page, and are not a failure yet.
+            if (! str_contains((string) $json->headers->get('content-type'), 'json')) {
+                continue;
+            }
+
+            $json->assertOk();
+            $payload = $json->json();
+
+            $this->assertArrayHasKey('props', $payload, "$name: JSON carries no props");
+            $this->assertArrayHasKey('mount', $payload, "$name: JSON names no component");
+
+            $mounts = $this->shapesOnRaw($url);
+
+            $this->assertArrayHasKey(
+                $payload['mount'],
+                $mounts,
+                "$name: the JSON names {$payload['mount']} but the page does not mount it"
+            );
+
+            $this->assertSame(
+                $mounts[$payload['mount']],
+                $payload['props'],
+                "$name hands its component one thing as a page and another as data. ".
+                'They come from the same array in the controller, so this means Screen is filtering one and not the other.'
+            );
+
+            $checked++;
+        }
+
+        $this->assertGreaterThan(0, $checked, 'no screen answered with JSON — the check is not running');
+    }
+
+    /**
+     * The mount points on a page with their props decoded but not reduced.
+     */
+    private function shapesOnRaw(string $url): array
+    {
+        $html = $this->get($url)->assertOk()->getContent();
+
+        preg_match_all('#data-vue="([\w-]+)"\s+data-props="(.*?)"\s*>#s', $html, $found, PREG_SET_ORDER);
+
+        $out = [];
+
+        foreach ($found as $mount) {
+            $out[$mount[1]] = json_decode(html_entity_decode($mount[2], ENT_QUOTES, 'UTF-8'), true);
+        }
+
+        return $out;
+    }
+
+    /**
      * Every screen still hands its component the same shape of data.
      */
     public function test_no_screen_changes_the_shape_of_what_it_hands_its_component(): void

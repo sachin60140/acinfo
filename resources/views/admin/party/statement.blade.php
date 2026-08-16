@@ -1,6 +1,6 @@
 @extends('admin.layouts.app')
 
-@section('title', $party->name . ' Statement | Ac Info')
+@section('title', $partyName . ' Statement | Ac Info')
 
 @section('style')
     @include('admin.layouts._statement-style')
@@ -21,79 +21,6 @@
 @endsection
 
 @section('content')
-    @php
-        $today = now();
-        $fyStart = $today->copy()->month >= 4
-            ? $today->copy()->startOfYear()->addMonths(3)
-            : $today->copy()->subYear()->startOfYear()->addMonths(3);
-        $base = route('party.statement', $party->id);
-        $wa = $party->whatsapp ?: $party->mobile;
-
-        $fromText = $from ? date('d-m-Y', strtotime($from)) : 'Beginning';
-        $toText = $to ? date('d-m-Y', strtotime($to)) : 'Till date';
-        $periodText = $from || $to ? $fromText.' to '.$toText : 'All transactions';
-
-        /*
-         * The running balance is accumulated here, in the order the server sent,
-         * carried forward from the opening balance. That order is the only order
-         * in which these figures mean anything, which is why the grid below is
-         * mounted with sortable => false.
-         */
-        $running = (float) $opening;
-        $entries = [];
-
-        foreach ($getRecords as $entry) {
-            $running += $entry->signedAmount();
-            $isDebit = $entry->entry_type === 'debit';
-
-            $entries[] = [
-                'id' => $entry->id,
-                'txn_date' => date('d-m-Y', strtotime($entry->txn_date)),
-                'particular' => $entry->particular,
-                'payment_mode' => $entry->payment_mode,
-                'ref_no' => $entry->ref_no,
-                // Entries a work file generated link back to it; entries typed
-                // straight into the ledger just carry whatever reference was given.
-                'ref_url' => $entry->work_file_id ? route('workfile.edit', $entry->work_file_id) : null,
-                // The side an entry does not fall on stays null, so it exports as
-                // a blank cell the way the old table did rather than as 0.00.
-                'debit' => $isDebit ? (float) $entry->amount : null,
-                'credit' => $isDebit ? null : (float) $entry->amount,
-                'balance' => round($running, 2),
-            ];
-        }
-
-        $statement = [
-            // Also the export filename and the heading on the PDF and the printout.
-            'title' => $party->name.' Statement '.$periodText,
-            'columns' => [
-                ['key' => 'id', 'label' => '#'],
-                ['key' => 'txn_date', 'label' => 'Txn Date'],
-                ['key' => 'particular', 'label' => 'Particulars', 'width' => '14rem'],
-                ['key' => 'payment_mode', 'label' => 'Mode'],
-                // The work file opens in a new tab because a statement is read
-                // through rather than clicked out of: following the reference in
-                // this tab costs the reader their place in the run and the period
-                // they filtered to, both of which have to be set up again.
-                ['key' => 'ref_no', 'label' => 'Ref No.', 'type' => 'link', 'linkTo' => 'ref_url', 'newTab' => true],
-                // The column colour says which side of the ledger it is; the cell
-                // dims itself on the side an entry did not fall on.
-                ['key' => 'debit', 'label' => 'Debit', 'type' => 'money', 'class' => 'ui-money--dr'],
-                ['key' => 'credit', 'label' => 'Credit', 'type' => 'money', 'class' => 'ui-money--cr'],
-                ['key' => 'balance', 'label' => 'Balance', 'type' => 'balance', 'class' => 'ui-money--strong'],
-            ],
-            'rows' => $entries,
-            'perPage' => 50,
-            /*
-             * Never sortable. Balance is a running total carried forward from the
-             * opening balance, so re-ordering the rows detaches every figure from
-             * the row it belongs to and the statement is quietly wrong.
-             */
-            'sortable' => false,
-            'totals' => ['debit' => 'sum', 'credit' => 'sum'],
-            'emptyText' => 'No transactions in this period.',
-        ];
-    @endphp
 
     <div class="pagetitle">
         <h1>{{ $label }} Statement</h1>
@@ -114,13 +41,13 @@
 
                         <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
                             <div>
-                                <h5 class="card-title p-0 m-0">{{ $party->name }}</h5>
+                                <h5 class="card-title p-0 m-0">{{ $partyName }}</h5>
                                 <div class="statement-period">
                                     {{ $label }}
-                                    &nbsp;&middot;&nbsp; <a href="tel:{{ $party->mobile }}" class="link-primary">{{ $party->mobile }}</a>
+                                    &nbsp;&middot;&nbsp; <a href="tel:{{ $partyMobile }}" class="link-primary">{{ $partyMobile }}</a>
                                     &nbsp;&middot;&nbsp; <a href="https://wa.me/91{{ $wa }}" target="_blank" rel="noopener" class="wa-link"><i class="bi bi-whatsapp"></i> {{ $wa }}</a>
-                                    @if ($party->address)
-                                        <br>{{ $party->address }}
+                                    @if ($partyAddress)
+                                        <br>{{ $partyAddress }}
                                     @endif
                                 </div>
                                 <div class="statement-period">
@@ -129,12 +56,12 @@
                                     @else
                                         Period: All transactions
                                     @endif
-                                    &nbsp;&middot;&nbsp; {{ $getRecords->count() }} {{ Str::plural('entry', $getRecords->count()) }}
+                                    &nbsp;&middot;&nbsp; {{ $entryCount }} {{ Str::plural('entry', $entryCount) }}
                                 </div>
                             </div>
                             <div class="quick-ranges">
-                                <a href="{{ $base }}?from={{ $today->copy()->startOfMonth()->toDateString() }}&to={{ $today->copy()->endOfMonth()->toDateString() }}">This Month</a>
-                                <a href="{{ $base }}?from={{ $fyStart->toDateString() }}&to={{ $fyStart->copy()->addYear()->subDay()->toDateString() }}">This FY</a>
+                                <a href="{{ $base }}?from={{ $monthStart }}&to={{ $monthEnd }}">This Month</a>
+                                <a href="{{ $base }}?from={{ $fyStart }}&to={{ $fyEnd }}">This FY</a>
                                 <a href="{{ $base }}">All</a>
                             </div>
                         </div>
@@ -142,11 +69,11 @@
                         <form method="GET" action="{{ $base }}" class="row g-2 align-items-end statement-filter mb-3">
                             <div class="col-sm-auto">
                                 <label for="from_display" class="form-label">From</label>
-                                @include('partials._datefield', ['name' => 'from', 'value' => $from, 'max' => $today->toDateString()])
+                                @include('partials._datefield', ['name' => 'from', 'value' => $from, 'max' => $maxDate])
                             </div>
                             <div class="col-sm-auto">
                                 <label for="to_display" class="form-label">To</label>
-                                @include('partials._datefield', ['name' => 'to', 'value' => $to, 'max' => $today->toDateString()])
+                                @include('partials._datefield', ['name' => 'to', 'value' => $to, 'max' => $maxDate])
                             </div>
                             <div class="col-sm-auto">
                                 <button type="submit" class="btn btn-primary">Apply</button>
@@ -193,7 +120,7 @@
                             figures are the same ones the server already computed —
                             only the rendering moved.
                         --}}
-                        <div class="ui" data-vue="vue-party-statement" data-props="{{ \App\Support\VueProps::encode($statement) }}"></div>
+                        <div class="ui" data-vue="vue-party-statement" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
 
                     </div>
                 </div>

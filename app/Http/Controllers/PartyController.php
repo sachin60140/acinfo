@@ -286,10 +286,110 @@ class PartyController extends Controller
         $party = PartyModel::findOrFail($id);
 
         $data = PartyLedgerModel::statement($party->id, $req->query('from'), $req->query('to'));
-        $data['party'] = $party;
-        $data['type'] = $party->party_type;
-        $data['label'] = PartyModel::label($party->party_type);
 
-        return view('admin.party.statement', $data);
+        $from = $req->query('from');
+        $to = $req->query('to');
+
+        $fromText = $from ? date('d-m-Y', strtotime($from)) : 'Beginning';
+        $toText = $to ? date('d-m-Y', strtotime($to)) : 'Till date';
+        $periodText = $from || $to ? $fromText.' to '.$toText : 'All transactions';
+
+        /*
+         * The running balance is accumulated here, in the order the query
+         * returned, carried forward from the opening balance. That order is the
+         * only order in which these figures mean anything, which is why the grid
+         * is handed sortable => false.
+         */
+        $running = (float) $data['opening'];
+        $entries = [];
+
+        foreach ($data['getRecords'] as $entry) {
+            $running += $entry->signedAmount();
+            $isDebit = $entry->entry_type === 'debit';
+
+            $entries[] = [
+                'id' => $entry->id,
+                'txn_date' => date('d-m-Y', strtotime($entry->txn_date)),
+                'particular' => $entry->particular,
+                'payment_mode' => $entry->payment_mode,
+                'ref_no' => $entry->ref_no,
+                // Entries a work file generated link back to it; entries typed
+                // straight into the ledger just carry whatever reference was given.
+                'ref_url' => $entry->work_file_id ? route('workfile.edit', $entry->work_file_id) : null,
+                // The side an entry does not fall on stays null, so it exports as
+                // a blank cell the way the old table did rather than as 0.00.
+                'debit' => $isDebit ? (float) $entry->amount : null,
+                'credit' => $isDebit ? null : (float) $entry->amount,
+                'balance' => round($running, 2),
+            ];
+        }
+
+        $props = [
+            // Also the export filename and the heading on the PDF and the printout.
+            'title' => $party->name.' Statement '.$periodText,
+            'columns' => [
+                ['key' => 'id', 'label' => '#'],
+                ['key' => 'txn_date', 'label' => 'Txn Date'],
+                ['key' => 'particular', 'label' => 'Particulars', 'width' => '14rem'],
+                ['key' => 'payment_mode', 'label' => 'Mode'],
+                // The work file opens in a new tab because a statement is read
+                // through rather than clicked out of: following the reference in
+                // this tab costs the reader their place in the run and the period
+                // they filtered to, both of which have to be set up again.
+                ['key' => 'ref_no', 'label' => 'Ref No.', 'type' => 'link', 'linkTo' => 'ref_url', 'newTab' => true],
+                // The column colour says which side of the ledger it is; the cell
+                // dims itself on the side an entry did not fall on.
+                ['key' => 'debit', 'label' => 'Debit', 'type' => 'money', 'class' => 'ui-money--dr'],
+                ['key' => 'credit', 'label' => 'Credit', 'type' => 'money', 'class' => 'ui-money--cr'],
+                ['key' => 'balance', 'label' => 'Balance', 'type' => 'balance', 'class' => 'ui-money--strong'],
+            ],
+            'rows' => $entries,
+            'perPage' => 50,
+            /*
+             * Never sortable. Balance is a running total carried forward from the
+             * opening balance, so re-ordering the rows detaches every figure from
+             * the row it belongs to and the statement is quietly wrong.
+             */
+            'sortable' => false,
+            'totals' => ['debit' => 'sum', 'credit' => 'sum'],
+            'emptyText' => 'No transactions in this period.',
+        ];
+
+        $today = now();
+
+        // The Indian financial year starts in April, so "this year" on a
+        // statement means April to March, not January to December.
+        $fyStart = $today->month >= 4
+            ? $today->copy()->startOfYear()->addMonths(3)
+            : $today->copy()->subYear()->startOfYear()->addMonths(3);
+
+        return Screen::make('admin.party.statement', 'vue-party-statement', $props, [
+            'type' => $party->party_type,
+            'label' => PartyModel::label($party->party_type),
+            'partyName' => $party->name,
+            'partyMobile' => $party->mobile,
+            'partyAddress' => $party->address,
+            // Blank means "no separate WhatsApp number", so it falls back to the
+            // mobile — the same number in most cases.
+            'wa' => $party->whatsapp ?: $party->mobile,
+            'from' => $from,
+            'to' => $to,
+            'fromText' => $fromText,
+            'toText' => $toText,
+            'periodText' => $periodText,
+            'entryCount' => count($entries),
+            'opening' => (float) $data['opening'],
+            'debits' => (float) $data['debits'],
+            'credits' => (float) $data['credits'],
+            'closing' => (float) $data['closing'],
+            'base' => route('party.statement', $party->id),
+            'maxDate' => $today->toDateString(),
+            // The quick-range links, resolved here so the template does no date
+            // arithmetic of its own.
+            'monthStart' => $today->copy()->startOfMonth()->toDateString(),
+            'monthEnd' => $today->copy()->endOfMonth()->toDateString(),
+            'fyStart' => $fyStart->toDateString(),
+            'fyEnd' => $fyStart->copy()->addYear()->subDay()->toDateString(),
+        ])->toResponse($req);
     }
 }
