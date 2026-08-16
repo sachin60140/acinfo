@@ -67,25 +67,6 @@
         color: #2f3d4a;
     }
 
-    .statement-table {
-        font-size: 13px;
-    }
-
-    .statement-table td,
-    .statement-table th {
-        font-variant-numeric: tabular-nums;
-        vertical-align: middle;
-    }
-
-    .statement-table tfoot th {
-        border-top: 2px solid #adb5bd;
-        background: #f8f9fa;
-    }
-
-    .pos {
-        color: #198754;
-    }
-
     .neg {
         color: #dc3545;
     }

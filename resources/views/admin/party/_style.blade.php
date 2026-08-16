@@ -38,16 +38,6 @@
         color: #dc3545;
     }
 
-    .party-table {
-        font-size: 13px;
-    }
-
-    .party-table td,
-    .party-table th {
-        font-variant-numeric: tabular-nums;
-        vertical-align: middle;
-    }
-
     .wa-link {
         color: #25d366;
         text-decoration: none;
@@ -62,39 +52,6 @@
     }
 
     .cr {
-        color: #dc3545;
-    }
-
-    .side-toggle {
-        display: flex;
-        gap: 0.5rem;
-    }
-
-    .side-toggle input {
-        position: absolute;
-        opacity: 0;
-        pointer-events: none;
-    }
-
-    .side-toggle label {
-        border: 1px solid #d9e2ef;
-        border-radius: 7px;
-        cursor: pointer;
-        flex: 1;
-        font-weight: 700;
-        padding: 0.55rem 0.75rem;
-        text-align: center;
-    }
-
-    .side-toggle input:checked + label.dr-option {
-        background: #eaf7f0;
-        border-color: #198754;
-        color: #198754;
-    }
-
-    .side-toggle input:checked + label.cr-option {
-        background: #fdecee;
-        border-color: #dc3545;
         color: #dc3545;
     }
 
