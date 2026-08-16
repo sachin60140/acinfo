@@ -23,8 +23,13 @@
 
         @if (! $fileCount)
             <div class="alert alert-info">
-                No files are out with a vendor at the moment.
-                <a href="{{ route('workfile.assign') }}" class="alert-link">Give work to a vendor</a> first.
+                @if ($anyFiles)
+                    No files are out with a vendor at the moment.
+                    <a href="{{ route('workfile.assign') }}" class="alert-link">Give work to a vendor</a> first.
+                @else
+                    No files have been received yet.
+                    <a href="{{ route('workfile.receive') }}" class="alert-link">Receive the first one</a>, then give it to a vendor.
+                @endif
             </div>
         @else
         

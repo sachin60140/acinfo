@@ -331,8 +331,13 @@
                             No files under this status for that work type.
                             <a href="{{ route('workfile.status', ['status' => $filter]) }}" class="alert-link">Show all work types</a>.
                         @else
-                            Nothing here.
-                            <a href="{{ route('workfile.receive') }}" class="alert-link">Receive files</a> to get started.
+                            @if ($anyFiles)
+                                No files under this status.
+                                <a href="{{ route('workfile.status', ['status' => 'all']) }}" class="alert-link">Show every status</a>.
+                            @else
+                                No files have been received yet.
+                                <a href="{{ route('workfile.receive') }}" class="alert-link">Receive the first one</a> to get started.
+                            @endif
                         @endif
                     </div>
                 @else

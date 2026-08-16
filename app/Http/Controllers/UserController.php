@@ -130,7 +130,9 @@ class UserController extends Controller
 
         $props = [
             'title' => 'My Statement',
-            'emptyText' => 'No transactions in this period.',
+            'emptyText' => ($req->query('from') || $req->query('to'))
+                ? 'No transactions in this period. Try a wider range, or All.'
+                : 'No transactions yet.',
             'perPage' => 50,
             /*
              * Never sortable. Every balance above is the sum of the rows before

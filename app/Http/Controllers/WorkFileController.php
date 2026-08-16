@@ -78,6 +78,10 @@ class WorkFileController extends Controller
      */
     private function filesScreen($files, Request $req): Screen
     {
+        // Whether anything is narrowing the list, which decides what an empty
+        // one means and therefore what it should say.
+        $filtered = (bool) ($req->query('status') || $req->query('from') || $req->query('to') || $req->query('pending'));
+
         /*
          * Totals follow what each file actually earned and cost once its status
          * is taken into account — cancelled charged nobody, returned charged and
@@ -170,7 +174,18 @@ class WorkFileController extends Controller
             // Names the export file and heads the PDF and the print sheet.
             'title' => 'Work Files',
             'perPage' => 50,
-            'emptyText' => 'No files in this view — use Receive Files above.',
+            /*
+             * Two different situations, and until now one sentence.
+             *
+             * An empty list because nothing has ever been received reads as a
+             * broken screen — the first person to open this one on a live
+             * install reported it as unavailable. An empty list because a filter
+             * excluded everything is not broken at all, and needs the opposite
+             * advice. So each says what is actually true and what to do next.
+             */
+            'emptyText' => $filtered
+                ? 'No files match these filters. Try widening the dates, or clearing the status.'
+                : 'No files received yet. Use Receive Files above to add the first one.',
             'totals' => ['charged' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
             'rowClass' => 'row_class',
             'columns' => [
@@ -437,6 +452,9 @@ class WorkFileController extends Controller
 
         return Screen::make('admin.work.assign', 'vue-give-to-vendor', $props, [
             'fileCount' => $files->count(),
+            // Whether any file has ever been received. An empty screen means two
+            // different things and needs two different sentences.
+            'anyFiles' => WorkFileModel::exists(),
             'vendorCount' => $vendors->count(),
         ])->toResponse($req);
     }
@@ -536,6 +554,7 @@ class WorkFileController extends Controller
 
         return Screen::make('admin.work.customer-return', 'vue-customer-return', $props, [
             'fileCount' => $files->count(),
+            'anyFiles' => WorkFileModel::exists(),
         ])->toResponse($req);
     }
 
@@ -664,6 +683,7 @@ class WorkFileController extends Controller
 
         return Screen::make('admin.work.vendor-return', 'vue-vendor-return', $props, [
             'fileCount' => $files->count(),
+            'anyFiles' => WorkFileModel::exists(),
         ])->toResponse($req);
     }
 
@@ -863,6 +883,7 @@ class WorkFileController extends Controller
             'statusCounts' => WorkFileModel::statusCounts($workTypeId),
             'workTypeCounts' => WorkFileModel::workTypeCounts($filter),
             'fileCount' => $files->count(),
+            'anyFiles' => WorkFileModel::exists(),
             // 'open' and 'all' are tabs rather than stored statuses, so the tab
             // strip is assembled here rather than in the template.
             'tabs' => ['open' => 'In Hand'] + $statuses + ['all' => 'All'],

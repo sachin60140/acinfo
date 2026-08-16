@@ -28,8 +28,13 @@
             </div>
         @elseif (! $fileCount)
             <div class="alert alert-info">
-                No files are waiting to be given out. Everything received is either already with a vendor or cancelled.
-                <a href="{{ route('workfile.receive') }}" class="alert-link">Receive more files</a>.
+                @if ($anyFiles)
+                    No files are waiting to be given out. Everything received is either already with a vendor or cancelled.
+                    <a href="{{ route('workfile.receive') }}" class="alert-link">Receive more files</a>.
+                @else
+                    No files have been received yet.
+                    <a href="{{ route('workfile.receive') }}" class="alert-link">Receive the first one</a> and it can be given to a vendor from here.
+                @endif
             </div>
         @else
             {{--

@@ -383,7 +383,9 @@ class PartyController extends Controller
              */
             'sortable' => false,
             'totals' => ['debit' => 'sum', 'credit' => 'sum'],
-            'emptyText' => 'No transactions in this period.',
+            'emptyText' => ($from || $to)
+                ? 'No transactions in this period. Try a wider range, or All.'
+                : 'No transactions yet. Use New Entry to record the first one.',
         ];
 
         $today = now();

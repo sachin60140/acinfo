@@ -23,8 +23,13 @@
 
         @if (! $fileCount)
             <div class="alert alert-info">
-                No files are available to return. Everything received has already been returned or cancelled.
-                <a href="{{ route('workfile.receive') }}" class="alert-link">Receive files</a>.
+                @if ($anyFiles)
+                    No files are available to return. Everything received has already been returned or cancelled.
+                    <a href="{{ route('workfile.receive') }}" class="alert-link">Receive files</a>.
+                @else
+                    No files have been received yet, so there is nothing to give back.
+                    <a href="{{ route('workfile.receive') }}" class="alert-link">Receive the first one</a>.
+                @endif
             </div>
         @else
             {{--

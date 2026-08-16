@@ -177,7 +177,15 @@
 
                 @if (! $groupCount)
                     <div class="alert alert-info mb-0">
-                        No work files match this report. Try widening the dates or the status.
+                        {{-- An empty report means one of two things, and the advice
+                             for each is the opposite of the other. --}}
+                        @if ($filtered)
+                            No work files match this report. Try widening the dates, or clearing the status.
+                        @else
+                            No work files yet.
+                            <a href="{{ route('workfile.receive') }}" class="alert-link">Receive one</a>
+                            and it will be reported here.
+                        @endif
                     </div>
                 @else
                     {{-- Rendered by DataGrid: the banding, the per-party subtotals,

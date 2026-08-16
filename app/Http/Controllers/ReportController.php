@@ -191,7 +191,9 @@ class ReportController extends Controller
             // Paging off in all but name: a party split across two pages would be
             // banded twice and subtotalled twice, each time on half its files.
             'perPage' => max(count($reportRows), 1),
-            'emptyText' => 'No work files match this report.',
+            'emptyText' => ($partyId || $status || $from || $to)
+                ? 'No work files match this report. Try widening the dates, or clearing the status.'
+                : 'No work files yet. Receive one and it will appear here.',
             'columns' => [
                 ['key' => 'party_id', 'label' => $partyLabel.' Id', 'hidden' => true],
                 ['key' => 'party_name', 'label' => $partyLabel],
@@ -213,6 +215,8 @@ class ReportController extends Controller
         ];
 
         return Screen::make('admin.reports.files', 'vue-work-report', $props, [
+            // What an empty report means, and therefore what it should advise.
+            'filtered' => (bool) ($partyId || $status || $from || $to),
             'partyType' => $partyType,
             'partyLabel' => $partyLabel,
             'partyId' => $partyId ? (int) $partyId : null,

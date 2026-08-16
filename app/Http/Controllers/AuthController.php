@@ -585,7 +585,9 @@ class AuthController extends Controller
             // Not the balance: summing a running total produces a figure that
             // means nothing.
             'totals' => ['receipt' => 'sum', 'payment' => 'sum'],
-            'emptyText' => 'No transactions in this period.',
+            'emptyText' => ($from || $to)
+                ? 'No transactions in this period. Try a wider range, or All.'
+                : 'No transactions yet for this client.',
         ];
 
         $today = now();
