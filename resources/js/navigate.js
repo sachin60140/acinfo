@@ -204,26 +204,24 @@ async function visit(url, { push = true } = {}) {
     }
 }
 
-/*
- * Off unless the server says so.
+/**
+ * Whether the server has this switched on.
  *
- * The bundle is committed and deployed by git pull, so switching this off in a
- * hurry cannot mean rebuilding assets. The layout writes the flag from config:
- * one env change and a cache clear puts every screen back to ordinary page
- * loads, with nothing else in the application aware that anything changed.
- *
- * Guarded rather than returned early at the top of the module — a bare throw
- * there would abort the whole bundle and take every component with it.
+ * Read per click rather than once at startup. The built assets ship in the
+ * repository and deploy by git pull, so turning this off has to be one env
+ * change and a cache clear — and checking here means the listeners can be
+ * registered unconditionally, which is one less thing whose behaviour depends
+ * on what the page happened to say when the bundle first ran.
  */
-if (document.documentElement.dataset.swapNav === '1') {
-    register();
+function enabled() {
+    return document.documentElement.dataset.swapNav === '1';
 }
 
-function register() {
+
 document.addEventListener('click', (event) => {
     const link = event.target.closest('a');
 
-    if (!isPlainNavigation(event, link)) {
+    if (!enabled() || !isPlainNavigation(event, link)) {
         return;
     }
 
@@ -243,6 +241,7 @@ document.addEventListener('submit', (event) => {
     const form = event.target;
 
     if (
+        !enabled() ||
         event.defaultPrevented ||
         form.method.toLowerCase() !== 'get' ||
         form.dataset.noSwap ||
@@ -264,7 +263,7 @@ document.addEventListener('submit', (event) => {
  * one screen at another screen's URL.
  */
 window.addEventListener('popstate', (event) => {
-    if (event.state?.swap) {
+    if (enabled() && event.state?.swap) {
         visit(window.location.href, { push: false });
     }
 });
@@ -272,4 +271,3 @@ window.addEventListener('popstate', (event) => {
 // So the first entry is ours too, and going back to it swaps rather than
 // reloading a page the browser may have dropped from its cache.
 window.history.replaceState({ swap: true }, '', window.location.href);
-}
