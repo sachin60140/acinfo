@@ -1,0 +1,732 @@
+{
+    "client-add": {
+        "vue-client-form": {
+            "action": "string",
+            "csrf": "string",
+            "errors": "[]",
+            "indexUrl": "string",
+            "values": {
+                "address": "string",
+                "mobile_number": "string",
+                "name": "string"
+            }
+        }
+    },
+    "client-list": {
+        "vue-client-list": {
+            "columns": [
+                "id:text",
+                "name:text",
+                "mobile:text",
+                "amount:balance",
+                "statement:link:no-export:no-sort",
+                "password:link:no-export:no-sort"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "amount": "number",
+                    "id": "number",
+                    "mobile": "string",
+                    "name": "string",
+                    "password": "string",
+                    "password_url": "string",
+                    "statement": "string",
+                    "statement_url": "string"
+                }
+            },
+            "sortedBy": "string",
+            "sortedDesc": "bool",
+            "title": "string"
+        }
+    },
+    "client-password": {
+        "vue-client-password": {
+            "action": "string",
+            "cancelUrl": "string",
+            "clientMobile": "string",
+            "clientName": "string",
+            "csrf": "string",
+            "errors": "[]",
+            "hasPassword": "bool"
+        }
+    },
+    "client-statement": {
+        "vue-client-statement": {
+            "columns": [
+                "id:text",
+                "txn_date:text",
+                "particular:text",
+                "payment_type:text",
+                "receipt:money",
+                "payment:money",
+                "balance:balance",
+                "entry_date:text"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "balance": "number",
+                    "entry_date": "string",
+                    "id": "number",
+                    "particular": "string",
+                    "payment": "number",
+                    "payment_type": "string",
+                    "receipt": "null",
+                    "txn_date": "string"
+                }
+            },
+            "sortable": "bool",
+            "title": "string",
+            "totals": {
+                "payment": "string",
+                "receipt": "string"
+            }
+        }
+    },
+    "dashboard": {
+        "vue-dashboard": {
+            "tiles": {
+                "list_of": {
+                    "group": "string",
+                    "label": "string",
+                    "note": "string",
+                    "type": "string",
+                    "value": "number"
+                }
+            }
+        }
+    },
+    "file-assign": {
+        "vue-give-to-vendor": {
+            "action": "string",
+            "cancelUrl": "string",
+            "csrf": "string",
+            "files": {
+                "list_of": {
+                    "customer": "string",
+                    "customer_amount": "number",
+                    "description": "string",
+                    "file_no": "string",
+                    "id": "number",
+                    "received_date": "string",
+                    "work_type": "string"
+                }
+            },
+            "oldAmounts": "[]",
+            "pickedFiles": "[]",
+            "remark": "string",
+            "vendorDate": "string",
+            "vendorDateDisplay": "string",
+            "vendorId": "string",
+            "vendors": {
+                "list_of": {
+                    "current_balance": "number",
+                    "id": "number",
+                    "mobile": "string",
+                    "name": "string"
+                }
+            }
+        }
+    },
+    "file-customer-return": {
+        "vue-customer-return": {
+            "action": "string",
+            "cancelUrl": "string",
+            "csrf": "string",
+            "files": {
+                "list_of": {
+                    "customer": "string",
+                    "customer_amount": "number",
+                    "description": "string",
+                    "file_no": "string",
+                    "id": "number",
+                    "received_date": "string",
+                    "status": "string",
+                    "status_label": "string",
+                    "work_type": "string"
+                }
+            },
+            "oldAmounts": "[]",
+            "oldFiles": "[]",
+            "oldRemark": "string",
+            "returnedOn": "string"
+        }
+    },
+    "file-edit": {
+        "vue-file-form": {
+            "action": "string",
+            "alreadyPosted": {
+                "customer": "number",
+                "customerId": "number",
+                "vendor": "number",
+                "vendorId": "number"
+            },
+            "approvedKey": "string",
+            "cancelledKey": "string",
+            "csrf": "string",
+            "customers": {
+                "list_of": {
+                    "balance": "number",
+                    "id": "number",
+                    "label": "string"
+                }
+            },
+            "errors": "[]",
+            "indexUrl": "string",
+            "isEdit": "bool",
+            "receivedDateField": "string",
+            "refundPlaceholder": "string",
+            "returnedKey": "string",
+            "screenshotUrl": "string",
+            "statuses": {
+                "approval_done": "string",
+                "cancelled": "string",
+                "file_dispatch": "string",
+                "in_office": "string",
+                "paper_pendency": "string",
+                "paper_returned": "string",
+                "part_pesi_required": "string",
+                "under_verification": "string"
+            },
+            "timeline": {
+                "list_of": {
+                    "date": "string",
+                    "from": "null",
+                    "id": "number",
+                    "kind": "string",
+                    "remark": "null",
+                    "time": "string",
+                    "to": "string",
+                    "user": "null"
+                }
+            },
+            "values": {
+                "customer_amount": "string",
+                "customer_id": "number",
+                "description": "string",
+                "file_no": "string",
+                "registration_no": "string",
+                "remarks": "null",
+                "returned_amount": "null",
+                "status": "string",
+                "vendor_amount": "string",
+                "vendor_id": "number",
+                "work_type_id": "number"
+            },
+            "vendorDateField": "string",
+            "vendors": {
+                "list_of": {
+                    "balance": "number",
+                    "id": "number",
+                    "label": "string"
+                }
+            },
+            "workTypes": {
+                "list_of": {
+                    "id": "number",
+                    "label": "string",
+                    "rate": "null"
+                }
+            }
+        }
+    },
+    "file-receive": {
+        "vue-receive-rows": {
+            "historyUrl": "string",
+            "oldRows": {
+                "list_of": {
+                    "amount": "string",
+                    "description": "string",
+                    "registration_no": "string",
+                    "work_type_id": "string"
+                }
+            },
+            "workTypes": {
+                "list_of": {
+                    "default_rate": "null",
+                    "id": "number",
+                    "name": "string"
+                }
+            }
+        }
+    },
+    "file-status": {
+        "vue-status-board": {
+            "action": "string",
+            "approvedKey": "string",
+            "cancelledKey": "string",
+            "csrf": "string",
+            "files": {
+                "list_of": {
+                    "customer": "string",
+                    "customer_amount": "number",
+                    "description": "string",
+                    "edit_url": "string",
+                    "file_no": "string",
+                    "has_screenshot": "bool",
+                    "id": "number",
+                    "last_remark": "null",
+                    "received_date": "string",
+                    "registration_no": "string",
+                    "returned_amount": "null",
+                    "screenshot_url": "null",
+                    "status": "string",
+                    "vendor": "string",
+                    "work_type": "string"
+                }
+            },
+            "resetUrl": "string",
+            "returnedKey": "string",
+            "statuses": {
+                "approval_done": "string",
+                "cancelled": "string",
+                "file_dispatch": "string",
+                "in_office": "string",
+                "paper_pendency": "string",
+                "paper_returned": "string",
+                "part_pesi_required": "string",
+                "under_verification": "string"
+            }
+        }
+    },
+    "file-vendor-return": {
+        "vue-vendor-return": {
+            "action": "string",
+            "cancelUrl": "string",
+            "csrf": "string",
+            "files": {
+                "list_of": {
+                    "customer": "string",
+                    "description": "string",
+                    "file_no": "string",
+                    "id": "number",
+                    "vendor": "string",
+                    "vendor_amount": "number",
+                    "vendor_date": "null",
+                    "work_type": "string"
+                }
+            },
+            "oldAmounts": "[]",
+            "pickedIds": "[]",
+            "remark": "string",
+            "returnedOn": "string",
+            "returnedOnDisplay": "string"
+        }
+    },
+    "files": {
+        "vue-files-list": {
+            "columns": [
+                "file_no:link",
+                "registration_no:text",
+                "received:text",
+                "work_type:text",
+                "description:text",
+                "customer:link",
+                "charged:money",
+                "vendor:link",
+                "cost:money",
+                "margin:balance",
+                "status:badge",
+                "action:link:no-export:no-sort"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rowClass": "string",
+            "rows": {
+                "list_of": {
+                    "action": "string",
+                    "charged": "number",
+                    "charged_was": "null",
+                    "cost": "null",
+                    "cost_was": "null",
+                    "customer": "string",
+                    "customer_url": "string",
+                    "description": "string",
+                    "edit_url": "string",
+                    "file_no": "string",
+                    "id": "number",
+                    "margin": "number",
+                    "received": "string",
+                    "received_raw": "string",
+                    "registration_no": "string",
+                    "row_class": "string",
+                    "screenshot": "null",
+                    "screenshot_url": "null",
+                    "status": "string",
+                    "status_key": "string",
+                    "vendor": "string",
+                    "vendor_url": "null",
+                    "work_type": "string"
+                }
+            },
+            "title": "string",
+            "totals": {
+                "charged": "string",
+                "cost": "string",
+                "margin": "string"
+            }
+        }
+    },
+    "party-add": {
+        "vue-party-form": {
+            "action": "string",
+            "csrf": "string",
+            "dateField": "string",
+            "defaultOpeningType": "string",
+            "errors": "[]",
+            "indexUrl": "string",
+            "isActive": "bool",
+            "isEdit": "bool",
+            "label": "string",
+            "values": {
+                "address": "string",
+                "mobile": "string",
+                "name": "string",
+                "opening_balance": "string",
+                "opening_type": "string",
+                "whatsapp": "string"
+            }
+        }
+    },
+    "party-edit": {
+        "vue-party-form": {
+            "action": "string",
+            "csrf": "string",
+            "dateField": "string",
+            "defaultOpeningType": "string",
+            "errors": "[]",
+            "indexUrl": "string",
+            "isActive": "bool",
+            "isEdit": "bool",
+            "label": "string",
+            "values": {
+                "address": "string",
+                "mobile": "string",
+                "name": "string",
+                "opening_balance": "string",
+                "opening_type": "string",
+                "whatsapp": "string"
+            }
+        }
+    },
+    "party-entry": {
+        "vue-party-entry": {
+            "action": "string",
+            "csrf": "string",
+            "dateField": "string",
+            "indexUrl": "string",
+            "initial": {
+                "amount": "string",
+                "entry_type": "string",
+                "particular": "string",
+                "party_id": "string",
+                "payment_mode": "string",
+                "ref_no": "string"
+            },
+            "label": "string",
+            "parties": {
+                "list_of": {
+                    "current_balance": "number",
+                    "id": "number",
+                    "mobile": "string",
+                    "name": "string"
+                }
+            },
+            "paymentModes": {
+                "list_of": "string"
+            },
+            "sideHint": "string",
+            "statementUrl": "string"
+        }
+    },
+    "party-list-customer": {
+        "vue-party-list": {
+            "columns": [
+                "id:text",
+                "name:link",
+                "mobile:link",
+                "whatsapp:link",
+                "address:text",
+                "entry_count:count",
+                "current_balance:balance",
+                "action:link:no-export:no-sort",
+                "inactive_note:text:hidden"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "action": "string",
+                    "address": "string",
+                    "current_balance": "number",
+                    "edit_url": "string",
+                    "entry_count": "number",
+                    "id": "number",
+                    "inactive_note": "null",
+                    "mobile": "string",
+                    "mobile_url": "string",
+                    "name": "string",
+                    "statement_action": "string",
+                    "statement_url": "string",
+                    "whatsapp": "string",
+                    "whatsapp_url": "string"
+                }
+            },
+            "title": "string"
+        }
+    },
+    "party-list-vendor": {
+        "vue-party-list": {
+            "columns": [
+                "id:text",
+                "name:link",
+                "mobile:link",
+                "whatsapp:link",
+                "address:text",
+                "entry_count:count",
+                "current_balance:balance",
+                "action:link:no-export:no-sort",
+                "inactive_note:text:hidden"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "action": "string",
+                    "address": "string",
+                    "current_balance": "number",
+                    "edit_url": "string",
+                    "entry_count": "number",
+                    "id": "number",
+                    "inactive_note": "null",
+                    "mobile": "string",
+                    "mobile_url": "string",
+                    "name": "string",
+                    "statement_action": "string",
+                    "statement_url": "string",
+                    "whatsapp": "string",
+                    "whatsapp_url": "string"
+                }
+            },
+            "title": "string"
+        }
+    },
+    "party-statement": {
+        "vue-party-statement": {
+            "columns": [
+                "id:text",
+                "txn_date:text",
+                "particular:text",
+                "payment_mode:text",
+                "ref_no:link",
+                "debit:money",
+                "credit:money",
+                "balance:balance"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "balance": "number",
+                    "credit": "null",
+                    "debit": "number",
+                    "id": "number",
+                    "particular": "string",
+                    "payment_mode": "string",
+                    "ref_no": "string",
+                    "ref_url": "string",
+                    "txn_date": "string"
+                }
+            },
+            "sortable": "bool",
+            "title": "string",
+            "totals": {
+                "credit": "string",
+                "debit": "string"
+            }
+        }
+    },
+    "payment": {
+        "vue-payment-form": {
+            "action": "string",
+            "clients": {
+                "list_of": {
+                    "current_balance": "number",
+                    "id": "number",
+                    "name": "string"
+                }
+            },
+            "clientsUrl": "string",
+            "csrf": "string",
+            "dateField": "string",
+            "errors": "[]",
+            "initial": {
+                "amount": "string",
+                "client_name": "string",
+                "paymentMode": "string",
+                "remarks": "string"
+            },
+            "paymentModes": {
+                "list_of": {
+                    "id": "number",
+                    "payment_mode": "string"
+                }
+            }
+        }
+    },
+    "receipt": {
+        "vue-payment-receipt": {
+            "action": "string",
+            "clients": {
+                "list_of": {
+                    "current_balance": "number",
+                    "id": "number",
+                    "name": "string"
+                }
+            },
+            "clientsUrl": "string",
+            "csrf": "string",
+            "dateField": "string",
+            "initial": {
+                "amount": "string",
+                "client_name": "string",
+                "paymentMode": "string",
+                "remarks": "string"
+            },
+            "paymentModes": {
+                "list_of": {
+                    "id": "number",
+                    "name": "string"
+                }
+            }
+        }
+    },
+    "report-customer": {
+        "vue-work-report": {
+            "columns": [
+                "party_id:text:hidden",
+                "party_name:text",
+                "file_no:text",
+                "registration_no:text",
+                "received:text",
+                "work_type:text",
+                "description:text",
+                "counterparty:text",
+                "status:badge",
+                "remark:text",
+                "billed:money",
+                "cost:money",
+                "margin:money"
+            ],
+            "emptyText": "string",
+            "groupBy": "string",
+            "groupLabel": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "billed": "number",
+                    "cost": "number",
+                    "counterparty": "string",
+                    "description": "string",
+                    "file_no": "string",
+                    "id": "number",
+                    "margin": "number",
+                    "party_band": "string",
+                    "party_id": "number",
+                    "party_name": "string",
+                    "received": "string",
+                    "received_sort": "string",
+                    "registration_no": "string",
+                    "remark": "string",
+                    "status": "string",
+                    "status_key": "string",
+                    "work_type": "string"
+                }
+            },
+            "title": "string",
+            "totals": {
+                "billed": "string",
+                "cost": "string",
+                "margin": "string"
+            }
+        }
+    },
+    "report-vendor": {
+        "vue-work-report": {
+            "columns": [
+                "party_id:text:hidden",
+                "party_name:text",
+                "file_no:text",
+                "registration_no:text",
+                "received:text",
+                "work_type:text",
+                "description:text",
+                "counterparty:text",
+                "status:badge",
+                "remark:text",
+                "billed:money",
+                "cost:money",
+                "margin:money"
+            ],
+            "emptyText": "string",
+            "groupBy": "string",
+            "groupLabel": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "billed": "number",
+                    "cost": "number",
+                    "counterparty": "string",
+                    "description": "string",
+                    "file_no": "string",
+                    "id": "number",
+                    "margin": "number",
+                    "party_band": "string",
+                    "party_id": "number",
+                    "party_name": "string",
+                    "received": "string",
+                    "received_sort": "string",
+                    "registration_no": "string",
+                    "remark": "null",
+                    "status": "string",
+                    "status_key": "string",
+                    "work_type": "string"
+                }
+            },
+            "title": "string",
+            "totals": {
+                "billed": "string",
+                "cost": "string",
+                "margin": "string"
+            }
+        }
+    },
+    "work-types": {
+        "vue-work-types": {
+            "action": "string",
+            "cancelUrl": "string",
+            "csrf": "string",
+            "editingId": "null",
+            "filesUrl": "string",
+            "initial": {
+                "default_rate": "string",
+                "is_active": "bool",
+                "name": "string"
+            },
+            "types": {
+                "list_of": {
+                    "billed_total": "number",
+                    "default_rate": "null",
+                    "edit_url": "string",
+                    "file_count": "number",
+                    "id": "number",
+                    "is_active": "bool",
+                    "name": "string"
+                }
+            }
+        }
+    }
+}
