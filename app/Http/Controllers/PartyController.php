@@ -194,14 +194,9 @@ class PartyController extends Controller
                 ->with('success', PartyModel::label($type).' "'.$party->name.'" added successfully. ID: '.$party->id);
         }
 
-        return view('admin.party.form', [
-            'type' => $type,
-            'label' => PartyModel::label($type),
-            'party' => null,
-            // A customer normally starts out owing you (Dr); a vendor normally
-            // starts out owed by you (Cr).
-            'defaultOpeningType' => $type === 'customer' ? 'debit' : 'credit',
-        ]);
+        // A customer normally starts out owing you (Dr); a vendor normally
+        // starts out owed by you (Cr).
+        return $this->partyFormScreen(null, $type, $type === 'customer' ? 'debit' : 'credit')->toResponse($req);
     }
 
     public function edit(Request $req, $id)
@@ -227,12 +222,7 @@ class PartyController extends Controller
                 ->with('success', PartyModel::label($party->party_type).' "'.$party->name.'" updated successfully.');
         }
 
-        return view('admin.party.form', [
-            'type' => $party->party_type,
-            'label' => PartyModel::label($party->party_type),
-            'party' => $party,
-            'defaultOpeningType' => null,
-        ]);
+        return $this->partyFormScreen($party, $party->party_type, null)->toResponse($req);
     }
 
     public function entry(Request $req, string $type)
@@ -265,15 +255,56 @@ class PartyController extends Controller
             return back()->with('success', ucfirst($entry->entry_type).' entry saved successfully. Transaction ID: '.$entry->id);
         }
 
-        return view('admin.party.entry', [
-            'type' => $type,
-            'label' => PartyModel::label($type),
-            'partylist' => PartyModel::selectList($type),
+        $label = PartyModel::label($type);
+
+        // Pre-select the entry that adds to what the party owes, since that is
+        // the commoner of the two on each screen.
+        $defaultEntryType = $type === 'customer' ? 'debit' : 'credit';
+
+        $props = [
+            'action' => route('party.entry', $type),
+            'csrf' => csrf_token(),
+            'label' => $label,
+            'indexUrl' => route('party.index', $type),
+            // __ID__ is swapped client-side rather than the URL being built by
+            // concatenation, so it always matches what the route generates.
+            'statementUrl' => route('party.statement', ['id' => '__ID__']),
+            'sideHint' => $type === 'customer'
+                ? 'Debit = sale / amount charged · Credit = payment received'
+                : 'Debit = payment made to vendor · Credit = purchase / bill received',
             'paymentModes' => PartyLedgerModel::PAYMENT_MODES,
-            // Pre-select the entry that adds to what the party owes, since that
-            // is the commoner of the two on each screen.
-            'defaultEntryType' => $type === 'customer' ? 'debit' : 'credit',
-        ]);
+            'parties' => PartyModel::selectList($type)->map(fn ($p) => [
+                'id' => $p->id,
+                'name' => $p->name,
+                'mobile' => $p->mobile,
+                'current_balance' => (float) $p->current_balance,
+            ])->values(),
+            // The date field stays the shared partial rather than being rebuilt
+            // in Vue: assets/js/datepicker.js owns that markup, and dd-mm-yyyy
+            // everywhere is the whole reason it exists.
+            'dateField' => view('partials._datefield', [
+                'name' => 'txn_date',
+                'value' => old('txn_date', date('Y-m-d')),
+                'required' => true,
+            ])->render(),
+            // What Reset puts back, which is what the page loaded with —
+            // including a rejected submission's own values.
+            'initial' => [
+                'party_id' => (string) old('party_id'),
+                'entry_type' => old('entry_type', $defaultEntryType),
+                'amount' => (string) old('amount'),
+                'payment_mode' => (string) old('payment_mode'),
+                'ref_no' => (string) old('ref_no'),
+                'particular' => (string) old('particular'),
+            ],
+        ];
+
+        return Screen::make('admin.party.entry', 'vue-party-entry', $props, [
+            'type' => $type,
+            'label' => $label,
+            // Nothing can be entered against a side with no parties on it.
+            'partyCount' => count($props['parties']),
+        ])->toResponse($req);
     }
 
     public function statement(Request $req, $id)
@@ -392,4 +423,56 @@ class PartyController extends Controller
             'fyEnd' => $fyStart->copy()->addYear()->subDay()->toDateString(),
         ])->toResponse($req);
     }
+    /**
+     * The add and edit forms are the same screen with a party or without one,
+     * so they describe it in one place rather than twice.
+     */
+    private function partyFormScreen(?PartyModel $party, string $type, ?string $defaultOpeningType): Screen
+    {
+        $isEdit = (bool) $party;
+
+        /*
+         * An unchecked checkbox posts nothing, so old('is_active') is absent
+         * both when the form is fresh and when the user deliberately cleared it.
+         * Only the presence of validation errors tells the two apart.
+         */
+        $bag = session('errors');
+        $activeChecked = $isEdit ? (($bag && $bag->any()) ? old('is_active') : $party->is_active) : true;
+
+        $props = [
+            'action' => $isEdit ? route('party.edit', $party->id) : route('party.create', $type),
+            'csrf' => csrf_token(),
+            'label' => PartyModel::label($type),
+            'indexUrl' => route('party.index', $type),
+            'isEdit' => $isEdit,
+            'isActive' => (bool) $activeChecked,
+            'defaultOpeningType' => $defaultOpeningType ?? 'debit',
+            'values' => [
+                'name' => old('name', $isEdit ? $party->name : ''),
+                'mobile' => old('mobile', $isEdit ? $party->mobile : ''),
+                'whatsapp' => old('whatsapp', $isEdit ? $party->whatsapp : ''),
+                'address' => old('address', $isEdit ? $party->address : ''),
+                'opening_balance' => old('opening_balance', ''),
+                'opening_type' => old('opening_type', $defaultOpeningType ?? 'debit'),
+            ],
+            // Rendered here rather than rebuilt in the component: the date box
+            // keeps one markup contract, the one assets/js/datepicker.js binds
+            // by class.
+            'dateField' => $isEdit ? '' : view('partials._datefield', [
+                'name' => 'opening_date',
+                'value' => old('opening_date', date('Y-m-d')),
+            ])->render(),
+            // The summary list stays as it is; this puts the same message
+            // against the field it came from. Cast so an empty bag still
+            // arrives as an object rather than as an array.
+            'errors' => (object) array_map(fn ($m) => $m[0], $bag ? $bag->messages() : []),
+        ];
+
+        return Screen::make('admin.party.form', 'vue-party-form', $props, [
+            'type' => $type,
+            'label' => PartyModel::label($type),
+            'isEdit' => $isEdit,
+        ]);
+    }
+
 }

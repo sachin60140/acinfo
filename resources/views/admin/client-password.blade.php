@@ -41,17 +41,7 @@
                             the form still posts normally and the server still
                             checks both values.
                         --}}
-                        <div data-vue="vue-client-password" data-props="{{ \App\Support\VueProps::encode([
-                            'action' => route('clientpassword', $client->id),
-                            'csrf' => csrf_token(),
-                            'cancelUrl' => route('viewclient'),
-                            'clientName' => $client->name,
-                            'clientMobile' => (string) $client->mobile,
-                            // Whether this replaces a working login or creates the
-                            // first one. The hash itself never leaves the server.
-                            'hasPassword' => filled($client->password),
-                            'errors' => (object) array_map(fn ($messages) => $messages[0], $errors->messages()),
-                        ]) }}"></div>
+                        <div data-vue="vue-client-password" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
                     </div>
                 </div>
             </div>

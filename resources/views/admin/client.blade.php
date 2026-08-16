@@ -57,20 +57,7 @@
                     password boxes start empty every time, which is also what the
                     component's Reset puts back.
                 --}}
-                <div data-vue="vue-client-form" data-props="{{ \App\Support\VueProps::encode([
-                    'action' => route('addclients'),
-                    'csrf' => csrf_token(),
-                    'indexUrl' => route('viewclient'),
-                    'values' => [
-                        'name' => old('name', ''),
-                        'mobile_number' => old('mobile_number', ''),
-                        'address' => old('address', ''),
-                    ],
-                    // The list above stays as it is; this puts the same message
-                    // against the field it came from. Cast so an empty bag still
-                    // arrives as an object rather than as an array.
-                    'errors' => (object) array_map(fn ($messages) => $messages[0], $errors->messages()),
-                ]) }}"></div>
+                <div data-vue="vue-client-form" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
             </div>
         </div>
     </section>

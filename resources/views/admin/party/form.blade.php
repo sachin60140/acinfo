@@ -1,20 +1,12 @@
 @extends('admin.layouts.app')
 
-@section('title', ($party ? 'Edit' : 'Add') . ' ' . $label . ' | Ac Info')
+@section('title', ($isEdit ? 'Edit' : 'Add') . ' ' . $label . ' | Ac Info')
 
 @section('style')
     @include('admin.party._style')
 @endsection
 
 @section('content')
-    @php
-        $isEdit = (bool) $party;
-        $action = $isEdit ? route('party.edit', $party->id) : route('party.create', $type);
-        // An unchecked checkbox posts nothing, so old('is_active') is absent both
-        // when the form is fresh and when the user deliberately cleared it. Only
-        // the presence of validation errors tells the two apart.
-        $activeChecked = $isEdit ? ($errors->any() ? old('is_active') : $party->is_active) : true;
-    @endphp
 
     <div class="pagetitle">
         <h1>{{ $isEdit ? 'Edit' : 'Add' }} {{ $label }}</h1>
@@ -48,34 +40,7 @@
                             every value — which is what makes converting a screen on a
                             live ledger safe: only the rendering moves.
                         --}}
-                        <div data-vue="vue-party-form" data-props="{{ \App\Support\VueProps::encode([
-                            'action' => $action,
-                            'csrf' => csrf_token(),
-                            'label' => $label,
-                            'indexUrl' => route('party.index', $type),
-                            'isEdit' => $isEdit,
-                            'isActive' => (bool) $activeChecked,
-                            'defaultOpeningType' => $defaultOpeningType ?? 'debit',
-                            'values' => [
-                                'name' => old('name', $isEdit ? $party->name : ''),
-                                'mobile' => old('mobile', $isEdit ? $party->mobile : ''),
-                                'whatsapp' => old('whatsapp', $isEdit ? $party->whatsapp : ''),
-                                'address' => old('address', $isEdit ? $party->address : ''),
-                                'opening_balance' => old('opening_balance', ''),
-                                'opening_type' => old('opening_type', $defaultOpeningType ?? 'debit'),
-                            ],
-                            // Rendered here rather than rebuilt in the component: the
-                            // date box keeps one markup contract, the one
-                            // assets/js/datepicker.js binds by class.
-                            'dateField' => $isEdit ? '' : view('partials._datefield', [
-                                'name' => 'opening_date',
-                                'value' => old('opening_date', date('Y-m-d')),
-                            ])->render(),
-                            // The list above stays as it is; this puts the same message
-                            // against the field it came from. Cast so an empty bag
-                            // still arrives as an object rather than as an array.
-                            'errors' => (object) array_map(fn ($messages) => $messages[0], $errors->messages()),
-                        ]) }}"></div>
+                        <div data-vue="vue-party-form" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
                     </div>
                 </div>
             </div>

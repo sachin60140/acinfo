@@ -180,7 +180,22 @@ class AuthController extends Controller
             return back()->with('success', 'Client created successfully. Client ID: '.$lastid);
         }
 
-        return view('admin.client');
+        $props = [
+            'action' => route('addclients'),
+            'csrf' => csrf_token(),
+            'indexUrl' => route('viewclient'),
+            'values' => [
+                'name' => old('name', ''),
+                'mobile_number' => old('mobile_number', ''),
+                'address' => old('address', ''),
+            ],
+            // The summary list stays as it is; this puts the same message
+            // against the field it came from. Cast so an empty bag still
+            // arrives as an object rather than as an array.
+            'errors' => (object) array_map(fn ($messages) => $messages[0], session('errors') ? session('errors')->messages() : []),
+        ];
+
+        return Screen::make('admin.client', 'vue-client-form', $props)->toResponse($req);
     }
 
     public function viewclient(Request $req)
@@ -298,7 +313,21 @@ class AuthController extends Controller
             return redirect()->route('viewclient')->with('success', 'Client password set successfully.');
         }
 
-        return view('admin.client-password', compact('client'));
+        $props = [
+            'action' => route('clientpassword', $client->id),
+            'csrf' => csrf_token(),
+            'cancelUrl' => route('viewclient'),
+            'clientName' => $client->name,
+            'clientMobile' => (string) $client->mobile,
+            // Whether this replaces a working login or creates the first one.
+            // The hash itself never leaves the server.
+            'hasPassword' => filled($client->password),
+            'errors' => (object) array_map(fn ($messages) => $messages[0], session('errors') ? session('errors')->messages() : []),
+        ];
+
+        return Screen::make('admin.client-password', 'vue-client-password', $props, [
+            'clientName' => $client->name,
+        ])->toResponse($req);
     }
 
     public function paymentreceipt(Request $req)

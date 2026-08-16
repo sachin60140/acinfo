@@ -3,12 +3,6 @@
 @section('title', 'Work Types | Ac Info')
 
 @section('content')
-    @php
-        $isEdit = (bool) $editing;
-        // After a failed submission the switch is drawn from what was sent, not
-        // from what is stored, or a change the user made is silently undone.
-        $activeChecked = $isEdit ? ($errors->any() ? old('is_active') : $editing->is_active) : true;
-    @endphp
 
     <div class="pagetitle">
         <h1>Work Types</h1>
@@ -30,26 +24,6 @@
             moved. The list's sorting and search, which were DataTables', are in
             the component.
         --}}
-        <div data-vue="vue-work-types" data-props="{{ \App\Support\VueProps::encode([
-            'action' => $isEdit ? route('worktype.edit', $editing->id) : route('worktype.index'),
-            'csrf' => csrf_token(),
-            'cancelUrl' => route('worktype.index'),
-            'filesUrl' => route('workfile.index'),
-            'editingId' => $isEdit ? (int) $editing->id : null,
-            'initial' => [
-                'name' => old('name', $isEdit ? $editing->name : ''),
-                'default_rate' => old('default_rate', $isEdit ? $editing->default_rate : ''),
-                'is_active' => (bool) $activeChecked,
-            ],
-            'types' => $types->map(fn ($type) => [
-                'id' => (int) $type->id,
-                'name' => $type->name,
-                'default_rate' => $type->default_rate === null ? null : (float) $type->default_rate,
-                'is_active' => (bool) $type->is_active,
-                'file_count' => (int) $type->file_count,
-                'billed_total' => (float) $type->billed_total,
-                'edit_url' => route('worktype.edit', $type->id),
-            ])->values(),
-        ]) }}"></div>
+        <div data-vue="vue-work-types" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
     </section>
 @endsection

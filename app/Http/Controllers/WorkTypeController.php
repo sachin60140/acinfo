@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\WorkTypeModel;
+use App\Support\Screen;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -31,9 +32,38 @@ class WorkTypeController extends Controller
                 ->with('success', 'Work type "'.$type->name.'" '.($editing ? 'updated' : 'added').' successfully.');
         }
 
-        return view('admin.work.types', [
-            'types' => WorkTypeModel::withUsage(),
-            'editing' => $editing,
-        ]);
+        $types = WorkTypeModel::withUsage();
+        $isEdit = (bool) $editing;
+
+        // After a failed submission the switch is drawn from what was sent, not
+        // from what is stored, or a change the user made is silently undone.
+        $bag = session('errors');
+        $activeChecked = $isEdit ? (($bag && $bag->any()) ? old('is_active') : $editing->is_active) : true;
+
+        $props = [
+            'action' => $isEdit ? route('worktype.edit', $editing->id) : route('worktype.index'),
+            'csrf' => csrf_token(),
+            'cancelUrl' => route('worktype.index'),
+            'filesUrl' => route('workfile.index'),
+            'editingId' => $isEdit ? (int) $editing->id : null,
+            'initial' => [
+                'name' => old('name', $isEdit ? $editing->name : ''),
+                'default_rate' => old('default_rate', $isEdit ? $editing->default_rate : ''),
+                'is_active' => (bool) $activeChecked,
+            ],
+            'types' => $types->map(fn ($type) => [
+                'id' => (int) $type->id,
+                'name' => $type->name,
+                'default_rate' => $type->default_rate === null ? null : (float) $type->default_rate,
+                'is_active' => (bool) $type->is_active,
+                'file_count' => (int) $type->file_count,
+                'billed_total' => (float) $type->billed_total,
+                'edit_url' => route('worktype.edit', $type->id),
+            ])->values(),
+        ];
+
+        return Screen::make('admin.work.types', 'vue-work-types', $props, [
+            'isEdit' => $isEdit,
+        ])->toResponse($req);
     }
 }
