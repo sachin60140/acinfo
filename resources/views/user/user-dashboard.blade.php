@@ -7,23 +7,6 @@
 @endsection
 
 @section('content')
-    @php
-        /*
-         * The controller's sum, unchanged. Positive is money the office is
-         * holding for this client, negative is money the client owes.
-         *
-         * Passed with that sign rather than negated. The office statements flip
-         * it before handing it to balance(), because in their books money held
-         * for a client is a credit — this screen is read by the client, for whom
-         * it is simply theirs, so the component keeps the client's sign and says
-         * which way it falls in words.
-         */
-        $props = [
-            'available' => round((float) $totalamount, 2),
-            'asOn' => now()->format('d-m-Y'),
-            'statementUrl' => route('userstatement'),
-        ];
-    @endphp
 
     <div class="pagetitle">
         <h1>Dashboard</h1>
@@ -43,7 +26,7 @@
             writes a balance with a minus sign. It was printed raw before, so an
             overdrawn client was shown something like "-2400.5".
         --}}
-        <div data-vue="vue-user-dashboard" data-props="{{ \App\Support\VueProps::encode($props) }}"></div>
+        <div data-vue="vue-user-dashboard" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
     </section>
 @endsection
 

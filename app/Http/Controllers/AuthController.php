@@ -282,9 +282,108 @@ class AuthController extends Controller
         $client = ClientModel::find($id);
 
         $data = ClientLedgerModel::statement($id, $req->query('from'), $req->query('to'));
-        $data['clientName'] = $client ? $client->name : 'Unknown Client';
-        $data['clientId'] = $id;
+        $clientName = $client ? $client->name : 'Unknown Client';
 
-        return view('admin.client-statement', $data);
+        $from = $req->query('from');
+        $to = $req->query('to');
+
+        // Written once and used twice: on screen, and as the heading a printed or
+        // exported statement carries, which is useless without its period.
+        $fromText = $from ? date('d-m-Y', strtotime($from)) : 'Beginning';
+        $toText = $to ? date('d-m-Y', strtotime($to)) : 'Till date';
+        $periodText = $from || $to ? $fromText.' to '.$toText : 'All transactions';
+
+        /*
+         * The running balance is accumulated here, in the order the query
+         * returned, carried forward from the opening balance. That order is the
+         * reason the grid is handed sortable: false — re-ordering the rows would
+         * leave every figure in the Balance column standing against the wrong
+         * transaction.
+         */
+        $bal = (float) $data['opening'];
+        $rows = [];
+
+        foreach ($data['getRecords'] as $item) {
+            $amount = (float) $item->amount;
+            $bal += $amount;
+
+            $rows[] = [
+                'id' => (int) $item->id,
+                'txn_date' => date('d-m-Y', strtotime($item->txn_date)),
+                'particular' => $item->particular,
+                'payment_type' => $item->payment_type,
+                // Null rather than zero on the side an entry does not fall on, so
+                // the export leaves the cell empty the way the old one did.
+                'receipt' => $amount > 0 ? $amount : null,
+                'payment' => $amount < 0 ? abs($amount) : null,
+                /*
+                 * Negated deliberately. A receipt credits the client and is stored
+                 * positive, so a positive balance is money held for the client — a
+                 * credit — while balance() prints a negative as Cr. Passing the
+                 * raw figure would name every side backwards.
+                 */
+                'balance' => round(-$bal, 2),
+                'entry_date' => $item->created_at ? date('d-m-Y', strtotime($item->created_at)) : '',
+            ];
+        }
+
+        $props = [
+            // Also the export filename and the heading on the PDF and the printout.
+            'title' => $clientName.' Statement '.$periodText,
+            'columns' => [
+                ['key' => 'id', 'label' => '#'],
+                ['key' => 'txn_date', 'label' => 'Txn Date'],
+                ['key' => 'particular', 'label' => 'Details', 'width' => '14rem'],
+                ['key' => 'payment_type', 'label' => 'Mode'],
+                // Coloured for money in and money out, which is how this screen
+                // has always been read; the cell dims itself on the side an entry
+                // did not fall on.
+                ['key' => 'receipt', 'label' => 'Receipt', 'type' => 'money', 'class' => 'ui-money--dr'],
+                ['key' => 'payment', 'label' => 'Payment', 'type' => 'money', 'class' => 'ui-money--cr'],
+                ['key' => 'balance', 'label' => 'Balance', 'type' => 'balance', 'class' => 'ui-money--strong'],
+                ['key' => 'entry_date', 'label' => 'Entry Date'],
+            ],
+            'rows' => $rows,
+            'perPage' => 50,
+            /*
+             * Never sortable. Balance is a running total carried forward from the
+             * opening balance, so re-ordering the rows detaches every figure from
+             * the row it belongs to and the statement is quietly wrong.
+             */
+            'sortable' => false,
+            // Not the balance: summing a running total produces a figure that
+            // means nothing.
+            'totals' => ['receipt' => 'sum', 'payment' => 'sum'],
+            'emptyText' => 'No transactions in this period.',
+        ];
+
+        $today = now();
+
+        // The Indian financial year starts in April, so "this year" on a
+        // statement means April to March.
+        $fyStart = $today->month >= 4
+            ? $today->copy()->startOfYear()->addMonths(3)
+            : $today->copy()->subYear()->startOfYear()->addMonths(3);
+
+        return Screen::make('admin.client-statement', 'vue-client-statement', $props, [
+            'clientName' => $clientName,
+            'clientId' => $id,
+            'from' => $from,
+            'to' => $to,
+            'fromText' => $fromText,
+            'toText' => $toText,
+            'periodText' => $periodText,
+            'entryCount' => count($rows),
+            'opening' => (float) $data['opening'],
+            'receipts' => (float) $data['receipts'],
+            'payments' => (float) $data['payments'],
+            'closing' => (float) $data['closing'],
+            'base' => url('admin/client/statement/'.$id),
+            'maxDate' => $today->toDateString(),
+            'monthStart' => $today->copy()->startOfMonth()->toDateString(),
+            'monthEnd' => $today->copy()->endOfMonth()->toDateString(),
+            'fyStart' => $fyStart->toDateString(),
+            'fyEnd' => $fyStart->copy()->addYear()->subDay()->toDateString(),
+        ])->toResponse($req);
     }
 }
