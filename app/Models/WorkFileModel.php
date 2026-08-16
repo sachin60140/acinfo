@@ -868,14 +868,24 @@ class WorkFileModel extends Model
     {
         $query->whereNotIn('work_file.status', [self::CANCELLED, self::RETURNED]);
 
-        // Nothing charged yet. Zero rather than null: the column has always been
-        // NOT NULL with a zero default, so "no figure" is stored as 0.00.
+        /*
+         * The test is the one syncSide() uses to decide there is nothing to
+         * post: no party, or an amount of zero or less. Anything it declines to
+         * post is money not yet on a statement, and that is exactly what this
+         * report is for — so the two have to agree, or a file falls between
+         * them and is reported by neither.
+         *
+         * It did. A vendor amount left blank stores null and was reported; a
+         * vendor amount typed as 0 stores 0.00, posted nothing, and was
+         * reported by nothing.
+         */
         $unbilled = fn ($q) => $q->where('work_file.customer_amount', '<=', 0);
 
-        // Handed to a vendor without a rate. Only meaningful once there is a
-        // vendor — an in-house file has no rate to agree and never will.
+        // Only meaningful once there is a vendor — an in-house file has no rate
+        // to agree and never will.
         $unpriced = fn ($q) => $q->whereNotNull('work_file.vendor_id')
-            ->whereNull('work_file.vendor_amount');
+            ->where(fn ($v) => $v->whereNull('work_file.vendor_amount')
+                ->orWhere('work_file.vendor_amount', '<=', 0));
 
         match ($which) {
             'customer' => $unbilled($query),

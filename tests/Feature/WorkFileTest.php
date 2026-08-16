@@ -1588,4 +1588,70 @@ class WorkFileTest extends TestCase
         $this->assertSame(0, WorkFileModel::pendingCounts()['any'] - $base['any'], 'cancelled is not awaiting anything');
     }
 
+
+    /**
+     * Anything the ledger declines to post is reported as awaiting a price.
+     *
+     * This is the invariant, not a list of cases. syncSide() posts nothing when
+     * there is no party or the amount is zero or less; a file it declines to
+     * post for is money that never reached a statement, and that is precisely
+     * what the pending report exists to surface. If the two rules disagree, a
+     * file falls between them and nothing reports it at all.
+     *
+     * They did disagree. A vendor amount left blank stores null and was
+     * reported. A vendor amount typed as 0 stores 0.00, posted nothing, and was
+     * reported by nothing — invisible on both sides.
+     */
+    public function test_anything_the_ledger_declines_to_post_is_reported_as_pending(): void
+    {
+        $base = WorkFileModel::pendingCounts();
+
+        // Every way a figure can amount to nothing.
+        $blankVendor = $this->receive(['customer_amount' => '4000']);
+        $this->giveToVendor([$blankVendor->id], $this->vendor->id, [$blankVendor->id => '']);
+
+        $zeroVendor = $this->receive(['customer_amount' => '4000']);
+        $this->giveToVendor([$zeroVendor->id], $this->vendor->id, [$zeroVendor->id => '0']);
+
+        $unbilled = $this->receive(['customer_amount' => '0']);
+
+        $now = WorkFileModel::pendingCounts();
+
+        $this->assertSame(2, $now['vendor'] - $base['vendor'], 'blank and zero are both nothing');
+        $this->assertSame(1, $now['customer'] - $base['customer']);
+        $this->assertSame(3, $now['any'] - $base['any']);
+
+        /*
+         * Stated as the rule rather than the cases: for every file, having no
+         * ledger entry on a side and being reported as pending on that side are
+         * the same thing.
+         */
+        foreach ([$blankVendor, $zeroVendor] as $file) {
+            $this->assertSame(
+                0,
+                PartyLedgerModel::where('work_file_id', $file->id)->where('file_role', 'vendor')->count(),
+                'nothing was posted to the vendor'
+            );
+
+            $this->assertTrue(
+                WorkFileModel::listing(null, null, null, 'vendor')->contains('id', $file->id),
+                'so it must be reported as awaiting a vendor rate'
+            );
+        }
+
+        // And the converse: a file that did post is not reported.
+        $priced = $this->receive(['customer_amount' => '4000']);
+        $this->giveToVendor([$priced->id], $this->vendor->id, [$priced->id => '2500']);
+
+        $this->assertSame(
+            1,
+            PartyLedgerModel::where('work_file_id', $priced->id)->where('file_role', 'vendor')->count()
+        );
+
+        $this->assertFalse(
+            WorkFileModel::listing(null, null, null, 'vendor')->contains('id', $priced->id),
+            'a priced file has nothing outstanding'
+        );
+    }
+
 }
