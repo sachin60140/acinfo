@@ -112,6 +112,7 @@
                     "file_no": "string",
                     "id": "number",
                     "received_date": "string",
+                    "vendor_rate": "null",
                     "work_type": "string"
                 }
             },
@@ -849,6 +850,7 @@
             "filesUrl": "string",
             "initial": {
                 "default_rate": "string",
+                "default_vendor_rate": "string",
                 "is_active": "bool",
                 "name": "string"
             },
@@ -856,6 +858,7 @@
                 "list_of": {
                     "billed_total": "number",
                     "default_rate": "null",
+                    "default_vendor_rate": "null",
                     "edit_url": "string",
                     "file_count": "number",
                     "id": "number",

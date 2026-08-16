@@ -27,11 +27,13 @@ class WorkTypeModel extends Model
                 'work_type.id',
                 'work_type.name',
                 'work_type.default_rate',
+                'work_type.default_vendor_rate',
                 'work_type.is_active',
                 DB::raw('COUNT(work_file.id) as file_count'),
                 DB::raw('COALESCE(SUM(work_file.customer_amount), 0) as billed_total')
             )
-            ->groupBy('work_type.id', 'work_type.name', 'work_type.default_rate', 'work_type.is_active')
+            // ONLY_FULL_GROUP_BY: every non-aggregate column has to be listed.
+            ->groupBy('work_type.id', 'work_type.name', 'work_type.default_rate', 'work_type.default_vendor_rate', 'work_type.is_active')
             ->orderBy('work_type.name', 'asc')
             ->get();
     }
@@ -53,7 +55,7 @@ class WorkTypeModel extends Model
                     $q->orWhere('id', $includeId);
                 }
             })
-            ->select('id', 'name', 'default_rate', 'is_active')
+            ->select('id', 'name', 'default_rate', 'default_vendor_rate', 'is_active')
             ->orderBy('name', 'asc')
             ->get();
     }

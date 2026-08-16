@@ -444,6 +444,12 @@ class WorkFileController extends Controller
                 'file_no' => $file->file_no,
                 'received_date' => date('d-m-Y', strtotime($file->received_date)),
                 'work_type' => $file->workType?->name,
+                // What this kind of work usually costs to have done, so
+                // ticking the file fills the box in. Never the customer
+                // charge: the gap between the two is the margin.
+                'vendor_rate' => $file->workType?->default_vendor_rate === null
+                    ? null
+                    : (float) $file->workType->default_vendor_rate,
                 'description' => $file->description,
                 'customer' => $file->customer?->name,
                 'customer_amount' => (float) $file->customer_amount,

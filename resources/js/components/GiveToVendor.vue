@@ -46,10 +46,32 @@ const amounts = reactive(
 
 const isPicked = (file) => picked.value.includes(file.id);
 
+/*
+ * Ticking a file fills in what this kind of work usually costs.
+ *
+ * On the tick only, and never over something already typed. A rate that
+ * recomputed itself could not be cleared — and a blank box has always meant
+ * "not agreed yet", which is a thing the operator has to be able to say.
+ *
+ * It fills from the work type's vendor cost, never from what the customer is
+ * charged. Those are the two sides of the job and the gap between them is the
+ * margin; using one for the other would credit the vendor the whole charge and
+ * book every file at nothing.
+ */
+function onPick(file) {
+    if (isPicked(file) && file.vendor_rate && String(amounts[file.id]).trim() === '') {
+        amounts[file.id] = Number(file.vendor_rate).toFixed(2);
+    }
+}
+
 const allPicked = computed({
     get: () => props.files.length > 0 && picked.value.length === props.files.length,
     set: (on) => {
         picked.value = on ? props.files.map((file) => file.id) : [];
+
+        if (on) {
+            props.files.forEach(onPick);
+        }
     },
 });
 
@@ -232,7 +254,8 @@ onMounted(() => {
                                         class="give-check"
                                         name="files[]"
                                         :value="file.id"
-                                        v-model="picked">
+                                        v-model="picked"
+                                        @change="onPick(file)">
                                 </td>
 
                                 <td data-label="File No.">

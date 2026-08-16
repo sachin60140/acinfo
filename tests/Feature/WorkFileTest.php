@@ -1654,4 +1654,93 @@ class WorkFileTest extends TestCase
         );
     }
 
+
+    /**
+     * A work type carries two rates, and they are not interchangeable.
+     *
+     * default_rate is what the customer is charged; default_vendor_rate is what
+     * the vendor is paid. The gap between them is the margin, which is the only
+     * figure this business runs on. An earlier attempt to prefill the vendor
+     * amount had nothing but the customer charge to use — it would have credited
+     * the vendor the entire charge and booked every file at nothing.
+     */
+    public function test_the_assign_screen_offers_the_vendor_rate_not_the_customer_charge(): void
+    {
+        $this->actingAs($this->admin());
+
+        $type = WorkTypeModel::find($this->workType->id);
+        $type->default_rate = 5000;          // what the customer pays
+        $type->default_vendor_rate = 3500;   // what the vendor costs
+        $type->save();
+
+        $file = $this->receive(['customer_amount' => '5000']);
+
+        $offered = collect(
+            $this->getJson(route('workfile.assign'))->assertOk()->json('props.files')
+        )->firstWhere('id', $file->id);
+
+        $this->assertNotNull($offered, 'the file is waiting to be given out');
+        // assertEquals, not assertSame: a whole number survives the JSON round
+        // trip as an int, and the type is not what this is about.
+        $this->assertEquals(3500.0, $offered['vendor_rate'], 'the vendor cost, not the charge');
+        $this->assertNotSame((float) $offered['customer_amount'], $offered['vendor_rate']);
+    }
+
+    /**
+     * A rate that varies by vendor or by job has no default worth storing, and a
+     * blank box has always meant "not agreed yet" — which the operator has to be
+     * able to say. So no rate means nothing is offered, and the file goes out
+     * unpriced and gets reported as such.
+     */
+    public function test_a_work_type_with_no_vendor_rate_offers_nothing(): void
+    {
+        $this->actingAs($this->admin());
+
+        $type = WorkTypeModel::find($this->workType->id);
+        $type->default_vendor_rate = null;
+        $type->save();
+
+        $file = $this->receive();
+
+        $offered = collect(
+            $this->getJson(route('workfile.assign'))->assertOk()->json('props.files')
+        )->firstWhere('id', $file->id);
+
+        $this->assertNull($offered['vendor_rate']);
+    }
+
+    public function test_a_vendor_rate_is_saved_and_read_back(): void
+    {
+        $this->actingAs($this->admin());
+
+        $type = new WorkTypeModel;
+        $type->name = 'Rated Work '.uniqid();
+        $type->is_active = 1;
+        $type->save();
+
+        $this->post(route('worktype.edit', $type->id), [
+            'name' => $type->name,
+            'default_rate' => '5000',
+            'default_vendor_rate' => '3500',
+            'is_active' => 1,
+        ])->assertRedirect();
+
+        $type->refresh();
+
+        $this->assertSame('5000.00', $type->default_rate);
+        $this->assertSame('3500.00', $type->default_vendor_rate);
+
+        // Blank clears it, because blank means the rate is agreed each time.
+        $this->post(route('worktype.edit', $type->id), [
+            'name' => $type->name,
+            'default_rate' => '5000',
+            'default_vendor_rate' => '',
+            'is_active' => 1,
+        ])->assertRedirect();
+
+        $type->refresh();
+
+        $this->assertNull($type->default_vendor_rate, 'blank means not agreed, not zero');
+    }
+
 }

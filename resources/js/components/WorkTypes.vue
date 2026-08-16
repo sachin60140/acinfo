@@ -33,6 +33,7 @@ const editing = computed(() => props.editingId !== null);
 const form = reactive({
     name: props.initial.name ?? '',
     default_rate: props.initial.default_rate ?? '',
+    default_vendor_rate: props.initial.default_vendor_rate ?? '',
     is_active: Boolean(props.initial.is_active),
 });
 
@@ -68,7 +69,8 @@ const PER_PAGE = 25;
 const columns = [
     { key: 'id', label: '#' },
     { key: 'name', label: 'Work Type' },
-    { key: 'default_rate', label: 'Default Rate', num: true },
+    { key: 'default_rate', label: 'Charge', num: true },
+    { key: 'default_vendor_rate', label: 'Vendor Cost', num: true },
     { key: 'file_count', label: 'Files', num: true },
     { key: 'billed_total', label: 'Billed', num: true },
 ];
@@ -231,7 +233,7 @@ const sortIcon = (key) => {
                     </div>
 
                     <div class="ui-field">
-                        <label class="ui-label" for="wt-rate">Default Rate</label>
+                        <label class="ui-label" for="wt-rate">Default Charge</label>
                         <div class="wt-group">
                             <span class="wt-group__addon">INR</span>
                             <input
@@ -245,7 +247,27 @@ const sortIcon = (key) => {
                                 placeholder="0.00">
                         </div>
                         <div class="ui-hint">
-                            Pre-fills the amount on the file form. Leave blank for work quoted per job.
+                            Pre-fills what the customer is charged. Leave blank for work quoted per job.
+                        </div>
+                    </div>
+
+                    <div class="ui-field">
+                        <label class="ui-label" for="wt-vendor-rate">Default Vendor Cost</label>
+                        <div class="wt-group">
+                            <span class="wt-group__addon">INR</span>
+                            <input
+                                id="wt-vendor-rate"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                class="ui-input ui-input--amount"
+                                name="default_vendor_rate"
+                                v-model="form.default_vendor_rate"
+                                placeholder="0.00">
+                        </div>
+                        <div class="ui-hint">
+                            Pre-fills what the vendor is paid, when work of this type
+                            goes out. Leave blank if the rate is agreed each time.
                         </div>
                     </div>
 
