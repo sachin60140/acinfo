@@ -154,6 +154,32 @@ class AuthController extends Controller
             ],
         ];
 
+        /*
+         * Files taken in, or given to a vendor, with the money not yet agreed.
+         *
+         * Shown only when there are any. A file waiting on a price posts nothing
+         * to either ledger — which is correct, and means it is missing from every
+         * other figure on this screen without any of them looking wrong. A tile
+         * reading zero every day is one nobody reads; one that appears only when
+         * something is waiting is one that gets noticed.
+         */
+        $pending = WorkFileModel::pendingCounts();
+
+        if ($pending['any']) {
+            $tiles[] = [
+                'group' => 'Work',
+                'label' => 'Awaiting Price',
+                'value' => $pending['any'],
+                'type' => 'count',
+                'note' => trim(implode(' · ', array_filter([
+                    $pending['customer'] ? $pending['customer'].' not billed' : null,
+                    $pending['vendor'] ? $pending['vendor'].' no vendor rate' : null,
+                ]))),
+                // Lands on exactly the files it counted.
+                'href' => route('workfile.index', ['pending' => 'any']),
+            ];
+        }
+
         return Screen::make('admin.dashboard', 'vue-dashboard', ['tiles' => $tiles])->toResponse($req);
     }
 

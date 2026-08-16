@@ -350,4 +350,107 @@ class DashboardTest extends TestCase
         $this->get('admin/files')->assertRedirect(url('/admin'));
         $this->get('admin/work-types')->assertRedirect(url('/admin'));
     }
+
+    /**
+     * The tiles a dashboard shows, keyed by label.
+     */
+    private function tiles(): array
+    {
+        $html = $this->get('admin/dashboard')->assertOk()->getContent();
+
+        $this->assertSame(
+            1,
+            preg_match('#data-vue="vue-dashboard" data-props="(.*?)"></div>#s', $html, $mount),
+            'the dashboard does not mount its tiles'
+        );
+
+        $props = json_decode(html_entity_decode($mount[1], ENT_QUOTES, 'UTF-8'), true);
+
+        return collect($props['tiles'])->keyBy('label')->all();
+    }
+
+    /**
+     * A file waiting on a price is missing from every other figure on this
+     * screen without any of them looking wrong: it posts nothing to either
+     * ledger, so it is not receivable, not payable, and adds nothing to margin.
+     * The only way it is ever noticed is if something says so.
+     */
+    public function test_the_dashboard_reports_files_waiting_on_a_price(): void
+    {
+        $this->actingAs($this->admin());
+
+        $type = new WorkTypeModel;
+        $type->name = 'Pending Work '.uniqid();
+        $type->is_active = 1;
+        $type->save();
+
+        $customer = $this->party('customer', '9000000601');
+
+        $this->assertArrayNotHasKey(
+            'Awaiting Price',
+            $this->tiles(),
+            'a tile reading zero every day is one nobody reads'
+        );
+
+        $file = new WorkFileModel;
+        $file->file_no = 'F-PEND-'.uniqid();
+        $file->received_date = now()->toDateString();
+        $file->work_type_id = $type->id;
+        $file->customer_id = $customer->id;
+        $file->customer_amount = 0;      // taken in, price not agreed
+        $file->status = 'in_office';
+        $file->save();
+
+        $tiles = $this->tiles();
+
+        $this->assertArrayHasKey('Awaiting Price', $tiles, 'it appears once something is waiting');
+        $this->assertSame(1, $tiles['Awaiting Price']['value']);
+        $this->assertStringContainsString('not billed', $tiles['Awaiting Price']['note']);
+
+        // And it lands on exactly the files it counted.
+        $this->get($tiles['Awaiting Price']['href'])
+            ->assertOk()
+            ->assertSee($file->file_no);
+    }
+
+    /**
+     * The file it counts is invisible everywhere else, which is the reason the
+     * tile exists. If this ever stops being true the tile is redundant — and if
+     * it silently starts being false, a file nobody priced is being counted as
+     * money somewhere.
+     */
+    public function test_a_file_waiting_on_a_price_moves_no_other_dashboard_figure(): void
+    {
+        $this->actingAs($this->admin());
+
+        $before = $this->tiles();
+
+        $type = new WorkTypeModel;
+        $type->name = 'Silent Work '.uniqid();
+        $type->is_active = 1;
+        $type->save();
+
+        $file = new WorkFileModel;
+        $file->file_no = 'F-SILENT-'.uniqid();
+        $file->received_date = now()->toDateString();
+        $file->work_type_id = $type->id;
+        $file->customer_id = $this->party('customer', '9000000602')->id;
+        $file->customer_amount = 0;
+        $file->status = 'in_office';
+        $file->save();
+
+        $after = $this->tiles();
+
+        foreach (['Net Outstanding', 'Receivable', 'Payable', 'File Margin'] as $label) {
+            $this->assertSame(
+                $before[$label]['value'],
+                $after[$label]['value'],
+                "$label moved for a file that has no agreed price"
+            );
+        }
+
+        // Open Files does count it — it is work in hand, priced or not.
+        $this->assertSame($before['Open Files']['value'] + 1, $after['Open Files']['value']);
+    }
+
 }
