@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Session;
+use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
@@ -54,7 +55,7 @@ class AuthController extends Controller
         return redirect()->back()->with('error', 'Email or password is incorrect');
     }
 
-    public function dashboard()
+    public function dashboard(Request $req)
     {
         $data['totaldues'] = DB::table('client_ledger')->sum('amount');
         $data['clientcount'] = DB::table('client')->count();
@@ -68,7 +69,92 @@ class AuthController extends Controller
         $data['outstanding'] = PartyModel::outstanding();
         $data['work'] = WorkFileModel::summary();
 
-        return view('admin.dashboard', $data);
+        // Named locally so the tile descriptions below read as they did in the
+        // view they came from.
+        $totaldues = $data['totaldues'];
+        $monthnet = $data['monthnet'];
+        $clientcount = $data['clientcount'];
+        $outstanding = $data['outstanding'];
+        $work = $data['work'];
+
+/*
+         * Every figure here is one the controller already computed. The tiles are
+         * described rather than drawn so the component decides how a figure reads
+         * — grouped, two decimals, Dr/Cr where it is a balance — in one place
+         * instead of six.
+         *
+         * Receivable and payable stay separate and adjacent. Netting them would
+         * report a business owed 10,000 and owing 7,000 as one owed 3,000, which
+         * is a different and much calmer statement than the truth.
+         */
+        $tiles = [
+            /*
+             * Both are sums over client_ledger, which stores a receipt positive —
+             * so they are negated and written as balances, exactly as the client
+             * list and each client's own statement write the same figures. Left
+             * raw they printed "-446,722.91" here while the list one click away
+             * printed the same money as "446,722.91 Dr".
+             */
+            [
+                'group' => 'Client ledger',
+                'label' => 'Net Outstanding',
+                'value' => round(-(float) $totaldues, 2),
+                'type' => 'balance',
+                'note' => 'Across every client',
+            ],
+            [
+                'group' => 'Client ledger',
+                'label' => 'Net Movement',
+                'value' => round(-(float) $monthnet, 2),
+                'type' => 'balance',
+                'note' => now()->format('F Y'),
+            ],
+            [
+                'group' => 'Client ledger',
+                'label' => 'Clients',
+                'value' => (int) $clientcount,
+                'type' => 'count',
+                'note' => 'On the books',
+            ],
+            [
+                'group' => 'Parties',
+                'label' => 'Receivable',
+                'value' => (float) $outstanding['receivable'],
+                'type' => 'money',
+                'tone' => 'dr',
+                'note' => $outstanding['customers'].' '.Str::plural('customer', $outstanding['customers']),
+                // Lands on the customers this figure was summed from.
+                'href' => route('party.index', 'customer'),
+            ],
+            [
+                'group' => 'Parties',
+                'label' => 'Payable',
+                'value' => (float) $outstanding['payable'],
+                'type' => 'money',
+                'tone' => 'cr',
+                'note' => $outstanding['vendors'].' '.Str::plural('vendor', $outstanding['vendors']),
+                'href' => route('party.index', 'vendor'),
+            ],
+            [
+                'group' => 'Work',
+                'label' => 'Open Files',
+                'value' => (int) $work['open'],
+                'type' => 'count',
+                'note' => 'Work in hand',
+                // The filtered list, not every file ever received — the count and
+                // the screen it opens have to be the same set.
+                'href' => route('workfile.index', ['status' => 'open']),
+            ],
+            [
+                'group' => 'Work',
+                'label' => 'File Margin',
+                'value' => (float) $work['month_margin'],
+                'type' => 'money',
+                'note' => 'on '.number_format($work['month_billed'], 2, '.', ',').' billed · '.now()->format('F Y'),
+            ],
+        ];
+
+        return Screen::make('admin.dashboard', 'vue-dashboard', ['tiles' => $tiles])->toResponse($req);
     }
 
     public function client(Request $req)
@@ -218,13 +304,13 @@ class AuthController extends Controller
     public function paymentreceipt(Request $req)
     {
         // A receipt credits the client: amount is stored positive.
-        return $this->ledgerEntry($req, 1, 'admin.payment-reciept', 'Receipt');
+        return $this->ledgerEntry($req, 1, 'admin.payment-reciept', 'Receipt', false);
     }
 
     public function payment(Request $req)
     {
         // A payment debits the client: amount is stored negative.
-        return $this->ledgerEntry($req, -1, 'admin.payment', 'Payment');
+        return $this->ledgerEntry($req, -1, 'admin.payment', 'Payment', true);
     }
 
     /**
@@ -234,7 +320,7 @@ class AuthController extends Controller
      *
      * @param  int  $sign  1 to credit the client, -1 to debit
      */
-    private function ledgerEntry(Request $req, int $sign, string $view, string $label)
+    private function ledgerEntry(Request $req, int $sign, string $view, string $label, bool $isPayment)
     {
         if ($req->isMethod('POST')) {
             $req->validate([
@@ -264,12 +350,90 @@ class AuthController extends Controller
             ->orderBy('client.name', 'asc')
             ->get();
 
-        $data['pay_mode'] = DB::table('payment_type')
+        $payModes = DB::table('payment_type')
             ->select('id', 'payment_mode')
             ->orderBy('payment_mode', 'asc')
             ->get();
 
-        return view($view, $data);
+        /*
+         * The balance is the one summed above, sent as a plain number so the
+         * component can work out where the entry lands. client_ledger stores a
+         * receipt positive — the opposite of the party tables — and the component
+         * negates it before printing a side, the same way the client statement
+         * does.
+         */
+        $clients = $data['clientlist']->map(fn ($client) => [
+            'id' => $client->id,
+            'name' => $client->name,
+            'current_balance' => (float) $client->current_balance,
+        ])->values();
+
+        /*
+         * The date box stays the shared partial rather than being rebuilt in
+         * Vue: assets/js/datepicker.js owns that markup, and dd-mm-yyyy for
+         * everyone is the whole reason it exists.
+         */
+        $dateField = view('partials._datefield', [
+            'name' => 'txn_date',
+            'value' => old('txn_date', date('Y-m-d')),
+            'required' => true,
+        ])->render();
+
+        // What Reset puts back, which is what the page loaded with — including a
+        // rejected submission's own values.
+        $initial = [
+            'client_name' => (string) old('client_name'),
+            'paymentMode' => (string) old('paymentMode'),
+            'amount' => (string) old('amount'),
+            'remarks' => (string) old('remarks'),
+        ];
+
+        /*
+         * The two screens post to the same method but are drawn by different
+         * components, and their prop contracts differ — the payment form names a
+         * mode 'payment_mode' and takes per-field errors, the receipt names it
+         * 'name' and does not. Each is built as its own component expects rather
+         * than normalised into one shape, because changing a component's contract
+         * is a separate decision from moving where its props are built.
+         */
+        $props = $isPayment
+            ? [
+                'action' => route('payment'),
+                'csrf' => csrf_token(),
+                'clientsUrl' => route('viewclient'),
+                'clients' => $clients,
+                'paymentModes' => $payModes->map(fn ($mode) => [
+                    'id' => $mode->id,
+                    'payment_mode' => $mode->payment_mode,
+                ])->values(),
+                'dateField' => $dateField,
+                'initial' => $initial,
+                // The summary list stays as it is; this puts the same message
+                // against the field it came from. Cast so an empty bag still
+                // arrives as an object rather than as an array.
+                'errors' => (object) array_map(
+                    fn ($messages) => $messages[0],
+                    session('errors') ? session('errors')->messages() : []
+                ),
+            ]
+            : [
+                'action' => route('receipt'),
+                'csrf' => csrf_token(),
+                'clientsUrl' => route('viewclient'),
+                'clients' => $clients,
+                'paymentModes' => $payModes->map(fn ($mode) => [
+                    'id' => $mode->id,
+                    'name' => $mode->payment_mode,
+                ])->values(),
+                'dateField' => $dateField,
+                'initial' => $initial,
+            ];
+
+        return Screen::make(
+            $view,
+            $isPayment ? 'vue-payment-form' : 'vue-payment-receipt',
+            $props
+        )->toResponse($req);
     }
 
     public function clientstatement(Request $req, $id)

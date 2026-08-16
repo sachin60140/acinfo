@@ -76,120 +76,6 @@
 @endsection
 
 @section('content')
-    @php
-        $today = now();
-        $periodText = ($from || $to)
-            ? ($from ? date('d-m-Y', strtotime($from)) : 'Beginning') . ' to ' . ($to ? date('d-m-Y', strtotime($to)) : date('d-m-Y'))
-            : 'All dates';
-        $statusText = $status === 'open' ? 'Work in hand' : ($status ? $statuses[$status] : 'All statuses');
-        $work = \App\Models\WorkFileModel::class;
-
-        // The other side of the file, named for the side it holds so it cannot be
-        // mistaken for the party the report is grouped by.
-        $counterpartyLabel = $partyType === 'vendor' ? 'Received From' : 'Given To';
-
-        /*
-         * Rows are flattened out of the groups the controller already built, so
-         * every figure here is the one it computed — nothing is recalculated and
-         * nothing is fetched again.
-         */
-        $reportRows = [];
-
-        foreach ($groups as $group) {
-            /*
-             * A band carries one line of text, so the heading is composed here.
-             * Prefixed with the party label because a bare name could belong to
-             * either side, and the balance is written through formatBalance() so
-             * it reads "1,200.00 Cr" rather than carrying a minus sign.
-             *
-             * No counts in it. This text is fixed the moment the page is drawn,
-             * while the grid drops rows as the reader searches, so a heading
-             * counting files ended up standing over a subtotal covering fewer of
-             * them — "4 files" above one row. What is left holds under any
-             * search: the party is the party, and the ledger balance is the
-             * party's whole balance rather than anything summed from these rows.
-             * The rows shown are answered for by the subtotal beneath them,
-             * which the grid recomputes from exactly those rows.
-             */
-            $band = $partyLabel . ' — ' . $group['name']
-                . ' · Ledger balance ' . \App\Models\PartyLedgerModel::formatBalance($group['balance']);
-
-            foreach ($group['rows'] as $line) {
-                $row = $line['row'];
-
-                $reportRows[] = [
-                    'id' => (int) $row->id,
-                    // Banded on the id, never the name: only (party_type, mobile)
-                    // is unique on a party, so two parties may share a name, and
-                    // grouping on it merged them into one band with their money
-                    // added together.
-                    'party_id' => (int) $group['id'],
-                    'party_band' => $band,
-                    'party_name' => $group['name'],
-                    'file_no' => $row->file_no,
-                    'registration_no' => $row->registration_no,
-                    'received' => date('d-m-Y', strtotime($row->received_date)),
-                    // Sorted on separately, never shown: dd-mm-yyyy compared as
-                    // text orders by day of the month, putting the 2nd of March
-                    // above the 1st of December.
-                    'received_sort' => date('Y-m-d', strtotime($row->received_date)),
-                    'work_type' => $row->work_type,
-                    'description' => $row->description,
-                    'counterparty' => $partyType === 'vendor' ? $row->customer_name : ($row->vendor_name ?: 'In-house'),
-                    'status' => $work::STATUSES[$row->status] ?? $row->status,
-                    'status_key' => $row->status,
-                    // The latest note against the file: what is pending, or why it
-                    // stands where it does.
-                    'remark' => $line['remark'],
-                    'billed' => (float) $line['totals']['billed'],
-                    'cost' => (float) $line['totals']['cost'],
-                    'margin' => (float) $line['totals']['margin'],
-                ];
-            }
-        }
-
-        /*
-         * Everything except the internal grouping key is exported.
-         *
-         * The seven required columns — File No., Received, Work Type, Details,
-         * the counterparty, Status, Remarks — are all in here, but they cannot
-         * be the whole export: on screen the rows are banded by party, and a
-         * spreadsheet has no bands. Export only those seven from a
-         * customer-wise report and the single party column left in the file is
-         * the vendor, so every row arrives detached from the customer it
-         * belongs to and the file reads as a vendor report. That exact
-         * confusion was reported once already on screen; it must not come back
-         * in the export.
-         */
-        $gridProps = [
-            'title' => $partyLabel . '-wise Work Report — ' . $periodText . ' · ' . $statusText,
-            'groupBy' => 'party_id',
-            'groupLabel' => 'party_band',
-            'totals' => ['billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
-            // Paging off in all but name: a party split across two pages would be
-            // banded twice and subtotalled twice, each time on half its files.
-            'perPage' => max(count($reportRows), 1),
-            'emptyText' => 'No work files match this report.',
-            'columns' => [
-                ['key' => 'party_id', 'label' => $partyLabel . ' Id', 'hidden' => true],
-                ['key' => 'party_name', 'label' => $partyLabel],
-                ['key' => 'file_no', 'label' => 'File No.'],
-                ['key' => 'registration_no', 'label' => 'Vehicle'],
-                // Sorted on the ISO date carried alongside it, so the order is
-                // chronological rather than by day of the month.
-                ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_sort'],
-                ['key' => 'work_type', 'label' => 'Work Type'],
-                ['key' => 'description', 'label' => 'Details'],
-                ['key' => 'counterparty', 'label' => $counterpartyLabel],
-                ['key' => 'status', 'label' => 'Status', 'type' => 'badge'],
-                ['key' => 'remark', 'label' => 'Remarks'],
-                ['key' => 'billed', 'label' => 'Billed', 'type' => 'money'],
-                ['key' => 'cost', 'label' => 'Cost', 'type' => 'money'],
-                ['key' => 'margin', 'label' => 'Margin', 'type' => 'money'],
-            ],
-            'rows' => $reportRows,
-        ];
-    @endphp
 
     <div class="pagetitle">
         <h1>{{ $partyLabel }}-wise Work Report</h1>
@@ -240,12 +126,12 @@
 
                     <div class="col-md-2">
                         <label for="from_display" class="form-label">From</label>
-                        @include('partials._datefield', ['name' => 'from', 'value' => $from, 'max' => $today->toDateString()])
+                        @include('partials._datefield', ['name' => 'from', 'value' => $from, 'max' => $maxDate])
                     </div>
 
                     <div class="col-md-2">
                         <label for="to_display" class="form-label">To</label>
-                        @include('partials._datefield', ['name' => 'to', 'value' => $to, 'max' => $today->toDateString()])
+                        @include('partials._datefield', ['name' => 'to', 'value' => $to, 'max' => $maxDate])
                     </div>
 
                     <div class="col-md-2 d-flex gap-2">
@@ -264,7 +150,7 @@
                         <h5 class="card-title p-0 m-0">{{ $partyLabel }}-wise Work Report</h5>
                         <div class="statement-period">
                             {{ $periodText }} &nbsp;&middot;&nbsp; {{ $statusText }}
-                            &nbsp;&middot;&nbsp; {{ count($groups) }} {{ Str::plural(strtolower($partyLabel), count($groups)) }}
+                            &nbsp;&middot;&nbsp; {{ $groupCount }} {{ Str::plural(strtolower($partyLabel), $groupCount) }}
                             &nbsp;&middot;&nbsp; {{ $totals['files'] }} {{ Str::plural('file', $totals['files']) }}
                         </div>
                     </div>
@@ -289,14 +175,14 @@
                     </div>
                 </div>
 
-                @if (! count($groups))
+                @if (! $groupCount)
                     <div class="alert alert-info mb-0">
                         No work files match this report. Try widening the dates or the status.
                     </div>
                 @else
                     {{-- Rendered by DataGrid: the banding, the per-party subtotals,
                          the search and the exports are all its own. --}}
-                    <div class="ui" data-vue="vue-work-report" data-props="{{ \App\Support\VueProps::encode($gridProps) }}"></div>
+                    <div class="ui" data-vue="vue-work-report" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
 
                     {{-- The report's own total, from the server, whatever the reader
                          has since searched for — the grid's footer follows the

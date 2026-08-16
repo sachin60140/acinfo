@@ -3,52 +3,6 @@
 @section('title', 'Receipt | Ac Info')
 
 @section('content')
-    @php
-        /*
-         * Props are built here rather than inline in the directive: Blade's
-         * attribute parser splits on commas and cannot read a multi-line array
-         * that contains function calls.
-         */
-        $props = [
-            'action' => route('receipt'),
-            'csrf' => csrf_token(),
-            'clientsUrl' => route('viewclient'),
-            /*
-             * The balance is the one the controller already summed. It is sent as
-             * a plain number so the component can work out where the receipt
-             * lands, rather than being read back out of a data- attribute the way
-             * the old inline script did.
-             */
-            'clients' => $clientlist->map(fn ($client) => [
-                'id' => $client->id,
-                'name' => $client->name,
-                'current_balance' => (float) $client->current_balance,
-            ])->values(),
-            'paymentModes' => $pay_mode->map(fn ($mode) => [
-                'id' => $mode->id,
-                'name' => $mode->payment_mode,
-            ])->values(),
-            /*
-             * The date box stays the shared partial rather than being rebuilt in
-             * Vue: assets/js/datepicker.js owns that markup, and dd-mm-yyyy for
-             * everyone is the whole reason it exists. It is the same field the
-             * page hand-rolled before, down to the ids.
-             */
-            'dateField' => view('partials._datefield', [
-                'name' => 'txn_date',
-                'value' => old('txn_date', date('Y-m-d')),
-                'required' => true,
-            ])->render(),
-            // What Reset puts back, which is what the page loaded with —
-            // including a rejected submission's own values.
-            'initial' => [
-                'client_name' => (string) old('client_name'),
-                'paymentMode' => (string) old('paymentMode'),
-                'amount' => (string) old('amount'),
-                'remarks' => (string) old('remarks'),
-            ],
-        ];
-    @endphp
 
     <div class="pagetitle">
         <h1>Receipt Entry</h1>
@@ -96,7 +50,7 @@
             what makes converting a screen on a live ledger safe: only the
             rendering moves.
         --}}
-        <div data-vue="vue-payment-receipt" data-props="{{ \App\Support\VueProps::encode($props) }}"></div>
+        <div data-vue="vue-payment-receipt" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
     </section>
 @endsection
 

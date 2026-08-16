@@ -3,55 +3,6 @@
 @section('title', 'Payment | Ac Info')
 
 @section('content')
-    @php
-        /*
-         * Built above the markup rather than inline in the directive: Blade's
-         * parser splits a directive's arguments on commas and cannot read a
-         * multi-line array with function calls in it.
-         */
-        $props = [
-            'action' => route('payment'),
-            'csrf' => csrf_token(),
-            'clientsUrl' => route('viewclient'),
-            'clients' => $clientlist
-                ->map(fn ($client) => [
-                    'id' => $client->id,
-                    'name' => $client->name,
-                    // The sum of the client's ledger, raw. client_ledger stores a
-                    // receipt positive — the opposite of the party tables — and
-                    // the component negates it before printing a side, the same
-                    // way the client statement does.
-                    'current_balance' => (float) $client->current_balance,
-                ])
-                ->values(),
-            'paymentModes' => $pay_mode
-                ->map(fn ($mode) => [
-                    'id' => $mode->id,
-                    'payment_mode' => $mode->payment_mode,
-                ])
-                ->values(),
-            // The date field stays the shared partial rather than being rebuilt
-            // in Vue: assets/js/datepicker.js owns that markup, and dd-mm-yyyy
-            // everywhere is the whole reason it exists.
-            'dateField' => view('partials._datefield', [
-                'name' => 'txn_date',
-                'value' => old('txn_date', date('Y-m-d')),
-                'required' => true,
-            ])->render(),
-            // What Reset puts back, which is what the page loaded with —
-            // including a rejected submission's own values.
-            'initial' => [
-                'client_name' => (string) old('client_name'),
-                'paymentMode' => (string) old('paymentMode'),
-                'amount' => (string) old('amount'),
-                'remarks' => (string) old('remarks'),
-            ],
-            // The list above stays as it is; this puts the same message against
-            // the field it came from. Cast so an empty bag still arrives as an
-            // object rather than as an array.
-            'errors' => (object) array_map(fn ($messages) => $messages[0], $errors->messages()),
-        ];
-    @endphp
 
     <div class="pagetitle">
         <h1>Payment Entry</h1>
@@ -99,7 +50,7 @@
             the server checks every value — which is what makes converting a
             screen on a live ledger safe: only the rendering moves.
         --}}
-        <div data-vue="vue-payment-form" data-props="{{ \App\Support\VueProps::encode($props) }}"></div>
+        <div data-vue="vue-payment-form" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
     </section>
 @endsection
 

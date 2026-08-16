@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\PartyLedgerModel;
 use App\Models\PartyModel;
 use App\Models\WorkFileModel;
+use App\Support\Screen;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -96,17 +97,135 @@ class ReportController extends Controller
             $totals['margin'] += $line['margin'];
         }
 
-        return view('admin.reports.files', [
+        $partyLabel = PartyModel::label($partyType);
+        $statuses = WorkFileModel::STATUSES;
+
+        $periodText = ($from || $to)
+            ? ($from ? date('d-m-Y', strtotime($from)) : 'Beginning').' to '.($to ? date('d-m-Y', strtotime($to)) : date('d-m-Y'))
+            : 'All dates';
+
+        $statusText = $status === 'open' ? 'Work in hand' : ($status ? $statuses[$status] : 'All statuses');
+
+        // The other side of the file, named for the side it holds so it cannot be
+        // mistaken for the party the report is grouped by.
+        $counterpartyLabel = $partyType === 'vendor' ? 'Received From' : 'Given To';
+
+        /*
+         * Rows are flattened out of the groups built above, so every figure here
+         * is the one already computed — nothing is recalculated and nothing is
+         * fetched again.
+         */
+        $reportRows = [];
+
+        foreach ($groups as $group) {
+            /*
+             * A band carries one line of text, so the heading is composed here.
+             * Prefixed with the party label because a bare name could belong to
+             * either side, and the balance is written through formatBalance() so
+             * it reads "1,200.00 Cr" rather than carrying a minus sign.
+             *
+             * No counts in it. This text is fixed the moment the page is drawn,
+             * while the grid drops rows as the reader searches, so a heading
+             * counting files ended up standing over a subtotal covering fewer of
+             * them — "4 files" above one row. What is left holds under any
+             * search: the party is the party, and the ledger balance is the
+             * party's whole balance rather than anything summed from these rows.
+             * The rows shown are answered for by the subtotal beneath them,
+             * which the grid recomputes from exactly those rows.
+             */
+            $band = $partyLabel.' — '.$group['name']
+                .' · Ledger balance '.PartyLedgerModel::formatBalance($group['balance']);
+
+            foreach ($group['rows'] as $line) {
+                $row = $line['row'];
+
+                $reportRows[] = [
+                    'id' => (int) $row->id,
+                    // Banded on the id, never the name: only (party_type, mobile)
+                    // is unique on a party, so two parties may share a name, and
+                    // grouping on it merged them into one band with their money
+                    // added together.
+                    'party_id' => (int) $group['id'],
+                    'party_band' => $band,
+                    'party_name' => $group['name'],
+                    'file_no' => $row->file_no,
+                    'registration_no' => $row->registration_no,
+                    'received' => date('d-m-Y', strtotime($row->received_date)),
+                    // Sorted on separately, never shown: dd-mm-yyyy compared as
+                    // text orders by day of the month, putting the 2nd of March
+                    // above the 1st of December.
+                    'received_sort' => date('Y-m-d', strtotime($row->received_date)),
+                    'work_type' => $row->work_type,
+                    'description' => $row->description,
+                    'counterparty' => $partyType === 'vendor' ? $row->customer_name : ($row->vendor_name ?: 'In-house'),
+                    'status' => $statuses[$row->status] ?? $row->status,
+                    'status_key' => $row->status,
+                    // The latest note against the file: what is pending, or why it
+                    // stands where it does.
+                    'remark' => $line['remark'],
+                    'billed' => (float) $line['totals']['billed'],
+                    'cost' => (float) $line['totals']['cost'],
+                    'margin' => (float) $line['totals']['margin'],
+                ];
+            }
+        }
+
+        /*
+         * Everything except the internal grouping key is exported.
+         *
+         * The seven required columns — File No., Received, Work Type, Details,
+         * the counterparty, Status, Remarks — are all in here, but they cannot
+         * be the whole export: on screen the rows are banded by party, and a
+         * spreadsheet has no bands. Export only those seven from a
+         * customer-wise report and the single party column left in the file is
+         * the vendor, so every row arrives detached from the customer it
+         * belongs to and the file reads as a vendor report. That exact
+         * confusion was reported once already on screen; it must not come back
+         * in the export.
+         */
+        $props = [
+            'title' => $partyLabel.'-wise Work Report — '.$periodText.' · '.$statusText,
+            'groupBy' => 'party_id',
+            'groupLabel' => 'party_band',
+            'totals' => ['billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
+            // Paging off in all but name: a party split across two pages would be
+            // banded twice and subtotalled twice, each time on half its files.
+            'perPage' => max(count($reportRows), 1),
+            'emptyText' => 'No work files match this report.',
+            'columns' => [
+                ['key' => 'party_id', 'label' => $partyLabel.' Id', 'hidden' => true],
+                ['key' => 'party_name', 'label' => $partyLabel],
+                ['key' => 'file_no', 'label' => 'File No.'],
+                ['key' => 'registration_no', 'label' => 'Vehicle'],
+                // Sorted on the ISO date carried alongside it, so the order is
+                // chronological rather than by day of the month.
+                ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_sort'],
+                ['key' => 'work_type', 'label' => 'Work Type'],
+                ['key' => 'description', 'label' => 'Details'],
+                ['key' => 'counterparty', 'label' => $counterpartyLabel],
+                ['key' => 'status', 'label' => 'Status', 'type' => 'badge'],
+                ['key' => 'remark', 'label' => 'Remarks'],
+                ['key' => 'billed', 'label' => 'Billed', 'type' => 'money'],
+                ['key' => 'cost', 'label' => 'Cost', 'type' => 'money'],
+                ['key' => 'margin', 'label' => 'Margin', 'type' => 'money'],
+            ],
+            'rows' => $reportRows,
+        ];
+
+        return Screen::make('admin.reports.files', 'vue-work-report', $props, [
             'partyType' => $partyType,
-            'partyLabel' => PartyModel::label($partyType),
+            'partyLabel' => $partyLabel,
             'partyId' => $partyId ? (int) $partyId : null,
             'status' => $status,
+            'statusText' => $statusText,
+            'periodText' => $periodText,
             'from' => $from,
             'to' => $to,
-            'groups' => array_values($groups),
             'totals' => $totals,
-            'statuses' => WorkFileModel::STATUSES,
+            'statuses' => $statuses,
             'parties' => PartyModel::selectList($partyType, $partyId),
-        ]);
+            'maxDate' => now()->toDateString(),
+            'groupCount' => count($groups),
+        ])->toResponse($req);
     }
 }
