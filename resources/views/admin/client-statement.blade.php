@@ -187,7 +187,7 @@
                             figures are the same ones the server already computed —
                             only the rendering moved.
                         --}}
-                        <div class="ui" data-vue="vue-client-statement" data-props="{{ json_encode($statement) }}"></div>
+                        <div class="ui" data-vue="vue-client-statement" data-props="{{ \App\Support\VueProps::encode($statement) }}"></div>
 
                     </div>
                 </div>

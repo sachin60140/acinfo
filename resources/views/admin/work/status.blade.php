@@ -347,7 +347,7 @@
                         value — which is what makes converting a screen on a live
                         ledger safe: only the rendering moves.
                     --}}
-                    <div data-vue="vue-status-board" data-props="{{ json_encode([
+                    <div data-vue="vue-status-board" data-props="{{ \App\Support\VueProps::encode([
                         'action' => route('workfile.status'),
                         'csrf' => csrf_token(),
                         'resetUrl' => route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId])),

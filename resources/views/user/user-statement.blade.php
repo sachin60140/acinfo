@@ -3,8 +3,6 @@
 @section('title', 'My Statement | Ac Info')
 
 @section('style')
-    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
-    <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css">
     @include('admin.layouts._statement-style')
 @endsection
 
@@ -99,50 +97,63 @@
                             </div>
                         </div>
 
-                        <div class="table-responsive">
-                            <table class="table display statement-table rt" id="example">
-                                <thead>
-                                    <tr>
-                                        <th scope="col">#</th>
-                                        <th scope="col">Txn Date</th>
-                                        <th scope="col">Details</th>
-                                        <th scope="col">Mode</th>
-                                        <th scope="col" class="text-end">Receipt</th>
-                                        <th scope="col" class="text-end">Payment</th>
-                                        <th scope="col" class="text-end">Balance</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @php $bal = (float) $opening; @endphp
+                        @php
+                            /*
+                             * The running balance is accumulated here, in the order the
+                             * server sent, exactly as the table did. It is carried into
+                             * the row rather than recomputed in the browser, because a
+                             * balance only means anything in sequence.
+                             */
+                            $bal = (float) $opening;
+                            $statementRows = [];
 
-                                    @forelse ($getRecords as $items)
-                                        @php $bal += $items->amount; @endphp
-                                        <tr>
-                                            <td data-label="#">{{ $items->id }}</td>
-                                            <td data-label="Date" data-order="{{ $items->txn_date }}">{{ date('d-m-Y', strtotime($items->txn_date)) }}</td>
-                                            <td data-label="Details">{{ $items->particular }}</td>
-                                            <td data-label="Mode">{{ $items->payment_type }}</td>
-                                            <td data-label="Receipt" class="text-end pos">{{ $items->amount > 0 ? number_format((float) $items->amount, 2, '.', ',') : '' }}</td>
-                                            <td data-label="Payment" class="text-end neg">{{ $items->amount < 0 ? number_format((float) abs($items->amount), 2, '.', ',') : '' }}</td>
-                                            <td data-label="Balance" class="text-end fw-bold {{ $bal < 0 ? 'neg' : '' }}">{{ number_format((float) $bal, 2, '.', ',') }}</td>
-                                        </tr>
-                                    @empty
-                                        {{-- No placeholder row here on purpose: a colspan cell has
-                                             fewer cells than the header, which stops DataTables
-                                             initialising with "Incorrect column count". DataTables
-                                             draws its own message from language.emptyTable below. --}}
-                                    @endforelse
-                                </tbody>
-                                <tfoot>
-                                    <tr>
-                                        <th colspan="4" class="text-end">Period Totals</th>
-                                        <th data-label="Receipts" class="text-end pos">{{ number_format((float) $receipts, 2, '.', ',') }}</th>
-                                        <th data-label="Payments" class="text-end neg">{{ number_format((float) abs($payments), 2, '.', ',') }}</th>
-                                        <th data-label="Closing" class="text-end {{ $closing < 0 ? 'neg' : '' }}">{{ number_format((float) $closing, 2, '.', ',') }}</th>
-                                    </tr>
-                                </tfoot>
-                            </table>
-                        </div>
+                            foreach ($getRecords as $items) {
+                                $bal += $items->amount;
+
+                                $statementRows[] = [
+                                    'id' => $items->id,
+                                    'txn_date' => date('d-m-Y', strtotime($items->txn_date)),
+                                    // Sorting is off on this screen, but the raw date is
+                                    // what any future sort has to use: dd-mm-yyyy compared
+                                    // as text orders by day of the month.
+                                    'txn_date_raw' => $items->txn_date,
+                                    'particular' => $items->particular,
+                                    'payment_type' => $items->payment_type,
+                                    'receipt' => $items->amount > 0 ? (float) $items->amount : null,
+                                    'payment' => $items->amount < 0 ? (float) abs($items->amount) : null,
+                                    'balance' => (float) $bal,
+                                ];
+                            }
+
+                            $statement = [
+                                'title' => 'My Statement',
+                                'emptyText' => 'No transactions in this period.',
+                                'perPage' => 50,
+                                /*
+                                 * Never sortable. Every balance above is the sum of the
+                                 * rows before it, so re-ordering leaves each figure sitting
+                                 * against a row it does not belong to — a statement that
+                                 * looks entirely normal and is wrong from the first line.
+                                 */
+                                'sortable' => false,
+                                'totals' => ['receipt' => 'sum', 'payment' => 'sum'],
+                                'columns' => [
+                                    ['key' => 'id', 'label' => '#'],
+                                    ['key' => 'txn_date', 'label' => 'Txn Date', 'sortBy' => 'txn_date_raw'],
+                                    ['key' => 'particular', 'label' => 'Details', 'width' => '14rem'],
+                                    ['key' => 'payment_type', 'label' => 'Mode'],
+                                    ['key' => 'receipt', 'label' => 'Receipt', 'type' => 'money'],
+                                    ['key' => 'payment', 'label' => 'Payment', 'type' => 'money'],
+                                    ['key' => 'balance', 'label' => 'Balance', 'type' => 'money', 'class' => 'ui-money--strong'],
+                                ],
+                                'rows' => $statementRows,
+                            ];
+                        @endphp
+
+                        {{-- Rendered by DataGrid. The closing balance stays on the tile
+                             above: a column of running balances cannot be summed, so the
+                             footer totals receipts and payments only. --}}
+                        <div class="ui" data-vue="vue-user-statement" data-props="{{ \App\Support\VueProps::encode($statement) }}"></div>
 
                     </div>
                 </div>
@@ -152,31 +163,4 @@
 @endsection
 
 @section('script')
-    <script src="https://code.jquery.com/jquery-3.7.0.js"></script>
-    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/pdfmake.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/vfs_fonts.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.html5.min.js"></script>
-    <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.print.min.js"></script>
-
-    <script>
-        $(document).ready(function() {
-            $('#example').DataTable({
-                language: { emptyTable: 'No transactions in this period.' },
-                dom: 'Bfrtip',
-                buttons: ['copyHtml5', 'excelHtml5', 'csvHtml5', 'pdfHtml5', 'print'],
-                "pageLength": 50,
-                // Keep the order the server sent (oldest transaction first). Balance is a
-                // running total accumulated in that order and carried forward from the
-                // opening balance, so re-sorting would detach each figure from its row.
-                order: [],
-                columnDefs: [{
-                    orderable: false,
-                    targets: [4, 5, 6]
-                }]
-            });
-        });
-    </script>
 @endsection

@@ -166,7 +166,7 @@
                             which is what makes converting one screen at a time
                             safe on a live application.
                         --}}
-                        <div data-vue="vue-receive-rows" data-props="{{ json_encode([
+                        <div data-vue="vue-receive-rows" data-props="{{ \App\Support\VueProps::encode([
                             'workTypes' => $workTypes->map(fn ($type) => [
                                 'id' => $type->id,
                                 'name' => $type->name,

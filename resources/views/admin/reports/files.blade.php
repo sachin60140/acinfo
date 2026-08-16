@@ -101,10 +101,17 @@
              * Prefixed with the party label because a bare name could belong to
              * either side, and the balance is written through formatBalance() so
              * it reads "1,200.00 Cr" rather than carrying a minus sign.
+             *
+             * No counts in it. This text is fixed the moment the page is drawn,
+             * while the grid drops rows as the reader searches, so a heading
+             * counting files ended up standing over a subtotal covering fewer of
+             * them — "4 files" above one row. What is left holds under any
+             * search: the party is the party, and the ledger balance is the
+             * party's whole balance rather than anything summed from these rows.
+             * The rows shown are answered for by the subtotal beneath them,
+             * which the grid recomputes from exactly those rows.
              */
             $band = $partyLabel . ' — ' . $group['name']
-                . ' · ' . $group['files'] . ' ' . Str::plural('file', $group['files'])
-                . ($group['open'] ? ' · ' . $group['open'] . ' in hand' : '')
                 . ' · Ledger balance ' . \App\Models\PartyLedgerModel::formatBalance($group['balance']);
 
             foreach ($group['rows'] as $line) {
@@ -122,6 +129,10 @@
                     'file_no' => $row->file_no,
                     'registration_no' => $row->registration_no,
                     'received' => date('d-m-Y', strtotime($row->received_date)),
+                    // Sorted on separately, never shown: dd-mm-yyyy compared as
+                    // text orders by day of the month, putting the 2nd of March
+                    // above the 1st of December.
+                    'received_sort' => date('Y-m-d', strtotime($row->received_date)),
                     'work_type' => $row->work_type,
                     'description' => $row->description,
                     'counterparty' => $partyType === 'vendor' ? $row->customer_name : ($row->vendor_name ?: 'In-house'),
@@ -164,10 +175,9 @@
                 ['key' => 'party_name', 'label' => $partyLabel],
                 ['key' => 'file_no', 'label' => 'File No.'],
                 ['key' => 'registration_no', 'label' => 'Vehicle'],
-                // Unsortable: the grid sorts on the value it shows, and dd-mm-yyyy
-                // sorted as text orders by day of the month. Left alone, the rows
-                // stand in the order the server sent — party, then date, then id.
-                ['key' => 'received', 'label' => 'Received', 'sortable' => false],
+                // Sorted on the ISO date carried alongside it, so the order is
+                // chronological rather than by day of the month.
+                ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_sort'],
                 ['key' => 'work_type', 'label' => 'Work Type'],
                 ['key' => 'description', 'label' => 'Details'],
                 ['key' => 'counterparty', 'label' => $counterpartyLabel],
@@ -286,7 +296,7 @@
                 @else
                     {{-- Rendered by DataGrid: the banding, the per-party subtotals,
                          the search and the exports are all its own. --}}
-                    <div class="ui" data-vue="vue-work-report" data-props="{{ json_encode($gridProps) }}"></div>
+                    <div class="ui" data-vue="vue-work-report" data-props="{{ \App\Support\VueProps::encode($gridProps) }}"></div>
 
                     {{-- The report's own total, from the server, whatever the reader
                          has since searched for — the grid's footer follows the

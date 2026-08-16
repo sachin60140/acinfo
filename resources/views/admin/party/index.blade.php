@@ -37,8 +37,17 @@
          *
          * Balance is typed 'balance', so it sorts on the raw signed figure and
          * prints "1,200.00 Cr" — which is what the data-order attribute on the
-         * old cell existed to achieve. Action is unsortable, as it was, and is
-         * kept out of exports: a column of the word "Edit" is not data.
+         * old cell existed to achieve. Its figures follow number_format, the
+         * same convention as the Receivable/Payable line above the grid, so a
+         * balance reads identically whichever of the two the eye lands on.
+         *
+         * Action is unsortable, as it was, kept out of exports and out of the
+         * search text: a column of the word "Edit" is not data, and while it is
+         * searched every row matches anyone typing "edit". It carries both of
+         * the actions the old cell offered — Edit on the line, Statement quietly
+         * beneath it. That way round because a sub-line link always opens in a
+         * new tab, and the statement is the one meant to be read beside the
+         * list; editing replaces it, as it always did.
          *
          * No totals row. Netting a customer in debit against one in credit
          * would report a business with nothing outstanding, when it has money
@@ -46,13 +55,26 @@
          */
         $columns = [
             ['key' => 'id', 'label' => '#'],
-            ['key' => 'name', 'label' => 'Name', 'type' => 'link', 'linkTo' => 'statement_url', 'sub' => 'inactive_note'],
+
+            // The name and the WhatsApp number both leave this page for
+            // somewhere read alongside it, so neither takes the list with it.
+            ['key' => 'name', 'label' => 'Name', 'type' => 'link', 'linkTo' => 'statement_url', 'newTab' => true, 'sub' => 'inactive_note'],
             ['key' => 'mobile', 'label' => 'Mobile', 'type' => 'link', 'linkTo' => 'mobile_url'],
-            ['key' => 'whatsapp', 'label' => 'WhatsApp', 'type' => 'link', 'linkTo' => 'whatsapp_url', 'class' => 'wa-cell'],
+            ['key' => 'whatsapp', 'label' => 'WhatsApp', 'type' => 'link', 'linkTo' => 'whatsapp_url', 'newTab' => true, 'class' => 'wa-cell'],
             ['key' => 'address', 'label' => 'Address'],
             ['key' => 'entry_count', 'label' => 'Entries', 'type' => 'count'],
             ['key' => 'current_balance', 'label' => 'Balance', 'type' => 'balance'],
-            ['key' => 'action', 'label' => 'Action', 'type' => 'link', 'linkTo' => 'edit_url', 'sortable' => false, 'exportable' => false],
+            [
+                'key' => 'action',
+                'label' => 'Action',
+                'type' => 'link',
+                'linkTo' => 'edit_url',
+                'sub' => 'statement_action',
+                'subLinkTo' => 'statement_url',
+                'sortable' => false,
+                'searchable' => false,
+                'exportable' => false,
+            ],
 
             // Carried for searching only: "inactive" finds the deactivated
             // parties, whose marker is otherwise a quiet line under the name.
@@ -78,6 +100,10 @@
                 'current_balance' => (float) $party->current_balance,
                 'action' => 'Edit',
                 'edit_url' => route('party.edit', $party->id),
+
+                // The second action the old cell carried; it reuses the URL the
+                // name already links to.
+                'statement_action' => 'Statement',
             ];
         })->values();
 
@@ -139,7 +165,7 @@
                             script that came with them. The list is read-only, so
                             the server still owns every figure on it.
                         --}}
-                        <div class="ui party-list" data-vue="vue-party-list" data-props="{{ json_encode($grid) }}"></div>
+                        <div class="ui party-list" data-vue="vue-party-list" data-props="{{ \App\Support\VueProps::encode($grid) }}"></div>
 
                     </div>
                 </div>

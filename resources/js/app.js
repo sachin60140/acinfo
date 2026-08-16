@@ -1,14 +1,20 @@
 import './bootstrap';
 import { createApp } from 'vue';
 
+import ClientForm from './components/ClientForm.vue';
+import ClientPassword from './components/ClientPassword.vue';
 import CustomerReturn from './components/CustomerReturn.vue';
 import DataGrid from './components/DataGrid.vue';
+import FileForm from './components/FileForm.vue';
 import GiveToVendor from './components/GiveToVendor.vue';
 import Loader from './components/Loader.vue';
 import PartyEntry from './components/PartyEntry.vue';
 import PartyForm from './components/PartyForm.vue';
+import PaymentForm from './components/PaymentForm.vue';
+import PaymentReceipt from './components/PaymentReceipt.vue';
 import ReceiveFileRows from './components/ReceiveFileRows.vue';
 import StatusBoard from './components/StatusBoard.vue';
+import UserDashboard from './components/UserDashboard.vue';
 import VendorReturn from './components/VendorReturn.vue';
 import WorkTypes from './components/WorkTypes.vue';
 
@@ -35,6 +41,13 @@ const components = {
     'vue-party-entry': PartyEntry,
     'vue-party-form': PartyForm,
     'vue-work-types': WorkTypes,
+    'vue-file-form': FileForm,
+
+    // Clients: the record, the login it can be given, and money received.
+    'vue-client-form': ClientForm,
+    'vue-client-password': ClientPassword,
+    'vue-payment-form': PaymentForm,
+    'vue-payment-receipt': PaymentReceipt,
 
     /*
      * Every listing, statement and report is the same grid with a different
@@ -47,6 +60,10 @@ const components = {
     'vue-work-report': DataGrid,
     'vue-client-list': DataGrid,
     'vue-client-statement': DataGrid,
+
+    // The two screens a client sees rather than the office.
+    'vue-user-statement': DataGrid,
+    'vue-user-dashboard': UserDashboard,
 };
 
 for (const [selector, component] of Object.entries(components)) {

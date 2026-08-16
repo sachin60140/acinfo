@@ -6,25 +6,6 @@
     @include('admin.layouts._statement-style')
     @include('admin.party._style')
 
-    <style>
-        /*
-         * DataGrid colours a status badge from the raw status key it carries in
-         * data-state, while the shared sheet holds the palette as modifier
-         * classes. The map between the two therefore lives with the screen that
-         * knows what a work status is. The pairs are the ones
-         * WorkFileModel::STATUS_BADGES has always used, in their design-system
-         * equivalents — so the badge on this list still means what it meant.
-         */
-        .ui-badge[data-state="in_office"] { background: var(--n-100); color: var(--n-600); }
-        .ui-badge[data-state="paper_pendency"] { background: var(--warn-050); color: var(--warn-600); }
-        /* Mirrors .ui-badge--info, which the sheet states as literals. */
-        .ui-badge[data-state="file_dispatch"] { background: #e0f2fe; color: #0369a1; }
-        .ui-badge[data-state="part_pesi_required"] { background: var(--warn-050); color: var(--warn-600); }
-        .ui-badge[data-state="under_verification"] { background: var(--brand-100); color: var(--ink-700); }
-        .ui-badge[data-state="approval_done"] { background: var(--dr-050); color: var(--dr-700); }
-        .ui-badge[data-state="paper_returned"] { background: var(--ink-900); color: var(--n-000); }
-        .ui-badge[data-state="cancelled"] { background: var(--cr-050); color: var(--cr-700); }
-    </style>
 @endsection
 
 @section('content')
@@ -44,7 +25,11 @@
         $rows = [];
 
         foreach ($files as $f) {
-            if (in_array($f->status, [$work::CANCELLED, $work::RETURNED], true)) {
+            // Decided once and read twice: a closed file is kept out of the count
+            // above and greyed in the list below.
+            $isClosed = in_array($f->status, [$work::CANCELLED, $work::RETURNED], true);
+
+            if ($isClosed) {
                 $closedCount++;
             }
 
@@ -63,6 +48,9 @@
                 'edit_url' => route('workfile.edit', $f->id),
                 'registration_no' => $f->registration_no,
                 'received' => date('d-m-Y', strtotime($f->received_date)),
+                // Sorted on rather than shown: dd-mm-yyyy compared as text orders
+                // by day of the month, putting 02-03 above 01-12.
+                'received_raw' => $f->received_date,
                 'work_type' => $f->work_type,
                 'description' => $f->description,
                 'customer' => $f->customer_name,
@@ -74,6 +62,10 @@
                  * above and with the party statements. Where the two differ the
                  * original is kept on a second line: a part refund or a
                  * cancellation is easier to trust when the row shows its working.
+                 *
+                 * number_format writes what the grid's money() writes — groups of
+                 * three, two decimals, a full stop between them — so the two
+                 * figures in one cell cannot disagree about how a figure is written.
                  */
                 'charged' => $netCustomer,
                 'charged_was' => abs($netCustomer - (float) $f->customer_amount) > 0.005
@@ -82,7 +74,10 @@
 
                 'vendor' => $f->vendor_name ?? 'In-house',
                 'vendor_url' => $f->vendor_id ? route('party.statement', $f->vendor_id) : null,
-                'cost' => $netVendor,
+                // An in-house file has no vendor and so has no cost; 0.00 states
+                // one that was never incurred, and netVendor() returns 0.0 for a
+                // null amount. The old cell was left blank for exactly this row.
+                'cost' => $f->vendor_amount === null ? null : $netVendor,
                 'cost_was' => abs($netVendor - (float) $f->vendor_amount) > 0.005
                     ? 'was '.number_format((float) $f->vendor_amount, 2, '.', ',')
                     : null,
@@ -93,8 +88,16 @@
                 // The badge colours itself from the raw key, not the label.
                 'status_key' => $f->status,
                 'screenshot' => $f->approval_screenshot ? 'Approval screenshot on file' : null,
+                // The evidence itself. Approval is the one status that has to be
+                // evidenced, so the screenshot has to be reachable from the list
+                // as it was from the paperclip — a statement of it is not evidence.
+                'screenshot_url' => $f->approval_screenshot ? url($f->approval_screenshot) : null,
 
                 'action' => 'Edit',
+
+                // Greys the whole row. A closed file is still worth seeing but is
+                // no longer in play, and should not read like live work.
+                'row_class' => $isClosed ? 'is-closed' : '',
             ];
         }
 
@@ -104,29 +107,33 @@
             'perPage' => 50,
             'emptyText' => 'No files in this view — use Receive Files above.',
             'totals' => ['charged' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
+            'rowClass' => 'row_class',
             'columns' => [
                 ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
                 ['key' => 'registration_no', 'label' => 'Vehicle'],
-                // A date shown dd-mm-yyyy cannot also sort chronologically as a
-                // string, and the grid sorts on the value it prints. Left
-                // unsortable rather than sorting by day-of-month: the server
-                // already sends newest first, and File No. runs in the same order.
-                ['key' => 'received', 'label' => 'Received', 'sortable' => false],
+                // Shown dd-mm-yyyy, sorted on the raw Y-m-d each row also carries,
+                // so oldest-first and newest-first both mean what they say.
+                ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_raw'],
                 ['key' => 'work_type', 'label' => 'Work Type'],
                 ['key' => 'description', 'label' => 'Details'],
-                ['key' => 'customer', 'label' => 'Customer', 'type' => 'link', 'linkTo' => 'customer_url'],
+                // A party statement is opened to be read against this list, and
+                // this list is behind a status and date filter — taking the tab
+                // with it means setting the filter again to come back.
+                ['key' => 'customer', 'label' => 'Customer', 'type' => 'link', 'linkTo' => 'customer_url', 'newTab' => true],
                 // Debit green, credit red — the same two directions the rest of
                 // the ledger uses, carried by the class the sheet already defines.
                 ['key' => 'charged', 'label' => 'Charged', 'type' => 'money', 'class' => 'dr', 'sub' => 'charged_was'],
-                ['key' => 'vendor', 'label' => 'Vendor', 'type' => 'link', 'linkTo' => 'vendor_url'],
+                ['key' => 'vendor', 'label' => 'Vendor', 'type' => 'link', 'linkTo' => 'vendor_url', 'newTab' => true],
                 ['key' => 'cost', 'label' => 'Cost', 'type' => 'money', 'class' => 'cr', 'sub' => 'cost_was'],
                 // A margin has a side: earned reads Dr, lost reads Cr, and neither
                 // needs a minus sign to be read correctly.
                 ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold'],
-                ['key' => 'status', 'label' => 'Status', 'type' => 'badge', 'sub' => 'screenshot'],
-                // A column of the word "Edit" is noise in a spreadsheet.
+                ['key' => 'status', 'label' => 'Status', 'type' => 'badge',
+                    'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url'],
+                // A column of the word "Edit" is noise in a spreadsheet, and in the
+                // search box it is worse: every row matches anyone typing "edit".
                 ['key' => 'action', 'label' => 'Action', 'type' => 'link', 'linkTo' => 'edit_url',
-                    'sortable' => false, 'exportable' => false],
+                    'sortable' => false, 'searchable' => false, 'exportable' => false],
             ],
             'rows' => $rows,
         ];
@@ -229,7 +236,7 @@
                             one definition of how a figure is written on screen and
                             in the file that comes out of it.
                         --}}
-                        <div data-vue="vue-files-list" data-props="{{ json_encode($props) }}"></div>
+                        <div data-vue="vue-files-list" data-props="{{ \App\Support\VueProps::encode($props) }}"></div>
 
                     </div>
                 </div>

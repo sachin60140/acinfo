@@ -30,7 +30,7 @@
             moved. The list's sorting and search, which were DataTables', are in
             the component.
         --}}
-        <div data-vue="vue-work-types" data-props="{{ json_encode([
+        <div data-vue="vue-work-types" data-props="{{ \App\Support\VueProps::encode([
             'action' => $isEdit ? route('worktype.edit', $editing->id) : route('worktype.index'),
             'csrf' => csrf_token(),
             'cancelUrl' => route('worktype.index'),

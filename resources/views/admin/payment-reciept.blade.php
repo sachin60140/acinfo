@@ -2,112 +2,54 @@
 
 @section('title', 'Receipt | Ac Info')
 
-
-@section('style')
-
-    <style>
-        /* Chrome, Safari, Edge, Opera */
-        input::-webkit-outer-spin-button,
-        input::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
-
-        .receipt-page .card {
-            border: 0;
-            border-radius: 8px;
-            box-shadow: 0 4px 24px rgba(1, 41, 112, 0.08);
-        }
-
-        .receipt-page .form-label {
-            color: #334155;
-            font-size: 0.86rem;
-            font-weight: 700;
-            margin-bottom: 0.4rem;
-        }
-
-        .receipt-page .form-control,
-        .receipt-page .form-select,
-        .receipt-page .input-group-text {
-            border-color: #d9e2ef;
-            border-radius: 7px;
-            min-height: 44px;
-        }
-
-        .receipt-page .input-group > .form-control,
-        .receipt-page .input-group > .form-select {
-            border-top-left-radius: 0;
-            border-bottom-left-radius: 0;
-        }
-
-        .receipt-page .input-group-text {
-            background: #f8fafc;
-            color: #64748b;
-            min-width: 44px;
-            justify-content: center;
-        }
-
-        .receipt-page .form-control:focus,
-        .receipt-page .form-select:focus {
-            border-color: #20c997;
-            box-shadow: 0 0 0 0.2rem rgba(32, 201, 151, 0.14);
-        }
-
-        .receipt-page .required-mark {
-            color: #dc3545;
-        }
-
-        .receipt-page .receipt-summary {
-            background: linear-gradient(180deg, #f8fffc 0%, #ffffff 100%);
-            border-top: 4px solid #20c997;
-        }
-
-        .receipt-page .summary-row {
-            border-bottom: 1px solid #e9eef5;
-            display: flex;
-            justify-content: space-between;
-            gap: 1rem;
-            padding: 0.85rem 0;
-        }
-
-        .receipt-page .summary-row:last-child {
-            border-bottom: 0;
-        }
-
-        .receipt-page .summary-label {
-            color: #64748b;
-            font-size: 0.82rem;
-            font-weight: 700;
-            text-transform: uppercase;
-        }
-
-        .receipt-page .summary-value {
-            color: #0f172a;
-            font-weight: 700;
-            text-align: right;
-        }
-
-        .receipt-page .amount-preview {
-            color: #198754;
-            font-size: 1.35rem;
-        }
-
-        .receipt-page .balance-chip {
-            background: #ecfdf5;
-            border: 1px solid #bbf7d0;
-            border-radius: 7px;
-            color: #166534;
-            display: inline-flex;
-            font-size: 0.85rem;
-            font-weight: 700;
-            margin-top: 0.55rem;
-            padding: 0.45rem 0.7rem;
-        }
-    </style>
-
-@endsection
-
 @section('content')
+    @php
+        /*
+         * Props are built here rather than inline in the directive: Blade's
+         * attribute parser splits on commas and cannot read a multi-line array
+         * that contains function calls.
+         */
+        $props = [
+            'action' => route('receipt'),
+            'csrf' => csrf_token(),
+            'clientsUrl' => route('viewclient'),
+            /*
+             * The balance is the one the controller already summed. It is sent as
+             * a plain number so the component can work out where the receipt
+             * lands, rather than being read back out of a data- attribute the way
+             * the old inline script did.
+             */
+            'clients' => $clientlist->map(fn ($client) => [
+                'id' => $client->id,
+                'name' => $client->name,
+                'current_balance' => (float) $client->current_balance,
+            ])->values(),
+            'paymentModes' => $pay_mode->map(fn ($mode) => [
+                'id' => $mode->id,
+                'name' => $mode->payment_mode,
+            ])->values(),
+            /*
+             * The date box stays the shared partial rather than being rebuilt in
+             * Vue: assets/js/datepicker.js owns that markup, and dd-mm-yyyy for
+             * everyone is the whole reason it exists. It is the same field the
+             * page hand-rolled before, down to the ids.
+             */
+            'dateField' => view('partials._datefield', [
+                'name' => 'txn_date',
+                'value' => old('txn_date', date('Y-m-d')),
+                'required' => true,
+            ])->render(),
+            // What Reset puts back, which is what the page loaded with —
+            // including a rejected submission's own values.
+            'initial' => [
+                'client_name' => (string) old('client_name'),
+                'paymentMode' => (string) old('paymentMode'),
+                'amount' => (string) old('amount'),
+                'remarks' => (string) old('remarks'),
+            ],
+        ];
+    @endphp
+
     <div class="pagetitle">
         <h1>Receipt Entry</h1>
         <nav>
@@ -117,7 +59,8 @@
             </ol>
         </nav>
     </div><!-- End Page Title -->
-    <section class="section dashboard receipt-page">
+
+    <section class="section dashboard">
         @if ($errors->any())
             <div class="alert alert-danger bg-danger text-light border-0 alert-dismissible fade show">
                 <ul class="mb-0">
@@ -146,176 +89,19 @@
             </div>
         @endif
 
-        <div class="row">
-            <div class="col-lg-8">
-                <div class="card">
-                    <div class="card-body">
-                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-4">
-                            <div>
-                                <h5 class="card-title mb-0">Receipt Details</h5>
-                            </div>
-                            <a href="{{ route('viewclient') }}" class="btn btn-outline-secondary btn-sm">
-                                <i class="bi bi-people me-1"></i> Clients
-                            </a>
-                        </div>
-        
-                        <form class="row g-3" id="receipt_form" action="{{route('receipt')}}" method="POST">
-                            @csrf
-                            <div class="col-md-6">
-                                <label for="client_name" class="form-label">Client <span class="required-mark">*</span></label>
-                                <div class="input-group">
-                                    <span class="input-group-text"><i class="bi bi-person"></i></span>
-                                    <select class="form-select" name="client_name" id="client_name" required autofocus>
-                                        <option value="" selected>Select client ledger</option>
-                                    @foreach ($clientlist as $clients )
-
-                                        <option {{old('client_name')==$clients->id ? 'selected' : ''}} value="{{ $clients->id }}" data-balance="{{ $clients->current_balance }}">{{ $clients->name }}</option>
-                                    
-
-                                    @endforeach
-                                    
-                                    </select>
-                                </div>
-                                <div class="balance-chip" id="current_balance_hint">Current balance: INR 0.00</div>
-                            </div>
-                            <div class="col-md-6">
-                                <label for="paymentMode" class="form-label">Payment Mode <span class="required-mark">*</span></label>
-                                <div class="input-group">
-                                    <span class="input-group-text"><i class="bi bi-credit-card"></i></span>
-                                    <select class="form-select" name="paymentMode" id="paymentMode" required>
-                                        <option value="" selected>Select payment mode</option>
-                                    @foreach ($pay_mode as $items )
-                                        <option {{old('paymentMode')==$items->id ? 'selected' : ''}} value="{{ $items->id }}">{{ $items->payment_mode }}</option>
-                                    @endforeach
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <label for="txn_date_display" class="form-label">Transaction Date <span class="required-mark">*</span></label>
-                                <div class="input-group">
-                                    <span class="input-group-text"><i class="bi bi-calendar3"></i></span>
-                                    <input type="text" class="form-control js-datefield" id="txn_date_display" value="{{ date('d-m-Y', strtotime(old('txn_date', date('Y-m-d')))) }}" data-target="txn_date" placeholder="dd-mm-yyyy" inputmode="numeric" maxlength="10" autocomplete="off" required>
-                                    <input type="hidden" id="txn_date" name="txn_date" value="{{ old('txn_date', date('Y-m-d')) }}">
-                                </div>
-                            </div>
-                            
-                            <div class="col-md-6">
-                                <label for="amount" class="form-label">Amount <span class="required-mark">*</span></label>
-                                <div class="input-group">
-                                    <span class="input-group-text">INR</span>
-                                    <input type="number" min="0.01" max="500000.00" step="0.01" class="form-control" id="amount" name="amount" value="{{ old('amount') }}" placeholder="0.00" required>
-                                </div>
-                            </div>
-
-                            <div class="col-md-12">
-                                <label for="remarks" class="form-label">Remarks <span class="required-mark">*</span></label>
-                                <textarea class="form-control" id="remarks" name="remarks" rows="4" required>{{ old('remarks') }}</textarea>
-                            </div>
-
-                            
-                            <div class="col-12 d-flex flex-wrap gap-2 justify-content-end mt-2">
-                                <button type="reset" class="btn btn-outline-secondary">
-                                    <i class="bi bi-arrow-counterclockwise me-1"></i> Reset
-                                </button>
-                                <button type="submit" class="btn btn-success">
-                                    <i class="bi bi-check2-circle me-1"></i> Save Receipt
-                                </button>
-                            </div>
-                        </form>
-        
-                    </div>
-                </div>
-            </div>
-            <div class="col-lg-4 mt-4 mt-lg-0">
-                <div class="card receipt-summary">
-                    <div class="card-body">
-                        <h5 class="card-title mb-2">Receipt Summary</h5>
-                        <div class="summary-row">
-                            <span class="summary-label">Client</span>
-                            <span class="summary-value" id="summary_client">Not selected</span>
-                        </div>
-                        <div class="summary-row">
-                            <span class="summary-label">Mode</span>
-                            <span class="summary-value" id="summary_mode">Not selected</span>
-                        </div>
-                        <div class="summary-row">
-                            <span class="summary-label">Current Balance</span>
-                            <span class="summary-value" id="summary_balance">INR 0.00</span>
-                        </div>
-                        <div class="summary-row">
-                            <span class="summary-label">Date</span>
-                            <span class="summary-value" id="summary_date">Not selected</span>
-                        </div>
-                        <div class="summary-row">
-                            <span class="summary-label">Amount</span>
-                            <span class="summary-value amount-preview" id="summary_amount">INR 0.00</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+        {{--
+            Rendered by Vue. The field names are the ones
+            AuthController::paymentreceipt() already validates, so the form still
+            posts normally and the server still checks every value — which is
+            what makes converting a screen on a live ledger safe: only the
+            rendering moves.
+        --}}
+        <div data-vue="vue-payment-receipt" data-props="{{ \App\Support\VueProps::encode($props) }}"></div>
     </section>
 @endsection
 
+{{-- The running summary moved into the component. The transaction date still
+     parses and validates itself and keeps its own hidden Y-m-d value in step —
+     see assets/js/datepicker.js. --}}
 @section('script')
-    <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            const client = document.getElementById('client_name');
-            const mode = document.getElementById('paymentMode');
-            const date = document.getElementById('txn_date');
-            const dateDisplay = document.getElementById('txn_date_display');
-            const amount = document.getElementById('amount');
-            const form = document.getElementById('receipt_form');
-            const balanceHint = document.getElementById('current_balance_hint');
-
-            const setText = function (id, text) {
-                document.getElementById(id).textContent = text || 'Not selected';
-            };
-
-            const selectedText = function (field) {
-                return field.options[field.selectedIndex] ? field.options[field.selectedIndex].text : '';
-            };
-
-            const formatAmount = function (value) {
-                const parsed = Number(value);
-                if (!parsed) {
-                    return 'INR 0.00';
-                }
-                return new Intl.NumberFormat('en-IN', {
-                    style: 'currency',
-                    currency: 'INR'
-                }).format(parsed);
-            };
-
-            const getSelectedBalance = function () {
-                const selected = client.options[client.selectedIndex];
-                return selected ? selected.dataset.balance : 0;
-            };
-
-            // The date field parses and validates itself, and keeps its hidden
-            // Y-m-d value in step — see assets/js/datepicker.js.
-            const updateSummary = function () {
-                setText('summary_client', client.value ? selectedText(client) : 'Not selected');
-                setText('summary_mode', mode.value ? selectedText(mode) : 'Not selected');
-                setText('summary_balance', client.value ? formatAmount(getSelectedBalance()) : 'INR 0.00');
-                setText('summary_date', dateDisplay.value || 'Not selected');
-                setText('summary_amount', formatAmount(amount.value));
-                balanceHint.textContent = 'Current balance: ' + (client.value ? formatAmount(getSelectedBalance()) : 'INR 0.00');
-            };
-
-            [client, mode, amount].forEach(function (field) {
-                field.addEventListener('input', updateSummary);
-                field.addEventListener('change', updateSummary);
-            });
-
-            dateDisplay.addEventListener('input', updateSummary);
-            dateDisplay.addEventListener('change', updateSummary);
-
-            form.addEventListener('reset', function () {
-                window.setTimeout(updateSummary, 0);
-            });
-
-            updateSummary();
-        });
-    </script>
 @endsection

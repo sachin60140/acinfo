@@ -45,7 +45,7 @@
                 what makes converting a screen on a live ledger safe: only the
                 rendering moves.
             --}}
-            <div data-vue="vue-party-entry" data-props="{{ json_encode([
+            <div data-vue="vue-party-entry" data-props="{{ \App\Support\VueProps::encode([
                 'action' => route('party.entry', $type),
                 'csrf' => csrf_token(),
                 'label' => $label,

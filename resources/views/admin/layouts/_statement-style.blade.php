@@ -90,15 +90,17 @@
         color: #dc3545;
     }
 
+    /* The grid prints itself into a clean window, but Ctrl+P on the page still
+       has to produce something worth handing over — so the controls that only
+       make sense on screen come off the paper. The old .dataTables_* selectors
+       went with DataTables; the grid's own controls are .grid__bar and
+       .grid__pages. */
     @media print {
 
         .quick-ranges,
         .statement-filter,
-        .dt-buttons,
-        .dataTables_filter,
-        .dataTables_paginate,
-        .dataTables_info,
-        .dataTables_length {
+        .grid__bar,
+        .grid__pages {
             display: none !important;
         }
     }

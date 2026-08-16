@@ -56,7 +56,7 @@
                 what makes converting a screen on a live ledger safe: only the
                 rendering moves.
             --}}
-            <div data-vue="vue-give-to-vendor" data-props="{{ json_encode([
+            <div data-vue="vue-give-to-vendor" data-props="{{ \App\Support\VueProps::encode([
                 'action' => route('workfile.assign'),
                 'csrf' => csrf_token(),
                 'cancelUrl' => route('workfile.index'),

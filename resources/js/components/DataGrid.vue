@@ -19,9 +19,21 @@ import { computed, ref } from 'vue';
 import { balance, money, side } from '../money';
 
 const props = defineProps({
-    // { key, label, type, align, sortable, exportable, hidden, width }
-    // type: text | money | balance | date | badge | link | sub | count
+    /*
+     * { key, label, type, sortable, exportable, searchable, hidden, width,
+     *   sub, subLinkTo, class, linkTo, newTab, sortBy }
+     *
+     * type: text | money | balance | count | badge | link
+     * sortBy   sort this column on another field's value — a date shown as
+     *          dd-mm-yyyy sorts by day of the month unless pointed at the ISO one
+     * newTab   open the link in a new tab, for anything opened to be read beside
+     *          the list rather than instead of it
+     * searchable: false  keep a fixed label like "Edit" out of the search text,
+     *          or every row matches the word
+     */
     columns: { type: Array, required: true },
+    // Per-row extra classes: { rowKeyField: 'class-name' } applied by row[key].
+    rowClass: { type: String, default: '' },
     rows: { type: Array, default: () => [] },
     title: { type: String, default: 'Export' },
 
@@ -35,6 +47,18 @@ const props = defineProps({
 
     perPage: { type: Number, default: 50 },
     searchable: { type: Boolean, default: true },
+
+    /*
+     * The column the rows already arrive sorted by, and which way.
+     *
+     * Without this the grid shows no sort indicator on a list the server has
+     * already ordered, and the first click on that column sorts ascending —
+     * which, on a list sorted by amount descending, reads as the sort inverting
+     * itself for no reason. Naming the existing order here makes the first click
+     * do the one thing the reader expects: reverse it.
+     */
+    sortedBy: { type: String, default: '' },
+    sortedDesc: { type: Boolean, default: false },
     // Statements carry a running balance accumulated in the order the server
     // sent, so re-sorting would detach each figure from its row.
     sortable: { type: Boolean, default: true },
@@ -43,9 +67,17 @@ const props = defineProps({
 });
 
 const query = ref('');
-const sortKey = ref('');
-const sortAsc = ref(true);
+const sortKey = ref(props.sortedBy);
+const sortAsc = ref(!props.sortedDesc);
 const page = ref(1);
+
+/*
+ * Until the reader clicks a heading, the rows stand in the order the server
+ * sent. sortedBy only names that order so the indicator is right and the first
+ * click reverses rather than re-sorts; re-sorting here would risk breaking ties
+ * differently from the query that produced the order.
+ */
+const reordered = ref(false);
 
 const shown = computed(() => props.columns.filter((c) => !c.hidden));
 
@@ -77,6 +109,7 @@ const filtered = computed(() => {
 
     return props.rows.filter((row) => {
         const haystack = props.columns
+            .filter((column) => column.searchable !== false)
             .map((column) => textOf(row, column))
             .join(' ')
             .toLowerCase();
@@ -86,7 +119,7 @@ const filtered = computed(() => {
 });
 
 const sorted = computed(() => {
-    if (!sortKey.value) {
+    if (!sortKey.value || !reordered.value) {
         return filtered.value;
     }
 
@@ -94,10 +127,18 @@ const sorted = computed(() => {
     const numeric = column && ['money', 'balance', 'count'].includes(column.type);
     const direction = sortAsc.value ? 1 : -1;
 
+    /*
+     * A column may sort on a different field than it shows. Dates are the reason:
+     * they are printed dd-mm-yyyy, and comparing that as text sorts by day of the
+     * month, so March the 2nd of any year lands above December the 1st. Point the
+     * column at the ISO date and the order is chronological again.
+     */
+    const on = column?.sortBy || sortKey.value;
+
     // A copy: sorting the computed source in place would mutate the prop.
     return [...filtered.value].sort((a, b) => {
-        const left = a[sortKey.value];
-        const right = b[sortKey.value];
+        const left = a[on];
+        const right = b[on];
 
         if (numeric) {
             return ((Number(left) || 0) - (Number(right) || 0)) * direction;
@@ -157,6 +198,21 @@ function sum(rows) {
     return out;
 }
 
+/**
+ * A total is written the way its column is written.
+ *
+ * Totalling a balance column through money() put "-1,200.00" in the footer under
+ * a column of cells reading "1,200.00 Cr" — the same figure, in two conventions,
+ * one of which the rest of the app never uses.
+ */
+function total(column, value) {
+    return column.type === 'balance' ? balance(value) : money(value);
+}
+
+function totalClass(column, value) {
+    return column.type === 'balance' ? `ui-money ui-money--${side(value)}` : 'ui-money';
+}
+
 const grandTotals = computed(() => sum(sorted.value));
 const hasTotals = computed(() => Object.keys(props.totals).length > 0);
 
@@ -171,6 +227,8 @@ function toggleSort(column) {
         sortKey.value = column.key;
         sortAsc.value = true;
     }
+
+    reordered.value = true;
 }
 
 /* ---- exports -------------------------------------------------------------
@@ -183,6 +241,34 @@ const exportColumns = computed(() => props.columns.filter((c) => c.exportable !=
 
 function exportRows() {
     return sorted.value.map((row) => exportColumns.value.map((column) => textOf(row, column)));
+}
+
+/**
+ * The same rows, but with figures as numbers.
+ *
+ * A spreadsheet is opened to add things up. Writing "1,23,456.00" into the cell
+ * makes it text: the column will not sum, sort or filter, and the reader has to
+ * retype it. Only the spreadsheet needs this — CSV, PDF and print are read, not
+ * calculated, and there the grouped form is easier on the eye.
+ */
+function exportValues() {
+    return sorted.value.map((row) =>
+        exportColumns.value.map((column) => {
+            if (!['money', 'balance', 'count'].includes(column.type)) {
+                return textOf(row, column);
+            }
+
+            // An empty cell, not a zero — Number(null) is 0, which would write a
+            // figure into the spreadsheet that the screen does not show.
+            if (blank(row[column.key])) {
+                return '';
+            }
+
+            const parsed = Number(row[column.key]);
+
+            return Number.isFinite(parsed) ? parsed : textOf(row, column);
+        })
+    );
 }
 
 const exportHead = computed(() => exportColumns.value.map((c) => c.label));
@@ -272,11 +358,32 @@ async function exportExcel() {
         await load('https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js');
 
         const XLSX = window.XLSX;
-        const sheet = XLSX.utils.aoa_to_sheet([exportHead.value, ...exportRows()]);
+        const sheet = XLSX.utils.aoa_to_sheet([exportHead.value, ...exportValues()]);
 
         sheet['!cols'] = exportColumns.value.map((column) => ({
             wch: Math.min(40, Math.max(12, column.label.length + 4)),
         }));
+
+        /*
+         * Two decimals with thousands separators, applied to the figures as a
+         * cell format rather than baked into the text — so they read the way the
+         * screen reads while staying numbers underneath.
+         */
+        const range = XLSX.utils.decode_range(sheet['!ref']);
+
+        exportColumns.value.forEach((column, index) => {
+            if (!['money', 'balance'].includes(column.type)) {
+                return;
+            }
+
+            for (let row = 1; row <= range.e.r; row++) {
+                const cell = sheet[XLSX.utils.encode_cell({ c: index, r: row })];
+
+                if (cell && cell.t === 'n') {
+                    cell.z = '#,##0.00';
+                }
+            }
+        });
 
         const book = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(book, sheet, 'Sheet1');
@@ -384,11 +491,24 @@ function escape(value) {
 
 /* ---- display ----------------------------------------------------------- */
 
+/**
+ * Nothing and zero are different facts, and a figures column has to keep them
+ * apart. A file with no vendor has no cost; printing 0.00 there states that a
+ * vendor charged nothing, which is a different claim and a false one. So null
+ * leaves the cell empty — on screen and in every export, which is the part that
+ * matters: the same cell reading blank here, 0.00 there and 0 in the
+ * spreadsheet is worse than any one of them.
+ */
+function blank(value) {
+    return value === null || value === undefined || value === '';
+}
+
 function display(row, column) {
     const raw = row[column.key];
 
-    if (column.type === 'money') return money(raw);
-    if (column.type === 'balance') return balance(raw);
+    if (column.type === 'money' || column.type === 'balance') {
+        return blank(raw) ? '' : (column.type === 'money' ? money(raw) : balance(raw));
+    }
 
     return raw ?? '—';
 }
@@ -478,13 +598,18 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                             <td :colspan="shown.length">{{ band.label }}</td>
                         </tr>
 
-                        <tr v-for="(row, i) in band.rows" :key="row.id ?? i">
+                        <tr v-for="(row, i) in band.rows" :key="row.id ?? i" :class="rowClass ? row[rowClass] : ''">
                             <td
                                 v-for="column in shown"
                                 :key="column.key"
                                 :data-label="column.label"
                                 :class="[isNum(column) ? 'num' : '', column.class]">
-                                <a v-if="column.type === 'link' && row[column.linkTo]" :href="row[column.linkTo]" class="ui-link">
+                                <a
+                                    v-if="column.type === 'link' && row[column.linkTo]"
+                                    :href="row[column.linkTo]"
+                                    class="ui-link"
+                                    :target="column.newTab ? '_blank' : null"
+                                    :rel="column.newTab ? 'noopener' : null">
                                     {{ display(row, column) }}
                                 </a>
                                 <span v-else-if="column.type === 'badge'" class="ui-badge" :data-state="row[column.key + '_key']">
@@ -492,7 +617,19 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                 </span>
                                 <span v-else :class="moneyClass(row, column)">{{ display(row, column) }}</span>
 
-                                <div v-if="column.sub && row[column.sub]" class="ui-sub">{{ row[column.sub] }}</div>
+                                <!-- A quiet second line, which may itself be a link:
+                                     an attachment is worth naming and worth opening. -->
+                                <div v-if="column.sub && row[column.sub]" class="ui-sub">
+                                    <a
+                                        v-if="column.subLinkTo && row[column.subLinkTo]"
+                                        :href="row[column.subLinkTo]"
+                                        class="ui-link"
+                                        target="_blank"
+                                        rel="noopener">
+                                        {{ row[column.sub] }}
+                                    </a>
+                                    <template v-else>{{ row[column.sub] }}</template>
+                                </div>
                             </td>
                         </tr>
 
@@ -503,8 +640,9 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                 :class="isNum(column) ? 'num' : ''"
                                 :data-label="column.label">
                                 <span v-if="i === 0">Total</span>
-                                <span v-else-if="totals[column.key] !== undefined" class="ui-money ui-money--strong">
-                                    {{ money(band.totals[column.key]) }}
+                                <span v-else-if="totals[column.key] !== undefined"
+                                    :class="[totalClass(column, band.totals[column.key]), 'ui-money--strong']">
+                                    {{ total(column, band.totals[column.key]) }}
                                 </span>
                             </td>
                         </tr>
@@ -519,8 +657,9 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                             :class="isNum(column) ? 'num' : ''"
                             :data-label="column.label">
                             <span v-if="i === 0">{{ query ? 'Total (filtered)' : 'Total' }}</span>
-                            <span v-else-if="totals[column.key] !== undefined" class="ui-money ui-money--strong">
-                                {{ money(grandTotals[column.key]) }}
+                            <span v-else-if="totals[column.key] !== undefined"
+                                :class="[totalClass(column, grandTotals[column.key]), 'ui-money--strong']">
+                                {{ total(column, grandTotals[column.key]) }}
                             </span>
                         </td>
                     </tr>
@@ -595,13 +734,25 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
     color: var(--brand-600);
 }
 
+/* Not uppercased: a band heading carries the party's ledger balance, and
+   uppercasing turns "1,200.00 Cr" into "1,200.00 CR", which is not how a
+   balance is written. Weight and colour separate it from the rows well enough. */
 .grid__band td {
     background: var(--brand-050);
     color: var(--brand-700);
-    font-size: var(--t-xs);
+    font-size: var(--t-sm);
     font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    letter-spacing: 0.01em;
+}
+
+/* A file that is closed — returned or cancelled — is still worth seeing but is
+   no longer in play, so it recedes rather than competing with live work. */
+.grid__table tbody tr.is-closed td {
+    color: var(--n-400);
+}
+
+.grid__table tbody tr.is-closed .ui-money {
+    color: var(--n-400);
 }
 
 .grid__subtotal td {

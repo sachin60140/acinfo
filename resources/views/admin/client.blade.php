@@ -1,32 +1,19 @@
 @extends('admin.layouts.app')
 
-@section('title', 'View Clients | Awani Enterprises')
-
-
-@section('style')
-
-    <style>
-        /* Chrome, Safari, Edge, Opera */
-        input::-webkit-outer-spin-button,
-        input::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
-    </style>
-
-@endsection
+@section('title', 'Add Client | Ac Info')
 
 @section('content')
     <div class="pagetitle">
-        <h1>Dashboard</h1>
+        <h1>Add Client</h1>
         <nav>
             <ol class="breadcrumb">
                 <li class="breadcrumb-item"><a href="{{ url('admin/dashboard') }}">Home</a></li>
-                <li class="breadcrumb-item active">Admin</li>
+                <li class="breadcrumb-item"><a href="{{ route('viewclient') }}">Clients</a></li>
                 <li class="breadcrumb-item active">Add Client</li>
             </ol>
         </nav>
     </div><!-- End Page Title -->
+
     <section class="section dashboard">
         <div>
             @if ($errors->any())
@@ -55,51 +42,41 @@
                 </div>
             @endif
         </div>
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">Add Client Ledger</h5>
 
-                <!-- Multi Columns Form -->
-                <form class="row g-3" action="{{route('addclients')}}" method="POST">
-                    @csrf
-                    <div class="col-md-6">
-                        <label for="fee" class="form-label">Name <span style="color: red;">*</span></label>
-                        <input type="text" class="form-control" id="cab_fee" value="{{ old('name') }}"
-                            name="name">
-                    </div>
+        <div class="row">
+            <div class="col-lg-9">
+                {{--
+                    Rendered by Vue, card and all. The field names are the ones
+                    AuthController::client() already validates, so the form still
+                    posts normally and the server still checks every value — which
+                    is what makes converting a screen on a live ledger safe: only
+                    the rendering moves.
 
-                    <div class="col-md-6">
-                        <label for="mobile_number" class="form-label">Mobile Number <span
-                                style="color: red;">*</span></label>
-                        <input type="number" class="form-control" id="inputName5" value="{{ old('mobile_number') }}"
-                            name="mobile_number" maxlength="10" required>
-                    </div>
-                    <div class="col-md-6">
-                        <label for="password" class="form-label">Password <span style="color: red;">*</span></label>
-                        <input type="password" class="form-control" id="password" name="password" minlength="8" required>
-                    </div>
-                    <div class="col-md-6">
-                        <label for="password_confirmation" class="form-label">Confirm Password <span style="color: red;">*</span></label>
-                        <input type="password" class="form-control" id="password_confirmation" name="password_confirmation" minlength="8" required>
-                    </div>
-                    <div class="col-12">
-                        <label for="inputAddress2" class="form-label">Address</label>
-                        <input type="text" class="form-control" id="address" name="address"
-                            placeholder="Apartment, studio, or floor" value="{{ old('address') }}" required>
-                    </div>
-                    <div class="text-center">
-                        <button type="submit" class="btn btn-primary">Submit</button>
-                        <button type="reset" class="btn btn-secondary">Reset</button>
-                    </div>
-                </form>
-
+                    Neither password is sent back out. A rejected submission
+                    returns the name, mobile and address the user typed; the two
+                    password boxes start empty every time, which is also what the
+                    component's Reset puts back.
+                --}}
+                <div data-vue="vue-client-form" data-props="{{ \App\Support\VueProps::encode([
+                    'action' => route('addclients'),
+                    'csrf' => csrf_token(),
+                    'indexUrl' => route('viewclient'),
+                    'values' => [
+                        'name' => old('name', ''),
+                        'mobile_number' => old('mobile_number', ''),
+                        'address' => old('address', ''),
+                    ],
+                    // The list above stays as it is; this puts the same message
+                    // against the field it came from. Cast so an empty bag still
+                    // arrives as an object rather than as an array.
+                    'errors' => (object) array_map(fn ($messages) => $messages[0], $errors->messages()),
+                ]) }}"></div>
             </div>
         </div>
+    </section>
+@endsection
 
-
-
-        </div>
-    @endsection
-
-    @section('script')
-    @endsection
+{{-- The digit filtering and the spinner-less number box moved into the
+     component. --}}
+@section('script')
+@endsection

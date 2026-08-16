@@ -71,7 +71,11 @@
                 ['key' => 'txn_date', 'label' => 'Txn Date'],
                 ['key' => 'particular', 'label' => 'Particulars', 'width' => '14rem'],
                 ['key' => 'payment_mode', 'label' => 'Mode'],
-                ['key' => 'ref_no', 'label' => 'Ref No.', 'type' => 'link', 'linkTo' => 'ref_url'],
+                // The work file opens in a new tab because a statement is read
+                // through rather than clicked out of: following the reference in
+                // this tab costs the reader their place in the run and the period
+                // they filtered to, both of which have to be set up again.
+                ['key' => 'ref_no', 'label' => 'Ref No.', 'type' => 'link', 'linkTo' => 'ref_url', 'newTab' => true],
                 // The column colour says which side of the ledger it is; the cell
                 // dims itself on the side an entry did not fall on.
                 ['key' => 'debit', 'label' => 'Debit', 'type' => 'money', 'class' => 'ui-money--dr'],
@@ -189,7 +193,7 @@
                             figures are the same ones the server already computed —
                             only the rendering moved.
                         --}}
-                        <div class="ui" data-vue="vue-party-statement" data-props="{{ json_encode($statement) }}"></div>
+                        <div class="ui" data-vue="vue-party-statement" data-props="{{ \App\Support\VueProps::encode($statement) }}"></div>
 
                     </div>
                 </div>

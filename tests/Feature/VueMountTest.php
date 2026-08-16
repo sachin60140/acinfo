@@ -356,6 +356,58 @@ class VueMountTest extends TestCase
     }
 
     /**
+     * A screen must not be emptied by one bad byte in the data.
+     *
+     * json_encode() returns false rather than throwing on invalid UTF-8, and
+     * Blade prints false as nothing — so the mount point gets an empty
+     * data-props, the component is handed {}, and the table vanishes from a page
+     * that still returns 200 with its header and totals intact.
+     *
+     * MySQL will not accept such a byte into these tables, so this is defence
+     * rather than a reproduction: the columns are utf8mb4 and strict mode
+     * rejects the insert. It stays because the cost is one function call and the
+     * failure it prevents is both total and silent — and because data reaches
+     * these screens from older tables and from imports that did not come through
+     * Eloquent.
+     */
+    public function test_the_encoder_survives_a_byte_that_would_blank_a_screen(): void
+    {
+        // A lone continuation byte: valid in latin-1, not valid UTF-8.
+        $row = ['name' => 'Rajesh '.chr(0xC3).' Kumar', 'balance' => 1500.0];
+
+        $this->assertFalse(json_encode($row), 'the byte really does break json_encode');
+
+        $encoded = \App\Support\VueProps::encode($row);
+        $decoded = json_decode($encoded, true);
+
+        $this->assertIsArray($decoded, 'the encoder must still produce usable JSON');
+        $this->assertEquals(1500.0, $decoded['balance'], 'and the rest of the row must survive intact');
+    }
+
+    /**
+     * Every view hands its props over through the encoder that survives that.
+     */
+    public function test_views_encode_props_through_the_safe_encoder(): void
+    {
+        foreach ((new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator(resource_path('views'))
+        )) as $file) {
+            if ($file->isDir() || ! str_ends_with($file->getFilename(), '.blade.php')) {
+                continue;
+            }
+
+            $source = file_get_contents($file->getPathname());
+
+            $this->assertStringNotContainsString(
+                'data-props="{{ json_encode(',
+                $source,
+                $file->getFilename().' encodes its props with plain json_encode, which returns false on a '
+                .'bad byte and blanks the screen. Use \App\Support\VueProps::encode().'
+            );
+        }
+    }
+
+    /**
      * The date fields, which Vue must not re-render.
      *
      * The check itself is in resources/js/datefield-guard.mjs, because proving

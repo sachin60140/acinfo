@@ -47,7 +47,7 @@
                 The date box keeps the markup contract in
                 public/assets/js/datepicker.js, so the calendar still binds to it.
             --}}
-            <div data-vue="vue-vendor-return" data-props="{{ json_encode([
+            <div data-vue="vue-vendor-return" data-props="{{ \App\Support\VueProps::encode([
                 'action' => route('workfile.vendorreturn'),
                 'csrf' => csrf_token(),
                 'cancelUrl' => route('workfile.index'),

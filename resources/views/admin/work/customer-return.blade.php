@@ -37,7 +37,7 @@
                 Old input is cast so that a bounced batch always arrives as a
                 JSON array and a JSON object, whatever keys it happens to carry.
             --}}
-            <div data-vue="vue-customer-return" data-props="{{ json_encode([
+            <div data-vue="vue-customer-return" data-props="{{ \App\Support\VueProps::encode([
                 'action' => route('workfile.customerreturn'),
                 'csrf' => csrf_token(),
                 'cancelUrl' => route('workfile.index'),

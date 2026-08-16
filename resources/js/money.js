@@ -8,16 +8,26 @@
  * changes, change the other.
  */
 
-const LOCALE = 'en-IN';
-
 /**
  * A plain amount: grouped, always two decimals, never signed.
+ *
+ * Grouped in threes, because that is what PHP's number_format does and the
+ * server prints half of every converted screen — the summary tiles above a grid
+ * and every screen not yet converted. toLocaleString('en-IN') was used here
+ * first and groups the Indian way, which put "12,34,567.89" in the table and
+ * "1,234,567.89" in the tile above it, on the same screen, for the same money.
+ * Either convention is defensible; disagreeing on one page is not.
  */
 export function money(value) {
-    return (Number(value) || 0).toLocaleString(LOCALE, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-    });
+    const parsed = Number(value) || 0;
+    const [whole, fraction] = Math.abs(parsed).toFixed(2).split('.');
+    const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+    // An amount too small to show is not a negative amount: number_format(-0.001)
+    // is "0.00", and "-0.00" in a column of figures reads as a mistake.
+    const negative = parsed < 0 && Number(whole + fraction) !== 0;
+
+    return `${negative ? '-' : ''}${grouped}.${fraction}`;
 }
 
 /**

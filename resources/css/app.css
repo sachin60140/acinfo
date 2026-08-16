@@ -407,6 +407,28 @@
 .ui-badge--info    { background: #e0f2fe; color: #0369a1; }
 .ui-badge--dark    { background: var(--ink-900); color: var(--n-000); }
 
+/*
+ * A work file's status, coloured by the status itself.
+ *
+ * The grid draws a badge from the raw status key, so the colour lives here
+ * rather than being chosen again on each screen that lists files — which is how
+ * the same status ended up looking different in two places before. Matches
+ * WorkFileModel::STATUSES; a key with no rule here falls back to the neutral
+ * .ui-badge above rather than disappearing.
+ *
+ * The scale runs cool-to-settled: grey while it sits, amber while it waits on
+ * someone, blue while it is moving, green when the money is earned, and red
+ * only for cancelled — which is the one status that unwinds a ledger entry.
+ */
+.ui-badge[data-state="in_office"]          { background: var(--n-100); color: var(--n-600); }
+.ui-badge[data-state="paper_pendency"]     { background: var(--warn-050); color: var(--warn-600); }
+.ui-badge[data-state="file_dispatch"]      { background: #e0f2fe; color: #0369a1; }
+.ui-badge[data-state="part_pesi_required"] { background: var(--warn-050); color: var(--warn-600); }
+.ui-badge[data-state="under_verification"] { background: var(--brand-100); color: var(--ink-700); }
+.ui-badge[data-state="approval_done"]      { background: var(--dr-050); color: var(--dr-700); }
+.ui-badge[data-state="paper_returned"]     { background: var(--n-200); color: var(--ink-900); }
+.ui-badge[data-state="cancelled"]          { background: var(--cr-050); color: var(--cr-700); }
+
 .ui-chip {
     align-items: center;
     background: var(--n-000);
