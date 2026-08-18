@@ -491,4 +491,89 @@ class ReportTest extends TestCase
         $this->get(route('report.files', ['from' => '2026-05-31', 'to' => '2026-05-01']))
             ->assertSessionHasErrors('to');
     }
+    /**
+     * A margin needs both figures, and says so when it has not got them.
+     *
+     * A file given to a vendor at 5,000 and not yet billed was reported as a
+     * loss of 5,000 — arithmetically 0 − 5,000, and completely untrue. The file
+     * is not unprofitable, it is unpriced, and the difference matters: a report
+     * summing those told the owner the business was down money it had simply
+     * not invoiced.
+     */
+    public function test_a_margin_is_unknown_rather_than_negative_while_a_price_is_outstanding(): void
+    {
+        $this->actingAs($this->admin());
+
+        // Priced on both sides: there is a margin.
+        $priced = $this->file($this->customerA, 5500, $this->vendor, 5000);
+
+        // With a vendor, never billed: a cost, and no margin to speak of.
+        $unbilled = $this->file($this->customerA, 0, $this->vendor, 5000);
+
+        // Billed, but the vendor rate is still to be agreed.
+        $unpriced = $this->file($this->customerA, 4000, $this->vendor, null);
+
+        $rows = collect($this->gridProps(route('report.files', [
+            'party_type' => 'customer',
+            'party_id' => $this->customerA->id,
+        ]))['rows'])->keyBy('id');
+
+        $this->assertEquals(500, $rows[$priced->id]['margin'], '5,500 billed less 5,000 cost');
+
+        $this->assertNull($rows[$unbilled->id]['margin'], 'a cost with nothing billed is not a loss');
+        $this->assertEquals(5000, $rows[$unbilled->id]['cost'], 'the cost itself is still a fact');
+
+        $this->assertNull($rows[$unpriced->id]['margin'], 'billed, but the cost is not agreed');
+        $this->assertEquals(4000, $rows[$unpriced->id]['billed']);
+    }
+
+    /**
+     * The total says what it is a total of.
+     *
+     * Summing the unknown margins as zero gives a figure quietly covering fewer
+     * files than the count beside it — the same untruth told more quietly.
+     */
+    public function test_the_margin_total_covers_only_the_files_it_can_cover(): void
+    {
+        $this->actingAs($this->admin());
+
+        $this->file($this->customerA, 5500, $this->vendor, 5000);
+        $this->file($this->customerA, 0, $this->vendor, 5000);
+
+        $page = $this->getJson(route('report.files', [
+            'party_type' => 'customer',
+            'party_id' => $this->customerA->id,
+        ]))->assertOk()->json('page');
+
+        $this->assertSame(2, $page['totals']['files']);
+        $this->assertSame(1, $page['totals']['unpriced'], 'one file cannot contribute a margin');
+
+        // 500 from the priced file, and nothing at all from the other.
+        $this->assertEquals(500, $page['totals']['margin']);
+
+        // Billed and cost are facts about what happened, and stay whole.
+        $this->assertEquals(5500, $page['totals']['billed']);
+        $this->assertEquals(10000, $page['totals']['cost']);
+    }
+
+    /**
+     * A settled file has a margin even when both figures are nothing. Cancelled
+     * charged nobody and cost nothing; returned was charged and refunded. Both
+     * are finished, so neither is waiting on a price.
+     */
+    public function test_a_settled_file_still_has_a_margin(): void
+    {
+        $this->actingAs($this->admin());
+
+        $cancelled = $this->file($this->customerA, 5000, null, null, 'cancelled');
+
+        $rows = collect($this->gridProps(route('report.files', [
+            'party_type' => 'customer',
+            'party_id' => $this->customerA->id,
+        ]))['rows'])->keyBy('id');
+
+        $this->assertNotNull($rows[$cancelled->id]['margin'], 'cancelled is settled, not outstanding');
+        $this->assertEquals(0, $rows[$cancelled->id]['margin']);
+    }
+
 }

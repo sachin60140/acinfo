@@ -60,7 +60,13 @@ class ReportController extends Controller
 
         // Grouped once here so the view only lays out what it is given.
         $groups = [];
-        $totals = ['files' => 0, 'billed' => 0.0, 'cost' => 0.0, 'margin' => 0.0];
+        /*
+         * unpriced counts the files whose margin cannot be known yet, so the
+         * margin total can say what it is a total of. Summing them as zero and
+         * saying nothing would report a figure that quietly covers fewer files
+         * than the one beside it.
+         */
+        $totals = ['files' => 0, 'billed' => 0.0, 'cost' => 0.0, 'margin' => 0.0, 'unpriced' => 0];
 
         foreach ($rows as $row) {
             $line = WorkFileModel::rowTotals($row);
@@ -83,7 +89,8 @@ class ReportController extends Controller
             $groups[$key]['files']++;
             $groups[$key]['billed'] += $line['billed'];
             $groups[$key]['cost'] += $line['cost'];
-            $groups[$key]['margin'] += $line['margin'];
+            // Null is a margin that cannot be worked out yet, not a zero.
+            $groups[$key]['margin'] += $line['margin'] ?? 0.0;
             $groups[$key]['open'] += in_array($row->status, WorkFileModel::OPEN_STATUSES, true) ? 1 : 0;
             $groups[$key]['rows'][] = [
                 'row' => $row,
@@ -94,7 +101,8 @@ class ReportController extends Controller
             $totals['files']++;
             $totals['billed'] += $line['billed'];
             $totals['cost'] += $line['cost'];
-            $totals['margin'] += $line['margin'];
+            $totals['margin'] += $line['margin'] ?? 0.0;
+            $totals['unpriced'] += $line['margin'] === null ? 1 : 0;
         }
 
         $partyLabel = PartyModel::label($partyType);
@@ -165,7 +173,9 @@ class ReportController extends Controller
                     'remark' => $line['remark'],
                     'billed' => (float) $line['totals']['billed'],
                     'cost' => (float) $line['totals']['cost'],
-                    'margin' => (float) $line['totals']['margin'],
+                    // Left null so the cell is empty rather than stating a loss
+                    // on work nobody has priced.
+                    'margin' => $line['totals']['margin'] === null ? null : (float) $line['totals']['margin'],
                 ];
             }
         }

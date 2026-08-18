@@ -786,6 +786,9 @@ class WorkFileModel extends Model
                 'work_file.description',
                 'work_file.customer_amount',
                 'work_file.returned_amount',
+                // Selected because awaitingPrice() needs to know whether there is a
+                // vendor at all — an in-house file has no rate to agree and never will.
+                'work_file.vendor_id',
                 'work_file.vendor_amount',
                 'work_file.vendor_returned_on',
                 'work_file.vendor_returned_amount',
@@ -832,12 +835,50 @@ class WorkFileModel extends Model
      *
      * @return array{billed: float, cost: float, margin: float}
      */
+    /**
+     * Whether a price is still to be agreed on either side of a file.
+     *
+     * Cancelled and returned files are settled: a cancelled file charged
+     * nobody and a returned one was charged and refunded, so nothing about
+     * either is outstanding.
+     */
+    public static function awaitingPrice($row): bool
+    {
+        if (in_array($row->status, [self::CANCELLED, self::RETURNED], true)) {
+            return false;
+        }
+
+        $unbilled = (float) ($row->customer_amount ?? 0) <= 0;
+        // Coalesced: rowTotals is called with rows from several different
+        // queries, and not all of them select every column.
+        $unpriced = ($row->vendor_id ?? null) !== null && (float) ($row->vendor_amount ?? 0) <= 0;
+
+        return $unbilled || $unpriced;
+    }
+
+    /**
+     * What a file earned, what it cost, and the difference — where there is one.
+     *
+     * The margin is null while either price is still to be agreed, because a
+     * difference between a figure and a blank is not a margin. Subtracting
+     * anyway reported a file given to a vendor at 5,000 and not yet billed as a
+     * loss of 5,000, and summed those into a report total that said the
+     * business was down money it had simply not invoiced. It is unknown, not
+     * negative, and the report says so by leaving the cell empty.
+     *
+     * Billed and cost stay as they are. Those are facts about what has
+     * happened; only their difference is the thing that cannot be known yet.
+     */
     public static function rowTotals($row): array
     {
         $billed = self::netCustomer($row->status, $row->customer_amount, $row->returned_amount);
         $cost = self::netVendor($row->status, $row->vendor_amount, $row->vendor_returned_on !== null, $row->vendor_returned_amount);
 
-        return ['billed' => $billed, 'cost' => $cost, 'margin' => $billed - $cost];
+        return [
+            'billed' => $billed,
+            'cost' => $cost,
+            'margin' => self::awaitingPrice($row) ? null : $billed - $cost,
+        ];
     }
 
     /**
@@ -965,6 +1006,9 @@ class WorkFileModel extends Model
                 'work_file.approval_screenshot',
                 'work_file.description',
                 'work_file.customer_amount',
+                // Selected because awaitingPrice() needs to know whether there is a
+                // vendor at all — an in-house file has no rate to agree and never will.
+                'work_file.vendor_id',
                 'work_file.vendor_amount',
                 'work_file.vendor_returned_on',
                 'work_file.returned_amount',

@@ -172,6 +172,12 @@
                     <div class="stat closing">
                         <span class="label">Margin</span>
                         <span class="value {{ $totals['margin'] < 0 ? 'cr' : 'dr' }}">{{ number_format($totals['margin'], 2, '.', ',') }}</span>
+                        {{-- A margin needs both figures, so files still awaiting a
+                             price are not in this total. Saying how many keeps it
+                             from reading as a figure covering every file above. --}}
+                        @if ($totals['unpriced'])
+                            <span class="stat-note">on {{ $totals['files'] - $totals['unpriced'] }} of {{ $totals['files'] }} files &mdash; {{ $totals['unpriced'] }} awaiting a price</span>
+                        @endif
                     </div>
                 </div>
 
@@ -201,7 +207,7 @@
                         <span class="figures">
                             <span>Billed {{ number_format($totals['billed'], 2, '.', ',') }}</span>
                             <span>Cost {{ number_format($totals['cost'], 2, '.', ',') }}</span>
-                            <span>Margin {{ number_format($totals['margin'], 2, '.', ',') }}</span>
+                            <span>Margin {{ number_format($totals['margin'], 2, '.', ',') }}@if ($totals['unpriced']) <small>({{ $totals['unpriced'] }} awaiting a price)</small>@endif</span>
                         </span>
                     </div>
                 @endif

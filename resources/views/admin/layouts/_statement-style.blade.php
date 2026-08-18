@@ -67,6 +67,17 @@
         color: #2f3d4a;
     }
 
+    /* A qualifier under a figure, for when the figure covers fewer rows than
+       the ones above it. */
+    .stat-note {
+        color: #64748b;
+        display: block;
+        font-size: 0.68rem;
+        font-weight: 600;
+        line-height: 1.3;
+        margin-top: 0.15rem;
+    }
+
     .neg {
         color: #dc3545;
     }

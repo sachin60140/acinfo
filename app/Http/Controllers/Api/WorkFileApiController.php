@@ -41,6 +41,9 @@ class WorkFileApiController extends Controller
                     'status' => $file->status,
                     'customer_amount' => $file->customer_amount,
                     'returned_amount' => $file->returned_amount,
+                    // This lookup is about what a vehicle was charged before, so
+                    // the vendor side is deliberately left out of the figures.
+                    'vendor_id' => null,
                     'vendor_amount' => null,
                     'vendor_returned_on' => null,
                     'vendor_returned_amount' => null,
