@@ -366,7 +366,10 @@ async function exportExcel() {
         XLSX.utils.book_append_sheet(book, sheet, 'Sheet1');
         XLSX.writeFile(book, fileName(props.title, 'xlsx'));
     } catch (error) {
-        flash('Excel export unavailable offline');
+        // Same reasoning as the PDF catch: a mistake in this function is not a
+        // network problem, and saying so sends the reader to the wrong place.
+        console.error('Excel export failed', error);
+        flash('Could not build the spreadsheet');
     } finally {
         busy.value = '';
     }
@@ -381,7 +384,10 @@ async function exportPdf() {
 
         const numeric = exportColumns.value.map(isNumeric);
 
-        window.pdfmake
+        // pdfMake, with the capital: its UMD build names the global that way, and
+        // window.pdfmake was undefined, so this threw a TypeError the catch below
+        // then reported as the library failing to load.
+        window.pdfMake
             .createPdf({
                 pageOrientation: exportColumns.value.length > 6 ? 'landscape' : 'portrait',
                 pageMargins: [20, 30, 20, 30],
@@ -412,7 +418,11 @@ async function exportPdf() {
             })
             .download(fileName(props.title, 'pdf'));
     } catch (error) {
-        flash('PDF export unavailable offline');
+        // Said "unavailable offline" for every failure including a mistake in this
+        // function, which is how a typo looked like a network problem. The console
+        // gets the real error; the message no longer claims to know the reason.
+        console.error('PDF export failed', error);
+        flash('Could not build the PDF');
     } finally {
         busy.value = '';
     }
