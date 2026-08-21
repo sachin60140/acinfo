@@ -1,0 +1,180 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { createApp, nextTick, ref } from 'vue';
+import FilePreview from './components/FilePreview.vue';
+import DataGrid from './components/DataGrid.vue';
+
+/*
+ * The approval document opens over the page it was clicked on.
+ *
+ * Checking a screenshot is a glance — is this the right vehicle, is the date
+ * the one on the file — and it happens part way down a list that is filtered
+ * and scrolled. Following the link threw that away. These assert the dialog
+ * appears, that the link is not followed, and that there is a way back out,
+ * none of which the PHP suite can see.
+ */
+
+const mounted = [];
+
+function mount(component, props) {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    const app = createApp(component, props);
+    app.mount(host);
+
+    mounted.push({ app, host });
+
+    return host;
+}
+
+afterEach(() => {
+    while (mounted.length) {
+        const { app, host } = mounted.pop();
+        app.unmount();
+        host.remove();
+    }
+
+    // Teleported nodes are removed by unmount; the scroll lock is the
+    // component's own doing and has to have been undone.
+    document.body.style.overflow = '';
+});
+
+describe('the approval document', () => {
+    it('is shown when there is one, and not before', async () => {
+        const src = ref(null);
+
+        mount({
+            components: { FilePreview },
+            setup: () => ({ src }),
+            template: '<FilePreview :src="src" @close="src = null" />',
+        });
+
+        expect(document.querySelector('.preview')).toBe(null);
+
+        src.value = '/uploads/approval/file-1.png';
+        await nextTick();
+
+        expect(document.querySelector('.preview')).not.toBe(null);
+        expect(document.querySelector('.preview__image').getAttribute('src'))
+            .toBe('/uploads/approval/file-1.png');
+    });
+
+    it('gives a PDF the browser viewer rather than an img that cannot show it', async () => {
+        mount(FilePreview, { src: '/uploads/approval/file-2.pdf' });
+        await nextTick();
+
+        expect(document.querySelector('.preview__frame')).not.toBe(null);
+        expect(document.querySelector('.preview__image')).toBe(null);
+    });
+
+    it('closes on Escape, so the keyboard is not a dead end', async () => {
+        const src = ref('/uploads/approval/file-3.png');
+
+        mount({
+            components: { FilePreview },
+            setup: () => ({ src }),
+            template: '<FilePreview :src="src" @close="src = null" />',
+        });
+
+        await nextTick();
+        expect(document.querySelector('.preview')).not.toBe(null);
+
+        document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+        await nextTick();
+
+        expect(document.querySelector('.preview')).toBe(null);
+    });
+
+    it('closes on the button, and gives the page its scrolling back', async () => {
+        const src = ref('/uploads/approval/file-4.png');
+
+        mount({
+            components: { FilePreview },
+            setup: () => ({ src }),
+            template: '<FilePreview :src="src" @close="src = null" />',
+        });
+
+        await nextTick();
+        expect(document.body.style.overflow).toBe('hidden');
+
+        document.querySelector('.preview__close').click();
+        await nextTick();
+
+        expect(document.querySelector('.preview')).toBe(null);
+        expect(document.body.style.overflow).toBe('');
+    });
+
+    /*
+     * A document that will not load says so. An empty box reads as the page
+     * having broken, and the operator cannot tell whether the file is missing
+     * or the screen is.
+     */
+    it('says so when the document will not load', async () => {
+        mount(FilePreview, { src: '/uploads/approval/gone.png' });
+        await nextTick();
+
+        document.querySelector('.preview__image').dispatchEvent(new window.Event('error'));
+        await nextTick();
+
+        expect(document.querySelector('.preview__missing')).not.toBe(null);
+        expect(document.querySelector('.preview__missing').textContent)
+            .toContain('could not be loaded');
+    });
+});
+
+describe('the files list', () => {
+    const columns = [
+        { key: 'file_no', label: 'File No.' },
+        {
+            key: 'status',
+            label: 'Status',
+            type: 'badge',
+            sub: 'screenshot',
+            subLinkTo: 'screenshot_url',
+        },
+    ];
+
+    const rows = [{
+        id: 1,
+        file_no: 'F-16028',
+        status: 'Partly Approved',
+        status_key: 'partly_approved',
+        screenshot: 'Approval screenshot on file',
+        screenshot_url: '/uploads/approval/f-16028.png',
+    }];
+
+    it('opens the screenshot in place instead of following the link', async () => {
+        const host = mount(DataGrid, { columns, rows, title: 'Work Files' });
+        await nextTick();
+
+        const link = [...host.querySelectorAll('a')]
+            .find((a) => a.textContent.includes('Approval screenshot on file'));
+
+        expect(link).toBeTruthy();
+
+        const click = new window.MouseEvent('click', { bubbles: true, cancelable: true });
+        link.dispatchEvent(click);
+        await nextTick();
+
+        // Not followed: jsdom would report a navigation, and on the real page
+        // the reader would lose the filter and the scroll position.
+        expect(click.defaultPrevented).toBe(true);
+
+        expect(document.querySelector('.preview__image').getAttribute('src'))
+            .toBe('/uploads/approval/f-16028.png');
+    });
+
+    it('still names the document it is about', async () => {
+        const host = mount(DataGrid, { columns, rows, title: 'Work Files' });
+        await nextTick();
+
+        [...host.querySelectorAll('a')]
+            .find((a) => a.textContent.includes('Approval screenshot on file'))
+            .dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        await nextTick();
+
+        expect(document.querySelector('.preview__title').textContent.trim())
+            .toBe('Approval screenshot on file');
+    });
+});

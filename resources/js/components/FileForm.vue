@@ -15,6 +15,14 @@
  */
 import { computed, onMounted, reactive, ref } from 'vue';
 import { balance, money, side } from '../money';
+import FilePreview from './FilePreview.vue';
+
+/*
+ * The approval document being looked at, or null. Held here so the link
+ * only has to say which one; the dialog itself is shared.
+ */
+const preview = ref(null);
+
 
 const props = defineProps({
     action: { type: String, required: true },
@@ -367,7 +375,10 @@ onMounted(() => {
                                 accept="image/*,application/pdf">
                             <div v-if="screenshotUrl" class="ui-hint">
                                 <i class="bi bi-paperclip"></i>
-                                <a :href="screenshotUrl" class="ui-link">Screenshot on file</a>
+                                <a
+                                    :href="screenshotUrl"
+                                    class="ui-link"
+                                    @click.prevent="preview = { src: screenshotUrl, title: 'Approval screenshot' }">Screenshot on file</a>
                                 &mdash; choose a file only if you want to replace it.
                             </div>
                             <div v-else class="ui-hint">
@@ -686,7 +697,8 @@ onMounted(() => {
                                         <a
                                             v-if="work.screenshot_url"
                                             :href="work.screenshot_url"
-                                            class="ui-link">
+                                            class="ui-link"
+                                            @click.prevent="preview = { src: work.screenshot_url, title: (work.work_type || 'Work') + ' — approval' }">
                                             <i class="bi bi-paperclip"></i> View
                                         </a>
                                         <span v-else class="ui-hint">&mdash;</span>
@@ -802,6 +814,8 @@ onMounted(() => {
                 </div>
             </template>
         </aside>
+
+        <FilePreview :src="preview?.src" :title="preview?.title" @close="preview = null" />
     </div>
 </template>
 

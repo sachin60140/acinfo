@@ -17,8 +17,16 @@
  * is what makes it safe to change this screen on a live ledger: the rendering
  * moves, the money logic does not.
  */
-import { computed, reactive } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import { money } from '../money';
+import FilePreview from './FilePreview.vue';
+
+/*
+ * The approval document being looked at, or null. Held here so the link
+ * only has to say which one; the dialog itself is shared.
+ */
+const preview = ref(null);
+
 
 const props = defineProps({
     files: { type: Array, default: () => [] },
@@ -236,7 +244,10 @@ function onScreenshot(row, event) {
 
                                         <div v-if="row.screenshot_url" class="ui-hint board__note">
                                             <i class="bi bi-paperclip"></i>
-                                            <a :href="row.screenshot_url" class="ui-link">View the one on file</a>
+                                            <a
+                                                :href="row.screenshot_url"
+                                                class="ui-link"
+                                                @click.prevent="preview = { src: row.screenshot_url, title: (row.work_type || 'Work') + ' — approval' }">View the one on file</a>
                                             &mdash; choose a file only to replace it
                                         </div>
                                     </div>
@@ -277,6 +288,8 @@ function onScreenshot(row, event) {
                 </div>
             </div>
         </template>
+
+        <FilePreview :src="preview?.src" :title="preview?.title" @close="preview = null" />
     </form>
 </template>
 

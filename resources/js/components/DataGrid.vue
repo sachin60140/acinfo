@@ -17,6 +17,14 @@
  */
 import { computed, ref } from 'vue';
 import { balance, money, side } from '../money';
+import FilePreview from './FilePreview.vue';
+
+/*
+ * The approval document being looked at, or null. Held here so the link
+ * only has to say which one; the dialog itself is shared.
+ */
+const preview = ref(null);
+
 import {
     cellText,
     exportColumns as exportableColumns,
@@ -615,10 +623,14 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                 </div>
 
                                 <div v-if="column.sub && row[column.sub]" class="ui-sub">
+                                    <!-- Opened over the list, not instead of it:
+                                         checking a screenshot is a glance, and the
+                                         reader is part way down a filtered page. -->
                                     <a
                                         v-if="column.subLinkTo && row[column.subLinkTo]"
                                         :href="row[column.subLinkTo]"
-                                        class="ui-link">
+                                        class="ui-link"
+                                        @click.prevent="preview = { src: row[column.subLinkTo], title: row[column.sub] }">
                                         {{ row[column.sub] }}
                                     </a>
                                     <template v-else>{{ row[column.sub] }}</template>
@@ -669,6 +681,8 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                 Next <i class="bi bi-chevron-right"></i>
             </button>
         </div>
+
+        <FilePreview :src="preview?.src" :title="preview?.title" @close="preview = null" />
     </div>
 </template>
 
