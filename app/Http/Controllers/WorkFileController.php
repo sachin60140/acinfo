@@ -334,6 +334,34 @@ class WorkFileController extends Controller
                 'rows.*.works.*.amount.required' => 'Every work needs an amount.',
             ]);
 
+            /*
+             * One vehicle has one transfer and one hypothecation addition. A
+             * file booked for the same work twice charges the customer twice
+             * for one job, and no screen offers it — but a form can be sent by
+             * hand, and this is where the money is decided.
+             */
+            $repeated = collect($req->input('rows'))
+                ->map(function ($row, $index) {
+                    $types = collect($row['works'] ?? [])->pluck('work_type_id')->filter();
+                    $twice = $types->duplicates();
+
+                    if ($twice->isEmpty()) {
+                        return null;
+                    }
+
+                    $named = WorkTypeModel::whereIn('id', $twice->unique())->pluck('name')->implode(', ');
+
+                    return 'file '.($index + 1).' ('.$named.')';
+                })
+                ->filter();
+
+            if ($repeated->isNotEmpty()) {
+                return back()->withInput()->with(
+                    'error',
+                    'A file cannot be received for the same work twice. Check: '.$repeated->implode(', ')
+                );
+            }
+
             $saved = DB::transaction(function () use ($req) {
                 $files = [];
 
@@ -1200,6 +1228,26 @@ class WorkFileController extends Controller
                 'items.*.work_type_id.required' => 'Every work on the file needs a type.',
                 'items.*.customer_amount.required' => 'Every work on the file needs a charge.',
             ]);
+
+            /*
+             * The same rule when a work is corrected: retyping one folder's
+             * transfer as a hypothecation addition, where it already has one,
+             * would leave it charging twice for the same job.
+             */
+            $corrections = collect($req->input('items', []));
+
+            if ($corrections->isNotEmpty()) {
+                $twice = $corrections->pluck('work_type_id')->filter()->duplicates();
+
+                if ($twice->isNotEmpty()) {
+                    $named = WorkTypeModel::whereIn('id', $twice->unique())->pluck('name')->implode(', ');
+
+                    return back()->withInput()->with(
+                        'error',
+                        'A file cannot be for the same work twice. It already has: '.$named
+                    );
+                }
+            }
 
             // Both the credit and its reversal are tied to one vendor, so moving
             // the file elsewhere afterwards would drag that vendor's history onto

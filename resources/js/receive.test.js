@@ -190,3 +190,89 @@ describe('receiving files', () => {
         expect(host.querySelector('.rcv-foot__value').textContent.trim()).toBe('5,500.00');
     });
 });
+
+/*
+ * A file is for one transfer and one hypothecation addition, never two of
+ * either. The dropdown stops offering what is already on the card, so the
+ * mistake is not available to make.
+ */
+describe('the works a file may still be for', () => {
+    const optionsOn = (host, index) =>
+        [...host.querySelectorAll('.rcv-work select')[index].options]
+            .map((option) => option.textContent.trim())
+            .filter((text) => text !== 'Select work');
+
+    it('drops a work from the other lines once it is chosen', async () => {
+        const host = mount();
+
+        expect(optionsOn(host, 0)).toEqual(['HPA — 2,500.00', 'TR']);
+
+        host.querySelector('.rcv-works__add').click();
+        await nextTick();
+
+        const first = byName(host, 'rows[0][works][0][work_type_id]');
+        first.value = '1';
+        first.dispatchEvent(new window.Event('change'));
+        await nextTick();
+
+        // The line that chose it keeps it, or it would have nothing to show.
+        expect(optionsOn(host, 0)).toEqual(['HPA — 2,500.00', 'TR']);
+        expect(optionsOn(host, 1)).toEqual(['TR']);
+    });
+
+    it('offers it again when the line that took it lets go', async () => {
+        const host = mount();
+
+        host.querySelector('.rcv-works__add').click();
+        await nextTick();
+
+        const first = byName(host, 'rows[0][works][0][work_type_id]');
+        first.value = '1';
+        first.dispatchEvent(new window.Event('change'));
+        await nextTick();
+
+        expect(optionsOn(host, 1)).toEqual(['TR']);
+
+        first.value = '';
+        first.dispatchEvent(new window.Event('change'));
+        await nextTick();
+
+        expect(optionsOn(host, 1)).toEqual(['HPA — 2,500.00', 'TR']);
+    });
+
+    /*
+     * Another line would have nothing to offer, so the button says so rather
+     * than adding one that cannot be filled in.
+     */
+    it('stops adding lines once every work is on the file', async () => {
+        const host = mount();
+        const add = host.querySelector('.rcv-works__add');
+
+        expect(add.disabled).toBe(false);
+
+        add.click();
+        await nextTick();
+
+        // Two work types, two lines.
+        expect(host.querySelectorAll('.rcv-work').length).toBe(2);
+        expect(host.querySelector('.rcv-works__add').disabled).toBe(true);
+
+        host.querySelector('.rcv-works__add').click();
+        await nextTick();
+
+        expect(host.querySelectorAll('.rcv-work').length).toBe(2);
+    });
+
+    it('counts each file on its own — two vehicles may need the same work', async () => {
+        const host = mount();
+
+        const first = byName(host, 'rows[0][works][0][work_type_id]');
+        first.value = '1';
+        first.dispatchEvent(new window.Event('change'));
+
+        host.querySelector('.rcv-add').click();
+        await nextTick();
+
+        expect(optionsOn(host, 1)).toEqual(['HPA — 2,500.00', 'TR']);
+    });
+});

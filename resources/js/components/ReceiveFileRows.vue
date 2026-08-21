@@ -93,8 +93,33 @@ const summary = computed(() => {
     return { tone: 'ready', text: `${files}, ${works}, all priced.` };
 });
 
+/*
+ * What this line may still be set to.
+ *
+ * One vehicle has one transfer and one hypothecation addition — a file for the
+ * same work twice is a mistyped file, not a bigger one. So a work already
+ * chosen elsewhere on this card is not offered again, and the line's own choice
+ * stays in its list or it would have nothing selected to show.
+ */
+function worksLeftFor(row, index) {
+    const taken = new Set(
+        row.works
+            .filter((_, i) => i !== index)
+            .map((work) => String(work.work_type_id))
+            .filter(Boolean)
+    );
+
+    return props.workTypes.filter((type) => ! taken.has(String(type.id)));
+}
+
+// Every work is on the card already, so another line would have nothing to
+// offer. Said on the button rather than found out by pressing it.
+const allWorksUsed = (row) => row.works.length >= props.workTypes.length;
+
 function addWork(row) {
-    row.works.push(blankWork());
+    if (! allWorksUsed(row)) {
+        row.works.push(blankWork());
+    }
 }
 
 function removeWork(row, index) {
@@ -290,7 +315,7 @@ watch(total, (value) => {
                                     @change="onWorkTypeChange(work)"
                                     required>
                                     <option value="">Select work</option>
-                                    <option v-for="type in workTypes" :key="type.id" :value="type.id">
+                                    <option v-for="type in worksLeftFor(row, wi)" :key="type.id" :value="type.id">
                                         {{ type.name }}<template v-if="type.default_rate"> — {{ money(type.default_rate) }}</template>
                                     </option>
                                 </select>
@@ -319,7 +344,12 @@ watch(total, (value) => {
                                 </button>
                             </div>
 
-                            <button type="button" class="ui-btn ui-btn--sm rcv-works__add" @click="addWork(row)">
+                            <button
+                                type="button"
+                                class="ui-btn ui-btn--sm rcv-works__add"
+                                :disabled="allWorksUsed(row)"
+                                :title="allWorksUsed(row) ? 'Every work is already on this file' : 'Add another work to this file'"
+                                @click="addWork(row)">
                                 <i class="bi bi-plus-lg"></i> Add another work
                             </button>
                         </div>

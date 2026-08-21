@@ -1240,6 +1240,86 @@ class WorkFileItemTest extends TestCase
 
         $done->refresh()->approval_screenshot && @unlink(public_path($done->refresh()->approval_screenshot));
     }
+    /**
+     * One vehicle has one transfer and one hypothecation addition.
+     *
+     * A file booked for the same work twice charges the customer twice for one
+     * job. The screen stops offering a work once it is on the card, but a form
+     * can be sent by hand and this is where the money is decided.
+     */
+    public function test_a_file_cannot_be_received_for_the_same_work_twice(): void
+    {
+        $this->actingAs($this->admin());
+
+        $before = WorkFileModel::count();
+
+        $this->post(route('workfile.receive'), [
+            'received_date' => now()->toDateString(),
+            'customer_id' => $this->customer->id,
+            'rows' => [[
+                'registration_no' => 'BR01ZZ0128',
+                'works' => [
+                    ['work_type_id' => $this->workType->id, 'amount' => '2000'],
+                    ['work_type_id' => $this->workType->id, 'amount' => '3000'],
+                ],
+            ]],
+        ])->assertSessionHas('error', fn ($error) => str_contains($error, 'same work twice')
+            && str_contains($error, $this->workType->name));
+
+        $this->assertSame($before, WorkFileModel::count(), 'nothing was booked');
+    }
+
+    /**
+     * The same work on two different files is ordinary: two vehicles, two
+     * transfers. The rule is about one envelope, not one batch.
+     */
+    public function test_two_files_in_a_batch_may_be_for_the_same_work(): void
+    {
+        $this->actingAs($this->admin());
+
+        $this->post(route('workfile.receive'), [
+            'received_date' => now()->toDateString(),
+            'customer_id' => $this->customer->id,
+            'rows' => [
+                ['registration_no' => 'BR01ZZ0129', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '2000']]],
+                ['registration_no' => 'BR01ZZ0130', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '2500']]],
+            ],
+        ])->assertRedirect()->assertSessionMissing('error');
+
+        $this->assertNotNull(WorkFileModel::where('registration_no', 'BR01ZZ0129')->first());
+        $this->assertNotNull(WorkFileModel::where('registration_no', 'BR01ZZ0130')->first());
+    }
+
+    /**
+     * And a correction cannot introduce the duplicate either — retyping one
+     * folder's transfer as a hypothecation addition, where it already has one.
+     */
+    public function test_a_correction_cannot_make_a_file_the_same_work_twice(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0131');
+        [$first, $second] = $file->items->all();
+
+        $this->post(route('workfile.edit', $file->id), [
+            'file_no' => $file->file_no,
+            'received_date' => $file->received_date,
+            'work_type_id' => $file->work_type_id,
+            'customer_id' => $this->customer->id,
+            'customer_amount' => '5000',
+            'status' => $file->status,
+            'items' => [
+                $first->id => ['work_type_id' => $first->work_type_id, 'customer_amount' => '2000'],
+                $second->id => ['work_type_id' => $first->work_type_id, 'customer_amount' => '3000'],
+            ],
+        ])->assertSessionHas('error', fn ($error) => str_contains($error, 'same work twice'));
+
+        $this->assertSame(
+            (int) $second->work_type_id,
+            (int) $second->refresh()->work_type_id,
+            'the work was left as it was'
+        );
+    }
     private function vendor(): PartyModel
     {
         $vendor = new PartyModel;
