@@ -741,10 +741,13 @@ class WorkFileModel extends Model
      */
     private static function applyStatusFilter($query, string $filter): void
     {
+        // Named with its table: the work type counts below join the works,
+        // which have a status of their own, and a bare column would be
+        // ambiguous — or worse, silently the wrong one.
         if ($filter === 'open') {
-            $query->whereIn('status', self::OPEN_STATUSES);
+            $query->whereIn('work_file.status', self::OPEN_STATUSES);
         } elseif (array_key_exists($filter, self::STATUSES)) {
-            $query->where('status', $filter);
+            $query->where('work_file.status', $filter);
         }
     }
 
@@ -760,7 +763,15 @@ class WorkFileModel extends Model
         $query = DB::table('work_file');
 
         if ($workTypeId) {
-            $query->where('work_type_id', $workTypeId);
+            /*
+             * Matched against the works, which is how the board itself filters:
+             * counting the folder's own type credited a folder to the first work
+             * on it, so the tab promised fewer files than the board then showed.
+             */
+            $query->whereExists(fn ($q) => $q->select(DB::raw(1))
+                ->from('work_file_item')
+                ->whereColumn('work_file_item.work_file_id', 'work_file.id')
+                ->where('work_file_item.work_type_id', $workTypeId));
         }
 
         $byStatus = $query->selectRaw('status, COUNT(*) as total')
@@ -789,15 +800,22 @@ class WorkFileModel extends Model
      */
     public static function workTypeCounts(string $filter)
     {
+        /*
+         * Counted through the works, so a folder appears under every type it
+         * holds. DISTINCT because that is the point: a folder with a transfer
+         * and a hypothecation addition is one file under each of them, not two
+         * under either.
+         */
         $query = DB::table('work_file')
-            ->join('work_type', 'work_type.id', '=', 'work_file.work_type_id');
+            ->join('work_file_item', 'work_file_item.work_file_id', '=', 'work_file.id')
+            ->join('work_type', 'work_type.id', '=', 'work_file_item.work_type_id');
 
         self::applyStatusFilter($query, $filter);
 
         return $query
-            ->select('work_type.id', 'work_type.name', DB::raw('COUNT(work_file.id) as total'))
+            ->select('work_type.id', 'work_type.name', DB::raw('COUNT(DISTINCT work_file.id) as total'))
             ->groupBy('work_type.id', 'work_type.name')
-            ->havingRaw('COUNT(work_file.id) > 0')
+            ->havingRaw('COUNT(DISTINCT work_file.id) > 0')
             ->orderBy('work_type.name', 'asc')
             ->get();
     }

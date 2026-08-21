@@ -71,7 +71,9 @@ const columns = [
     { key: 'name', label: 'Work Type' },
     { key: 'default_rate', label: 'Charge', num: true },
     { key: 'default_vendor_rate', label: 'Vendor Cost', num: true },
-    { key: 'file_count', label: 'Files', num: true },
+    // Works, not files: a folder of several works counts once against each
+    // of them, which is what the number is for.
+    { key: 'file_count', label: 'Works', num: true },
     { key: 'billed_total', label: 'Billed', num: true },
 ];
 
@@ -383,7 +385,7 @@ const sortIcon = (key) => {
                                         <span v-else class="ui-money">{{ money(type.default_rate) }}</span>
                                     </td>
 
-                                    <td data-label="Files" class="num">
+                                    <td data-label="Works" class="num">
                                         <span class="ui-money" :class="{ 'ui-money--nil': !type.file_count }">
                                             {{ type.file_count }}
                                         </span>

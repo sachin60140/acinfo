@@ -21,16 +21,29 @@ class WorkTypeModel extends Model
      */
     public static function withUsage()
     {
+        /*
+         * Counted against the works, not the files.
+         *
+         * A folder holding a transfer and a hypothecation addition points at
+         * only the first of them, so counting files credited the transfer with
+         * the whole folder and left the hypothecation addition reading as work
+         * nobody had ever booked — which is exactly the answer that makes a
+         * type look safe to retire when it is not.
+         *
+         * Cancelled work is left in. This is a record of what a type has been
+         * used for, and a type used once and struck off is still a type that
+         * has been used.
+         */
         return DB::table('work_type')
-            ->leftJoin('work_file', 'work_file.work_type_id', '=', 'work_type.id')
+            ->leftJoin('work_file_item', 'work_file_item.work_type_id', '=', 'work_type.id')
             ->select(
                 'work_type.id',
                 'work_type.name',
                 'work_type.default_rate',
                 'work_type.default_vendor_rate',
                 'work_type.is_active',
-                DB::raw('COUNT(work_file.id) as file_count'),
-                DB::raw('COALESCE(SUM(work_file.customer_amount), 0) as billed_total')
+                DB::raw('COUNT(work_file_item.id) as file_count'),
+                DB::raw('COALESCE(SUM(work_file_item.customer_amount), 0) as billed_total')
             )
             // ONLY_FULL_GROUP_BY: every non-aggregate column has to be listed.
             ->groupBy('work_type.id', 'work_type.name', 'work_type.default_rate', 'work_type.default_vendor_rate', 'work_type.is_active')

@@ -582,6 +582,55 @@ class WorkFileItemTest extends TestCase
         $this->assertNull($pending['screenshot_url'], 'nothing to show for work not yet through');
         $this->assertNull($pending['approved_on']);
     }
+    /**
+     * A folder counts under every work it holds, on both filters.
+     *
+     * The board shows a file when any of its works is of the chosen type, so
+     * the tabs beside it have to count the same way. Counting the folder's own
+     * type credited the whole folder to the first work on it: the transfer tab
+     * said "no files" over a board that then listed one.
+     */
+    public function test_the_tabs_count_every_work_a_folder_holds(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0108');
+
+        foreach ($file->items as $item) {
+            $counted = collect(WorkFileModel::workTypeCounts('all'))
+                ->firstWhere('id', $item->work_type_id);
+
+            $this->assertNotNull($counted, $item->workType->name.' is counted');
+            $this->assertSame(
+                WorkFileModel::forStatusBoard('all', $item->work_type_id)->count(),
+                (int) $counted->total,
+                'the tab counts what the board shows'
+            );
+
+            // And the file is counted once under each, not twice under one.
+            $this->assertSame(1, (int) $counted->total);
+
+            $this->assertSame(1, WorkFileModel::statusCounts($item->work_type_id)['all']);
+        }
+    }
+
+    /**
+     * A work type is used by the works booked against it, not by the folders
+     * that happen to name it. The second work on a folder read as a type
+     * nobody had ever used — which is what makes a type look safe to retire.
+     */
+    public function test_a_work_type_counts_the_work_booked_against_it(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0109');
+        $second = $file->items->last();
+
+        $usage = collect(WorkTypeModel::withUsage())->firstWhere('id', $second->work_type_id);
+
+        $this->assertSame(1, (int) $usage->file_count, 'the work counts even though the folder names another');
+        $this->assertEquals(3000, $usage->billed_total);
+    }
     private function vendor(): PartyModel
     {
         $vendor = new PartyModel;
