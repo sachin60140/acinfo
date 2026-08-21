@@ -129,6 +129,26 @@ class WorkFileModel extends Model
                 $file->vendor_returned_amount = null;
             }
         });
+
+        /*
+         * While the file is still the source of truth for what it is for, its
+         * single item is kept in step with it. Without this an edit to a file
+         * would leave its item describing the job it used to be, and the
+         * screens that move onto items next would read the old answer.
+         *
+         * This goes when the receive screen starts writing items directly and
+         * the file rolls up from them instead.
+         */
+        static::saved(function (self $file) {
+            $item = $file->items()->first() ?: new WorkFileItemModel;
+            $item->work_file_id = $file->id;
+            $item->work_type_id = $file->work_type_id;
+            $item->customer_amount = $file->customer_amount;
+            $item->vendor_amount = $file->vendor_amount;
+            $item->status = $file->status;
+            $item->approval_screenshot = $file->approval_screenshot;
+            $item->save();
+        });
     }
 
     public function workType(): BelongsTo
@@ -144,6 +164,18 @@ class WorkFileModel extends Model
     public function vendor(): BelongsTo
     {
         return $this->belongsTo(PartyModel::class, 'vendor_id');
+    }
+
+    /**
+     * The jobs this file is for.
+     *
+     * Every file has at least one. Papers brought in for a transfer and a
+     * hypothecation addition at once are one folder with two jobs, each
+     * priced and approved on its own.
+     */
+    public function items(): HasMany
+    {
+        return $this->hasMany(WorkFileItemModel::class, 'work_file_id')->orderBy('id');
     }
 
     public function statusLog(): HasMany
