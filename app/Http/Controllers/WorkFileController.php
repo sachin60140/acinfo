@@ -1034,8 +1034,22 @@ class WorkFileController extends Controller
                 'approval_screenshot' => 'nullable|file|mimes:jpg,jpeg,png,webp,pdf|max:4096',
                 'description' => 'nullable|string|max:255',
                 'remarks' => 'nullable|string|max:255',
+
+                /*
+                 * A folder holding several works is corrected work by work:
+                 * its own type, charge and cost are the sum of theirs and are
+                 * rolled up again below, so there is nothing to type into the
+                 * boxes above. A folder holding one is that one work, and the
+                 * boxes still write straight through to it.
+                 */
+                'items' => 'nullable|array',
+                'items.*.work_type_id' => 'required|integer|exists:work_type,id',
+                'items.*.customer_amount' => 'required|numeric|gte:0|max:99999999',
+                'items.*.vendor_amount' => 'nullable|numeric|gte:0|max:99999999',
             ], [
                 'vendor_id.required_with' => 'Select the vendor this file was given to before entering a vendor amount.',
+                'items.*.work_type_id.required' => 'Every work on the file needs a type.',
+                'items.*.customer_amount.required' => 'Every work on the file needs a charge.',
             ]);
 
             // Both the credit and its reversal are tied to one vendor, so moving
@@ -1094,6 +1108,40 @@ class WorkFileController extends Controller
                     $item->vendor_amount = $file->vendor_amount;
                     $item->status = $file->status;
                     $item->save();
+                }
+
+                /*
+                 * Corrections made against each work on a folder that holds
+                 * several. Keyed on the job and matched against this file's
+                 * own jobs, so a tampered form cannot reprice a work sitting
+                 * on somebody else's file.
+                 *
+                 * The status is not among them: a work moves on the board,
+                 * where the approval evidence goes with it.
+                 */
+                $corrections = $req->input('items', []);
+
+                if ($corrections && $items->count() > 1) {
+                    foreach ($items as $item) {
+                        $correction = $corrections[$item->id] ?? null;
+
+                        if (! $correction) {
+                            continue;
+                        }
+
+                        $item->work_type_id = (int) $correction['work_type_id'];
+                        $item->customer_amount = (float) $correction['customer_amount'];
+                        $item->vendor_amount = ($correction['vendor_amount'] ?? '') === ''
+                            ? null
+                            : (float) $correction['vendor_amount'];
+                        $item->save();
+                    }
+
+                    // The folder is the sum of its works, so it is written
+                    // from them rather than from the boxes above.
+                    $file->load('items');
+                    $file->rollUp();
+                    $file->save();
                 }
 
                 $file->syncLedger();
@@ -1186,6 +1234,28 @@ class WorkFileController extends Controller
                 ? number_format((float) $file->customer_amount, 2, '.', '')
                 : '0.00',
             'screenshotUrl' => $isEdit && $file->approval_screenshot ? $file->screenshotUrl() : '',
+
+            /*
+             * The works this file is for.
+             *
+             * Each carries its own approval and the document it arrived with,
+             * because two approvals days apart are two documents — and the
+             * list upstairs can only link to one of them. This is where the
+             * whole record of a folder is, so this is where they all hang.
+             */
+            'items' => $isEdit
+                ? $file->items()->with('workType')->get()->map(fn ($item) => [
+                    'id' => (int) $item->id,
+                    'work_type_id' => (int) $item->work_type_id,
+                    'work_type' => $item->workType?->name,
+                    'customer_amount' => (float) $item->customer_amount,
+                    'vendor_amount' => $item->vendor_amount === null ? '' : (float) $item->vendor_amount,
+                    'status' => $item->status,
+                    'status_label' => WorkFileModel::STATUSES[$item->status] ?? $item->status,
+                    'screenshot_url' => $item->approval_screenshot ? url($item->approval_screenshot) : null,
+                    'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
+                ])->values()
+                : [],
 
             /*
              * What this file already contributes to each party's balance.

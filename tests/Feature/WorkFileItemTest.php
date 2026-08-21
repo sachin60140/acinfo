@@ -439,6 +439,149 @@ class WorkFileItemTest extends TestCase
         $this->assertArrayNotHasKey(WorkFileModel::RETURNED, WorkFileModel::jobStatusesFor(2));
     }
 
+    /**
+     * The lists name every work on a file.
+     *
+     * Calling a folder by the first work on it is how the old list came to show
+     * "HPA" over a file that was also a transfer — and it is why the work type
+     * list grew names like "HPT + TR + HPA": a single column that had to hold
+     * several answers.
+     */
+    public function test_the_files_list_and_the_report_name_every_work(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0103');
+        $expected = $file->items->map(fn ($item) => $item->workType->name)->implode(', ');
+
+        $listed = collect($this->getJson(route('workfile.index'))->assertOk()->json('props.rows'))
+            ->firstWhere('id', $file->id);
+
+        $this->assertSame($expected, $listed['work_type']);
+
+        $reported = collect($this->getJson(route('report.files'))->assertOk()->json('props.rows'))
+            ->firstWhere('id', $file->id);
+
+        $this->assertSame($expected, $reported['work_type']);
+    }
+
+    /**
+     * Cancelled work stops being named, because it stops being charged for. A
+     * file still called "TR, HPA" beside a figure covering only the transfer
+     * says the customer was billed for both.
+     */
+    public function test_a_cancelled_work_drops_out_of_the_name(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0104');
+        [$first, $second] = $file->items->all();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$second->id => WorkFileModel::CANCELLED],
+            'remarks' => [$second->id => 'Entered by mistake'],
+        ])->assertRedirect();
+
+        $listed = collect($this->getJson(route('workfile.index'))->assertOk()->json('props.rows'))
+            ->firstWhere('id', $file->id);
+
+        $this->assertSame($first->workType->name, $listed['work_type'], 'only the work still charged for');
+        $this->assertEquals(2000, $listed['charged'], 'and only its charge');
+    }
+    /**
+     * A charge typed wrong is corrected on the work it belongs to.
+     *
+     * The file screen used to offer one type and one charge, which on a folder
+     * of several works could only describe the sum — so a transfer entered at
+     * 2,000 when it should have been 2,500 had nowhere to be put right. The
+     * folder follows its works afterwards, and so does the statement.
+     */
+    public function test_a_charge_is_corrected_on_the_work_it_belongs_to(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0105');
+        [$first, $second] = $file->items->all();
+
+        $this->post(route('workfile.edit', $file->id), [
+            'file_no' => $file->file_no,
+            'received_date' => $file->received_date,
+            'work_type_id' => $file->work_type_id,
+            'customer_id' => $this->customer->id,
+            'customer_amount' => '5000',
+            'status' => $file->status,
+            'items' => [
+                $first->id => ['work_type_id' => $first->work_type_id, 'customer_amount' => '2500'],
+                $second->id => ['work_type_id' => $second->work_type_id, 'customer_amount' => '3000'],
+            ],
+        ])->assertRedirect();
+
+        $this->assertEquals(2500, $first->refresh()->customer_amount, 'the work that was wrong');
+        $this->assertEquals(3000, $second->refresh()->customer_amount, 'and the one that was not');
+
+        $file->refresh();
+        $this->assertEquals(5500, $file->customer_amount, 'the folder is the sum of its works');
+        $this->assertSame(5500.0, PartyLedgerModel::where('work_file_id', $file->id)
+            ->where('file_role', 'customer')->value('amount') + 0, 'and so is the statement');
+    }
+
+    /**
+     * The correction cannot reach a work on somebody else's file. Ids in a form
+     * are typed by whoever sends it, and repricing a stranger's work would move
+     * a party's balance from a screen that never showed it.
+     */
+    public function test_a_correction_cannot_reach_another_files_work(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0106');
+        $other = $this->file();
+        $stranger = $other->items()->first();
+
+        $this->post(route('workfile.edit', $file->id), [
+            'file_no' => $file->file_no,
+            'received_date' => $file->received_date,
+            'work_type_id' => $file->work_type_id,
+            'customer_id' => $this->customer->id,
+            'customer_amount' => '5000',
+            'status' => $file->status,
+            'items' => [
+                $stranger->id => ['work_type_id' => $stranger->work_type_id, 'customer_amount' => '99999'],
+            ],
+        ])->assertRedirect();
+
+        $this->assertEquals(5000, $stranger->refresh()->customer_amount, 'untouched');
+    }
+
+    /**
+     * Every approval keeps the document it arrived with, and the file's own
+     * screen is where they all hang: the list upstairs has one link per folder
+     * and a folder can have several approvals.
+     */
+    public function test_the_file_screen_carries_each_works_own_approval(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0107');
+        [$first, $second] = $file->items->all();
+
+        $first->approval_screenshot = 'uploads/approval/item-first.png';
+        $first->status = WorkFileModel::APPROVED;
+        $first->save();
+
+        $works = collect(
+            $this->getJson(route('workfile.edit', $file->id))->assertOk()->json('props.items')
+        );
+
+        $approved = $works->firstWhere('id', $first->id);
+        $pending = $works->firstWhere('id', $second->id);
+
+        $this->assertStringContainsString('item-first.png', $approved['screenshot_url']);
+        $this->assertSame(now()->format('d-m-Y'), $approved['approved_on']);
+
+        $this->assertNull($pending['screenshot_url'], 'nothing to show for work not yet through');
+        $this->assertNull($pending['approved_on']);
+    }
     private function vendor(): PartyModel
     {
         $vendor = new PartyModel;

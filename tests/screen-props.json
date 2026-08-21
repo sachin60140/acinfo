@@ -184,6 +184,19 @@
             "errors": "[]",
             "indexUrl": "string",
             "isEdit": "bool",
+            "items": {
+                "list_of": {
+                    "approved_on": "null",
+                    "customer_amount": "number",
+                    "id": "number",
+                    "screenshot_url": "null",
+                    "status": "string",
+                    "status_label": "string",
+                    "vendor_amount": "number",
+                    "work_type": "string",
+                    "work_type_id": "number"
+                }
+            },
             "receivedDateField": "string",
             "refundPlaceholder": "string",
             "returnedKey": "string",

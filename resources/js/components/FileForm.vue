@@ -31,6 +31,8 @@ const props = defineProps({
     vendorDateField: { type: String, default: '' },
     refundPlaceholder: { type: String, default: '0.00' },
     screenshotUrl: { type: String, default: '' },
+    // The works this file is for, each with its own price and approval.
+    items: { type: Array, default: () => [] },
     alreadyPosted: { type: Object, default: () => ({}) },
     timeline: { type: Array, default: () => [] },
     returnedKey: { type: String, required: true },
@@ -63,6 +65,39 @@ const form = reactive({
     vendor_amount: props.values.vendor_amount ?? '',
     remarks: props.values.remarks ?? '',
 });
+
+/*
+ * A folder holding several works has no single type, charge or cost to type
+ * into a box: each of those is the sum of its works, and is written back from
+ * them when this is saved. So the boxes give way to a panel with a line per
+ * work, and the file's own figures are shown as the totals they are.
+ *
+ * The ordinary file, holding one work, is unchanged — it is that work, and the
+ * boxes still write straight through to it.
+ */
+const multiWork = computed(() => props.items.length > 1);
+
+const works = reactive(
+    props.items.map((item) => ({
+        ...item,
+        customer_amount: item.customer_amount ?? '',
+        vendor_amount: item.vendor_amount ?? '',
+    }))
+);
+
+const worksCharged = computed(() =>
+    works.reduce((sum, work) => sum + (Number(work.customer_amount) || 0), 0)
+);
+
+// A work with no rate agreed leaves the folder's cost short of complete, so it
+// is counted and said rather than quietly summed as nothing.
+const worksUnpriced = computed(
+    () => works.filter((work) => String(work.vendor_amount).trim() === '').length
+);
+
+const worksCost = computed(() =>
+    works.reduce((sum, work) => sum + (Number(work.vendor_amount) || 0), 0)
+);
 
 const cancelled = computed(() => form.status === props.cancelledKey);
 const returning = computed(() => form.status === props.returnedKey);
@@ -247,7 +282,20 @@ onMounted(() => {
                             <div v-if="errors.file_no" class="ui-hint ui-hint--error">{{ errors.file_no }}</div>
                         </div>
 
-                        <div class="ui-field wf-2">
+                        <!-- A folder of several works takes its status from them,
+                             so it is stated here and moved on the board, a work at
+                             a time. The value still posts, because the server
+                             writes it back from the works either way. -->
+                        <div v-if="multiWork" class="ui-field wf-2">
+                            <label class="ui-label">Status</label>
+                            <div class="wf-derived">
+                                <span class="ui-badge" :data-state="form.status">{{ statuses[form.status] }}</span>
+                                <span class="ui-hint">from the works below</span>
+                            </div>
+                            <input type="hidden" name="status" :value="form.status">
+                        </div>
+
+                        <div v-else class="ui-field wf-2">
                             <label class="ui-label" for="status">
                                 Status <span class="ui-label__req">*</span>
                             </label>
@@ -330,7 +378,7 @@ onMounted(() => {
                             </div>
                         </div>
 
-                        <div class="ui-field wf-3">
+                        <div v-if="!multiWork" class="ui-field wf-3">
                             <label class="ui-label" for="work_type_id">
                                 Type of Work <span class="ui-label__req">*</span>
                             </label>
@@ -356,6 +404,11 @@ onMounted(() => {
                                 {{ errors.work_type_id }}
                             </div>
                         </div>
+
+                        <!-- The folder still has to name a type, and the server
+                             sets it from the first work. Posted so the form stays
+                             valid without asking for an answer that is not one. -->
+                        <input v-else type="hidden" name="work_type_id" :value="form.work_type_id">
 
                         <div class="ui-field wf-3">
                             <label class="ui-label" for="registration_no">Registration No.</label>
@@ -433,7 +486,16 @@ onMounted(() => {
                             </div>
                         </div>
 
-                        <div class="ui-field wf-3">
+                        <div v-if="multiWork" class="ui-field wf-3">
+                            <label class="ui-label">Amount Charged</label>
+                            <div class="wf-derived">
+                                <span class="ui-money ui-money--dr ui-money--strong">{{ money(worksCharged) }}</span>
+                                <span class="ui-hint">{{ works.length }} works</span>
+                            </div>
+                            <input type="hidden" name="customer_amount" :value="worksCharged">
+                        </div>
+
+                        <div v-else class="ui-field wf-3">
                             <label class="ui-label" for="customer_amount">
                                 Amount Charged <span class="ui-label__req">*</span>
                             </label>
@@ -487,7 +549,17 @@ onMounted(() => {
                             </div>
                         </div>
 
-                        <div class="ui-field wf-2">
+                        <div v-if="multiWork" class="ui-field wf-2">
+                            <label class="ui-label">Vendor Amount</label>
+                            <div class="wf-derived">
+                                <span class="ui-money ui-money--cr ui-money--strong">{{ money(worksCost) }}</span>
+                                <span v-if="worksUnpriced" class="ui-hint">
+                                    {{ worksUnpriced }} still without a rate
+                                </span>
+                            </div>
+                        </div>
+
+                        <div v-else class="ui-field wf-2">
                             <label class="ui-label" for="vendor_amount">Vendor Amount</label>
                             <div class="wf-affix">
                                 <span class="wf-affix__tag">INR</span>
@@ -535,6 +607,97 @@ onMounted(() => {
                     </div>
                 </div>
 
+                <!--
+                    The works this file is for.
+
+                    Shown whenever there is more than one, because that is when
+                    the boxes above stop being able to say what the file is: a
+                    transfer and a hypothecation addition on one folder have a
+                    charge each, a rate each, and an approval each that arrives
+                    on its own day with its own document.
+
+                    Status is not editable here. A work moves on the board, where
+                    the evidence goes with it — this screen is for corrections.
+                -->
+                <div v-if="multiWork" class="wf-works">
+                    <div class="wf-works__head">
+                        <h3 class="wf-section__title">Works on This File</h3>
+                        <div class="ui-hint">
+                            Correct a type or a price here. Statuses move on the status board,
+                            a work at a time.
+                        </div>
+                    </div>
+
+                    <div class="ui-table-wrap">
+                        <table class="ui-table wf-works__table">
+                            <thead>
+                                <tr>
+                                    <th>Work</th>
+                                    <th class="num" style="min-width: 8rem;">Charged</th>
+                                    <th class="num" style="min-width: 8rem;">Vendor Rate</th>
+                                    <th>Status</th>
+                                    <th>Approval</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="work in works" :key="work.id">
+                                    <td data-label="Work">
+                                        <select
+                                            class="ui-select"
+                                            :name="`items[${work.id}][work_type_id]`"
+                                            v-model="work.work_type_id">
+                                            <option v-for="type in workTypes" :key="type.id" :value="type.id">
+                                                {{ type.label }}
+                                            </option>
+                                        </select>
+                                    </td>
+
+                                    <td data-label="Charged" class="num">
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            class="ui-input ui-input--amount"
+                                            :name="`items[${work.id}][customer_amount]`"
+                                            v-model="work.customer_amount"
+                                            placeholder="0.00">
+                                    </td>
+
+                                    <td data-label="Vendor Rate" class="num">
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            class="ui-input ui-input--amount"
+                                            :name="`items[${work.id}][vendor_amount]`"
+                                            v-model="work.vendor_amount"
+                                            placeholder="Not agreed">
+                                    </td>
+
+                                    <td data-label="Status">
+                                        <span class="ui-badge" :data-state="work.status">{{ work.status_label }}</span>
+                                        <div v-if="work.approved_on" class="ui-sub">{{ work.approved_on }}</div>
+                                    </td>
+
+                                    <td data-label="Approval">
+                                        <!-- Every approval keeps the document it
+                                             arrived with. The list upstairs can
+                                             only link to one; they all hang here. -->
+                                        <a
+                                            v-if="work.screenshot_url"
+                                            :href="work.screenshot_url"
+                                            class="ui-link"
+                                            target="_blank"
+                                            rel="noopener">
+                                            <i class="bi bi-paperclip"></i> View
+                                        </a>
+                                        <span v-else class="ui-hint">&mdash;</span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
                 <div class="ui-card__foot">
                     <span class="ui-hint">
                         Saving rewrites this file's entries on both statements.
@@ -762,6 +925,76 @@ onMounted(() => {
     line-height: 2.2;
     padding: 0 var(--s-2);
 }
+
+/* A figure the file works out for itself, standing where its box used to be so
+   the row does not go ragged when a folder holds several works. */
+.wf-derived {
+    align-items: baseline;
+    display: flex;
+    gap: var(--s-2);
+    min-height: 2.5rem;
+}
+
+/* The works panel sits between the fields and the footer, inside the same card,
+   so it reads as part of the file rather than as a second thing about it. */
+.wf-works {
+    border-top: 1px solid var(--n-200);
+    padding: var(--s-4);
+}
+
+.wf-works__head {
+    margin-bottom: var(--s-3);
+}
+
+.wf-works__table td {
+    vertical-align: middle;
+}
+
+@media (max-width: 767.98px) {
+    .wf-works__table,
+    .wf-works__table tbody,
+    .wf-works__table tr,
+    .wf-works__table td {
+        display: block;
+        width: 100%;
+    }
+
+    .wf-works__table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+    }
+
+    .wf-works__table tbody tr {
+        border: 1px solid var(--n-200);
+        border-radius: var(--r-md);
+        margin-bottom: var(--s-3);
+        padding: var(--s-2) var(--s-3);
+    }
+
+    .wf-works__table tbody td {
+        border-bottom: 0;
+        padding: var(--s-2) 0;
+    }
+
+    .wf-works__table tbody td::before {
+        color: var(--n-500);
+        content: attr(data-label);
+        display: block;
+        font-size: var(--t-xs);
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        margin-bottom: var(--s-1);
+        text-transform: uppercase;
+    }
+
+    .wf-works__table tbody td.num {
+        text-align: left;
+    }
+}
+
 
 .wf-actions {
     display: flex;

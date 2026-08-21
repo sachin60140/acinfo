@@ -868,6 +868,36 @@ class WorkFileModel extends Model
      * Vendor-wise necessarily drops files nobody was given — there is no vendor
      * to file them under.
      */
+    /**
+     * Every work a file is for, named, as one column.
+     *
+     * A folder holding a transfer and a hypothecation addition is both of
+     * them, and calling it by the first alone is how a list comes to show
+     * "HPA" over a file that is also a transfer.
+     *
+     * Cancelled work is left out: it charges nobody, and naming it beside the
+     * billed figure would say that it did. A file with nothing left falls back
+     * to its own work type, which is all it has to be called by.
+     *
+     * Written as SQL rather than through the relation because both callers are
+     * query-builder reports that read hundreds of rows at once — one label per
+     * file this way, against one query per file the other.
+     */
+    private static function workLabelColumn()
+    {
+        $cancelled = self::CANCELLED;
+
+        return DB::raw(<<<SQL
+            COALESCE((
+                SELECT GROUP_CONCAT(item_type.name ORDER BY work_file_item.id SEPARATOR ', ')
+                FROM work_file_item
+                JOIN work_type AS item_type ON item_type.id = work_file_item.work_type_id
+                WHERE work_file_item.work_file_id = work_file.id
+                  AND work_file_item.status <> '$cancelled'
+            ), work_type.name) AS work_type
+            SQL);
+    }
+
     public static function report(string $partyType, $partyId = null, ?string $status = null, ?string $from = null, ?string $to = null)
     {
         $isVendor = $partyType === 'vendor';
@@ -891,7 +921,7 @@ class WorkFileModel extends Model
                 'work_file.vendor_amount',
                 'work_file.vendor_returned_on',
                 'work_file.vendor_returned_amount',
-                'work_type.name as work_type',
+                self::workLabelColumn(),
                 'customer.name as customer_name',
                 'vendor.name as vendor_name',
                 DB::raw(($isVendor ? 'vendor.id' : 'customer.id').' as party_id'),
@@ -1241,7 +1271,7 @@ class WorkFileModel extends Model
                 'work_file.vendor_returned_on',
                 'work_file.returned_amount',
                 'work_file.vendor_returned_amount',
-                'work_type.name as work_type',
+                self::workLabelColumn(),
                 'customer.name as customer_name',
                 'customer.id as customer_id',
                 'vendor.name as vendor_name',
