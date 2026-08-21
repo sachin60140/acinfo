@@ -134,6 +134,13 @@ class WorkFileController extends Controller
             // the two figures beside it.
             $unpricedCount += $line['margin'] === null ? 1 : 0;
 
+            $split = WorkFileModel::workSplit($breakdown[$f->id] ?? []);
+            $works = [
+                'works_done' => $split['done'],
+                'works_approved_on' => $split['approved_on'],
+                'works_pending' => $split['pending'],
+            ];
+
             $rows[] = [
                 'id' => $f->id,
                 'file_no' => $f->file_no,
@@ -182,6 +189,17 @@ class WorkFileController extends Controller
                 // The badge colours itself from the raw key, not the label.
                 'status_key' => $f->status,
                 'works_note' => WorkFileModel::workNote($breakdown[$f->id] ?? []),
+
+                /*
+                 * The same answer as columns, for the export.
+                 *
+                 * A sentence in a status cell reads well and sorts and filters
+                 * not at all. In a spreadsheet these are what someone wants:
+                 * every file with a transfer still pending, everything approved
+                 * last week. Kept off this screen, which has no room for three
+                 * more columns and says it in the cell above instead.
+                 */
+                ...$works,
                 'screenshot' => $f->approval_screenshot ? 'Approval screenshot on file' : null,
                 // The evidence itself. Approval is the one status that has to be
                 // evidenced, so the screenshot has to be reachable from the list
@@ -236,6 +254,11 @@ class WorkFileController extends Controller
                 ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold'],
                 ['key' => 'status', 'label' => 'Status', 'type' => 'badge',
                     'note' => 'works_note', 'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url'],
+                // Written to every export, drawn on no screen. See exportOnly
+                // in DataGrid, and workSplit() for what each holds.
+                ['key' => 'works_done', 'label' => 'Approved Works', 'exportOnly' => true],
+                ['key' => 'works_approved_on', 'label' => 'Approved On', 'exportOnly' => true],
+                ['key' => 'works_pending', 'label' => 'Pending Works', 'exportOnly' => true],
                 // A column of the word "Edit" is noise in a spreadsheet, and in the
                 // search box it is worse: every row matches anyone typing "edit".
                 ['key' => 'action', 'label' => 'Action', 'type' => 'link', 'linkTo' => 'edit_url',

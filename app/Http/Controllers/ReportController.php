@@ -58,6 +58,10 @@ class ReportController extends Controller
         // where it does. Fetched for the whole report in one query.
         $remarks = WorkFileModel::latestRemarks($rows->pluck('id')->all());
 
+        // The works behind each file, for the columns that reach a
+        // spreadsheet. One query for the whole report.
+        $breakdown = WorkFileModel::workBreakdown($rows->pluck('id')->all());
+
         // Grouped once here so the view only lays out what it is given.
         $groups = [];
         /*
@@ -146,6 +150,7 @@ class ReportController extends Controller
 
             foreach ($group['rows'] as $line) {
                 $row = $line['row'];
+                $split = WorkFileModel::workSplit($breakdown[$row->id] ?? []);
 
                 $reportRows[] = [
                     'id' => (int) $row->id,
@@ -168,6 +173,15 @@ class ReportController extends Controller
                     'counterparty' => $partyType === 'vendor' ? $row->customer_name : ($row->vendor_name ?: 'In-house'),
                     'status' => $statuses[$row->status] ?? $row->status,
                     'status_key' => $row->status,
+
+                    /*
+                     * Which works are through and which are not, as fields a
+                     * spreadsheet can sort and filter. A status of "Partly
+                     * Approved" says they disagree and never which way.
+                     */
+                    'works_done' => $split['done'],
+                    'works_approved_on' => $split['approved_on'],
+                    'works_pending' => $split['pending'],
                     // The latest note against the file: what is pending, or why it
                     // stands where it does.
                     'remark' => $line['remark'],
@@ -216,6 +230,11 @@ class ReportController extends Controller
                 ['key' => 'description', 'label' => 'Details'],
                 ['key' => 'counterparty', 'label' => $counterpartyLabel],
                 ['key' => 'status', 'label' => 'Status', 'type' => 'badge'],
+                // Exported, never drawn: the report is already thirteen
+                // columns wide. See exportOnly in DataGrid.
+                ['key' => 'works_done', 'label' => 'Approved Works', 'exportOnly' => true],
+                ['key' => 'works_approved_on', 'label' => 'Approved On', 'exportOnly' => true],
+                ['key' => 'works_pending', 'label' => 'Pending Works', 'exportOnly' => true],
                 ['key' => 'remark', 'label' => 'Remarks'],
                 ['key' => 'billed', 'label' => 'Billed', 'type' => 'money'],
                 ['key' => 'cost', 'label' => 'Cost', 'type' => 'money'],

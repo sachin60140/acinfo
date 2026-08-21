@@ -376,6 +376,9 @@
                 "cost:money",
                 "margin:balance",
                 "status:badge",
+                "works_done:text",
+                "works_approved_on:text",
+                "works_pending:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -406,7 +409,10 @@
                     "vendor": "string",
                     "vendor_url": "string",
                     "work_type": "string",
-                    "works_note": "null"
+                    "works_approved_on": "string",
+                    "works_done": "string",
+                    "works_note": "null",
+                    "works_pending": "string"
                 }
             },
             "title": "string",
@@ -431,6 +437,9 @@
                 "cost:money",
                 "margin:balance",
                 "status:badge",
+                "works_done:text",
+                "works_approved_on:text",
+                "works_pending:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -461,7 +470,10 @@
                     "vendor": "string",
                     "vendor_url": "string",
                     "work_type": "string",
-                    "works_note": "null"
+                    "works_approved_on": "string",
+                    "works_done": "string",
+                    "works_note": "null",
+                    "works_pending": "string"
                 }
             },
             "title": "string",
@@ -486,6 +498,9 @@
                 "cost:money",
                 "margin:balance",
                 "status:badge",
+                "works_done:text",
+                "works_approved_on:text",
+                "works_pending:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -514,6 +529,9 @@
                 "cost:money",
                 "margin:balance",
                 "status:badge",
+                "works_done:text",
+                "works_approved_on:text",
+                "works_pending:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -544,7 +562,10 @@
                     "vendor": "string",
                     "vendor_url": "string",
                     "work_type": "string",
-                    "works_note": "null"
+                    "works_approved_on": "string",
+                    "works_done": "string",
+                    "works_note": "null",
+                    "works_pending": "string"
                 }
             },
             "title": "string",
@@ -801,6 +822,9 @@
                 "description:text",
                 "counterparty:text",
                 "status:badge",
+                "works_done:text",
+                "works_approved_on:text",
+                "works_pending:text",
                 "remark:text",
                 "billed:money",
                 "cost:money",
@@ -828,7 +852,10 @@
                     "remark": "string",
                     "status": "string",
                     "status_key": "string",
-                    "work_type": "string"
+                    "work_type": "string",
+                    "works_approved_on": "string",
+                    "works_done": "string",
+                    "works_pending": "string"
                 }
             },
             "title": "string",
@@ -851,6 +878,9 @@
                 "description:text",
                 "counterparty:text",
                 "status:badge",
+                "works_done:text",
+                "works_approved_on:text",
+                "works_pending:text",
                 "remark:text",
                 "billed:money",
                 "cost:money",
@@ -878,7 +908,10 @@
                     "remark": "null",
                     "status": "string",
                     "status_key": "string",
-                    "work_type": "string"
+                    "work_type": "string",
+                    "works_approved_on": "string",
+                    "works_done": "string",
+                    "works_pending": "string"
                 }
             },
             "title": "string",

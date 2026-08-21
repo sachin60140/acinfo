@@ -40,13 +40,17 @@ import {
 const props = defineProps({
     /*
      * { key, label, type, sortable, exportable, searchable, hidden, width,
-     *   sub, note, subLinkTo, class, linkTo, newTab, sortBy }
+     *   sub, note, subLinkTo, class, linkTo, newTab, sortBy, exportOnly }
      *
      * type: text | money | balance | count | badge | link
      * sortBy   sort this column on another field's value — a date shown as
      *          dd-mm-yyyy sorts by day of the month unless pointed at the ISO one
      * note     a second quiet line of plain text, above sub — for a cell that
      *          has something to say as well as something to open
+     * exportOnly  kept out of the table but written to every export. For detail
+     *          a spreadsheet can sort and filter and a screen has no room for:
+     *          the works on a file, which are summarised in a cell here and
+     *          wanted a column each in Excel
      * newTab   open the link in a new tab. Only for somewhere outside the
      *          application: within it, a second tab loses the filters and the
      *          place in the list the reader was working in
@@ -101,7 +105,9 @@ const page = ref(1);
  */
 const reordered = ref(false);
 
-const shown = computed(() => props.columns.filter((c) => !c.hidden));
+// What the table draws. Hidden columns are internal; export-only ones are
+// real data that this screen has no room for.
+const shown = computed(() => props.columns.filter((c) => ! c.hidden && ! c.exportOnly));
 
 /* Searching runs over what a column exports, not what it displays, so a search
    matches what the reader can actually see rather than an internal id. */

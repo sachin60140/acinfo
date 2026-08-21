@@ -971,14 +971,14 @@ class WorkFileModel extends Model
      * file this way, against one query per file the other.
      */
     /**
-     * What state each file's works are in, keyed by file and then by status.
+     * The works on each file, in the order they were entered.
      *
-     * One query for a whole page of the list rather than one per row, and in
-     * the order the works were entered so the sentence built from it reads the
-     * same way twice.
+     * One query for a whole page of the list rather than one per row, and one
+     * shape for everything built from it: the sentence under the status badge
+     * and the columns that reach a spreadsheet both read this.
      *
      * @param  array<int>  $fileIds
-     * @return array<int, array<string, array<int, string>>>
+     * @return array<int, array<int, object>>  keyed by file: name, status, approved_on
      */
     public static function workBreakdown(array $fileIds): array
     {
@@ -990,16 +990,46 @@ class WorkFileModel extends Model
             ->join('work_type', 'work_type.id', '=', 'work_file_item.work_type_id')
             ->whereIn('work_file_item.work_file_id', $fileIds)
             ->orderBy('work_file_item.id')
-            ->select('work_file_item.work_file_id', 'work_file_item.status', 'work_type.name')
+            ->select(
+                'work_file_item.work_file_id',
+                'work_file_item.status',
+                'work_file_item.approved_on',
+                'work_type.name'
+            )
             ->get();
 
         $byFile = [];
 
         foreach ($rows as $row) {
-            $byFile[$row->work_file_id][$row->status][] = $row->name;
+            $byFile[$row->work_file_id][] = $row;
         }
 
         return $byFile;
+    }
+
+    /**
+     * The works settled one way, in the order they were entered.
+     *
+     * @param  array<int, object>  $works
+     * @return array<int, object>
+     */
+    private static function worksThat(array $works, string $status): array
+    {
+        return array_values(array_filter($works, fn ($work) => $work->status === $status));
+    }
+
+    /**
+     * Everything still in hand, whatever stage it has reached.
+     *
+     * @param  array<int, object>  $works
+     * @return array<int, object>
+     */
+    private static function worksOpen(array $works): array
+    {
+        return array_values(array_filter(
+            $works,
+            fn ($work) => ! in_array($work->status, [self::APPROVED, self::RETURNED, self::CANCELLED], true)
+        ));
     }
 
     /**
@@ -1014,62 +1044,70 @@ class WorkFileModel extends Model
      * agree — the badge beside it already says that, and repeating it on every
      * row would bury the rows where it matters.
      *
-     * @param  array<string, array<int, string>>  $byStatus
+     * @param  array<int, object>  $works
      */
-    public static function workNote(array $byStatus): ?string
+    public static function workNote(array $works): ?string
     {
-        if (count($byStatus) < 2) {
+        $states = array_unique(array_map(fn ($work) => $work->status, $works));
+
+        if (count($states) < 2) {
             return null;
         }
 
-        // Settled work is named by what happened to it; everything else is
-        // still in hand, whatever stage it has reached.
-        $settled = [
-            self::APPROVED => 'approved',
-            self::RETURNED => 'returned',
-            self::CANCELLED => 'cancelled',
-        ];
-
         $said = [];
-        $pending = [];
-
-        foreach ($byStatus as $status => $names) {
-            if (! isset($settled[$status])) {
-                $pending = array_merge($pending, $names);
-            }
-        }
 
         // Read in a fixed order, so the same folder does not describe itself
         // differently tomorrow because a work moved.
-        foreach ($settled as $status => $word) {
-            if (! empty($byStatus[$status])) {
-                $said[] = implode(', ', $byStatus[$status]).' '.$word;
+        foreach ([self::APPROVED => 'approved', self::RETURNED => 'returned', self::CANCELLED => 'cancelled'] as $status => $word) {
+            $named = self::names(self::worksThat($works, $status));
+
+            if ($named !== '') {
+                $said[] = $named.' '.$word;
             }
         }
 
-        if ($pending) {
-            $said[] = implode(', ', $pending).' pending';
+        $pending = self::names(self::worksOpen($works));
+
+        if ($pending !== '') {
+            $said[] = $pending.' pending';
         }
 
         return implode(' · ', $said);
     }
+
     /**
-     * How many works on a file are still waiting on a figure — one column per
-     * side, so a report can tell "nothing agreed" from "a figure of zero".
+     * The same answer as three fields rather than a sentence, for a
+     * spreadsheet — where a column can be sorted and filtered and a sentence
+     * cannot.
      *
-     * The folder's own total cannot answer this any more. A folder with a
-     * transfer priced at 1,200 and a hypothecation addition not priced at all
-     * totals 1,200, which is a number greater than zero — so the file read as
-     * fully priced, showed a margin against a cost that was still going to
-     * grow, and was chased by nothing.
+     * The dates line up with the names beside them, in the same order, so a
+     * folder approved a week apart reads across: "HPA, TR" against
+     * "21-08-2026, 28-08-2026".
      *
-     * Cancelled work is left out: it is not charged for and never will be
-     * priced, so it is not outstanding.
-     *
-     * The test inside is the one syncSide() uses to decide there is nothing to
-     * post — null, or zero or less. The two have to agree, or a work falls
-     * between them and is reported by neither.
+     * @param  array<int, object>  $works
+     * @return array{done: string, approved_on: string, pending: string}
      */
+    public static function workSplit(array $works): array
+    {
+        $approved = self::worksThat($works, self::APPROVED);
+
+        return [
+            'done' => self::names($approved),
+            'approved_on' => implode(', ', array_map(
+                fn ($work) => $work->approved_on ? date('d-m-Y', strtotime($work->approved_on)) : '—',
+                $approved
+            )),
+            'pending' => self::names(self::worksOpen($works)),
+        ];
+    }
+
+    /**
+     * @param  array<int, object>  $works
+     */
+    private static function names(array $works): string
+    {
+        return implode(', ', array_unique(array_map(fn ($work) => $work->name, $works)));
+    }
     private static function unpricedWorksColumn()
     {
         $cancelled = self::CANCELLED;

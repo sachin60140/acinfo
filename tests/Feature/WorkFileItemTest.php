@@ -859,16 +859,25 @@ class WorkFileItemTest extends TestCase
      */
     public function test_the_note_names_what_happened_to_each_work(): void
     {
-        $this->assertSame(
-            'HPA approved · TR cancelled · HPT pending',
-            WorkFileModel::workNote([
-                WorkFileModel::APPROVED => ['HPA'],
-                'file_dispatch' => ['HPT'],
-                WorkFileModel::CANCELLED => ['TR'],
-            ])
+        $work = fn (string $name, string $status, ?string $approved = null) => (object) [
+            'name' => $name,
+            'status' => $status,
+            'approved_on' => $approved,
+        ];
+
+        $mixed = [
+            $work('HPA', WorkFileModel::APPROVED, '2026-08-21'),
+            $work('HPT', 'file_dispatch'),
+            $work('TR', WorkFileModel::CANCELLED),
+        ];
+
+        $this->assertSame('HPA approved · TR cancelled · HPT pending', WorkFileModel::workNote($mixed));
+
+        $this->assertNull(
+            WorkFileModel::workNote([$work('HPA', WorkFileModel::APPROVED), $work('TR', WorkFileModel::APPROVED)]),
+            'they agree'
         );
 
-        $this->assertNull(WorkFileModel::workNote([WorkFileModel::APPROVED => ['HPA', 'TR']]), 'they agree');
         $this->assertNull(WorkFileModel::workNote([]), 'nothing to describe');
     }
     /**
@@ -1154,6 +1163,82 @@ class WorkFileItemTest extends TestCase
         // Two works received, neither priced by a vendor yet.
         $this->assertSame(2, (int) $listed->unpriced_works);
         $this->assertSame(0, (int) $listed->unbilled_works);
+    }
+    /**
+     * The same answer as three fields, for a spreadsheet — where a column can
+     * be sorted and filtered and a sentence cannot. The dates line up with the
+     * names beside them, so a folder approved a week apart reads across.
+     */
+    public function test_the_export_splits_the_works_into_columns(): void
+    {
+        $work = fn (string $name, string $status, ?string $approved = null) => (object) [
+            'name' => $name,
+            'status' => $status,
+            'approved_on' => $approved,
+        ];
+
+        $split = WorkFileModel::workSplit([
+            $work('HPA', WorkFileModel::APPROVED, '2026-08-21'),
+            $work('HPT', 'file_dispatch'),
+            $work('TR', WorkFileModel::APPROVED, '2026-08-28'),
+        ]);
+
+        $this->assertSame('HPA, TR', $split['done']);
+        $this->assertSame('21-08-2026, 28-08-2026', $split['approved_on'], 'in the same order as the names');
+        $this->assertSame('HPT', $split['pending']);
+
+        // Cancelled work is neither done nor pending: it is not being chased
+        // and it was not carried out.
+        $struck = WorkFileModel::workSplit([
+            $work('HPA', WorkFileModel::APPROVED, '2026-08-21'),
+            $work('TR', WorkFileModel::CANCELLED),
+        ]);
+
+        $this->assertSame('HPA', $struck['done']);
+        $this->assertSame('', $struck['pending']);
+    }
+
+    /**
+     * And through the screen, so the columns and the sentence beside them can
+     * never tell different stories.
+     */
+    public function test_the_list_exports_which_works_are_through(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0127');
+        $file->received_date = now()->subWeek()->toDateString();
+        $file->save();
+
+        [$done, $pending] = $file->items->all();
+        $approved = now()->subDay()->toDateString();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$done->id => WorkFileModel::APPROVED],
+            'approved_on' => [$done->id => $approved],
+            'screenshots' => [$done->id => UploadedFile::fake()->image('rto.jpg')],
+        ])->assertRedirect()->assertSessionMissing('error');
+
+        foreach ([route('workfile.index'), route('report.files')] as $url) {
+            $row = collect($this->getJson($url)->assertOk()->json('props.rows'))
+                ->firstWhere('id', $file->id);
+
+            $this->assertSame($done->workType->name, $row['works_done'], "$url names the work that is through");
+            $this->assertSame(date('d-m-Y', strtotime($approved)), $row['works_approved_on'], "$url dates it");
+            $this->assertSame($pending->workType->name, $row['works_pending'], "$url names what is left");
+        }
+
+        // Drawn on neither screen: both say it in the status cell instead.
+        $columns = collect($this->getJson(route('workfile.index'))->assertOk()->json('props.columns'));
+
+        foreach (['works_done', 'works_approved_on', 'works_pending'] as $key) {
+            $this->assertTrue(
+                (bool) ($columns->firstWhere('key', $key)['exportOnly'] ?? false),
+                "$key belongs in the export, not the table"
+            );
+        }
+
+        $done->refresh()->approval_screenshot && @unlink(public_path($done->refresh()->approval_screenshot));
     }
     private function vendor(): PartyModel
     {

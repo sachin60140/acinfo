@@ -3,6 +3,7 @@ import { createApp, nextTick, ref } from 'vue';
 import FilePreview from './components/FilePreview.vue';
 import DataGrid from './components/DataGrid.vue';
 import Loader from './components/Loader.vue';
+import { exportHeader, exportRows } from './exports';
 
 /*
  * The approval document opens over the page it was clicked on.
@@ -239,5 +240,57 @@ describe('the loading overlay', () => {
         expect(document.querySelector('.app-loader')).not.toBe(null);
 
         link.remove();
+    });
+});
+
+/*
+ * Detail a spreadsheet can use and a screen has no room for.
+ *
+ * "Partly Approved" says a folder's works disagree and never which way. In
+ * Excel the questions are "every file with a transfer still pending" and
+ * "everything approved last week", and neither can be asked of a sentence in a
+ * status cell — they need a column each.
+ */
+describe('export-only columns', () => {
+    const columns = [
+        { key: 'file_no', label: 'File No.' },
+        { key: 'status', label: 'Status', type: 'badge' },
+        { key: 'works_done', label: 'Approved Works', exportOnly: true },
+        { key: 'works_approved_on', label: 'Approved On', exportOnly: true },
+        { key: 'works_pending', label: 'Pending Works', exportOnly: true },
+        { key: 'action', label: 'Action', exportable: false },
+    ];
+
+    const rows = [{
+        id: 1,
+        file_no: 'F-16028',
+        status: 'Partly Approved',
+        status_key: 'partly_approved',
+        works_done: 'HPA',
+        works_approved_on: '21-08-2026',
+        works_pending: 'HPT, TR',
+        action: 'Edit',
+    }];
+
+    it('are kept out of the table', async () => {
+        const host = mount(DataGrid, { columns, rows, title: 'Work Files' });
+        await nextTick();
+
+        const headings = [...host.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+
+        expect(headings).toContain('Status');
+        expect(headings).not.toContain('Approved Works');
+        expect(headings).not.toContain('Pending Works');
+
+        // And the body keeps the same cell count the header promises.
+        expect(host.querySelectorAll('tbody tr td').length).toBe(headings.length);
+    });
+
+    it('are written to the export, in order, beside the status they explain', () => {
+        const header = exportHeader(columns);
+        const body = exportRows(columns, rows, { money: String, balance: String });
+
+        expect(header).toEqual(['File No.', 'Status', 'Approved Works', 'Approved On', 'Pending Works']);
+        expect(body[0]).toEqual(['F-16028', 'Partly Approved', 'HPA', '21-08-2026', 'HPT, TR']);
     });
 });
