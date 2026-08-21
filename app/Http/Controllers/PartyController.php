@@ -111,7 +111,7 @@ class PartyController extends Controller
 
                 // The name and the WhatsApp number both leave this page for
                 // somewhere read alongside it, so neither takes the list with it.
-                ['key' => 'name', 'label' => 'Name', 'type' => 'link', 'linkTo' => 'statement_url', 'newTab' => true, 'sub' => 'inactive_note'],
+                ['key' => 'name', 'label' => 'Name', 'type' => 'link', 'linkTo' => 'statement_url', 'sub' => 'inactive_note'],
                 ['key' => 'mobile', 'label' => 'Mobile', 'type' => 'link', 'linkTo' => 'mobile_url'],
                 ['key' => 'whatsapp', 'label' => 'WhatsApp', 'type' => 'link', 'linkTo' => 'whatsapp_url', 'newTab' => true, 'class' => 'wa-cell'],
                 ['key' => 'address', 'label' => 'Address'],
@@ -367,7 +367,7 @@ class PartyController extends Controller
                 // through rather than clicked out of: following the reference in
                 // this tab costs the reader their place in the run and the period
                 // they filtered to, both of which have to be set up again.
-                ['key' => 'ref_no', 'label' => 'Ref No.', 'type' => 'link', 'linkTo' => 'ref_url', 'newTab' => true],
+                ['key' => 'ref_no', 'label' => 'Ref No.', 'type' => 'link', 'linkTo' => 'ref_url'],
                 // The column colour says which side of the ledger it is; the cell
                 // dims itself on the side an entry did not fall on.
                 ['key' => 'debit', 'label' => 'Debit', 'type' => 'money', 'class' => 'ui-money--dr'],

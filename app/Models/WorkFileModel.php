@@ -941,6 +941,89 @@ class WorkFileModel extends Model
      * query-builder reports that read hundreds of rows at once — one label per
      * file this way, against one query per file the other.
      */
+    /**
+     * What state each file's works are in, keyed by file and then by status.
+     *
+     * One query for a whole page of the list rather than one per row, and in
+     * the order the works were entered so the sentence built from it reads the
+     * same way twice.
+     *
+     * @param  array<int>  $fileIds
+     * @return array<int, array<string, array<int, string>>>
+     */
+    public static function workBreakdown(array $fileIds): array
+    {
+        if (! $fileIds) {
+            return [];
+        }
+
+        $rows = DB::table('work_file_item')
+            ->join('work_type', 'work_type.id', '=', 'work_file_item.work_type_id')
+            ->whereIn('work_file_item.work_file_id', $fileIds)
+            ->orderBy('work_file_item.id')
+            ->select('work_file_item.work_file_id', 'work_file_item.status', 'work_type.name')
+            ->get();
+
+        $byFile = [];
+
+        foreach ($rows as $row) {
+            $byFile[$row->work_file_id][$row->status][] = $row->name;
+        }
+
+        return $byFile;
+    }
+
+    /**
+     * "HPA approved · HPT, TR pending" — which way a folder's works disagree.
+     *
+     * "Partly Approved" says that they do, which is the thing worth knowing
+     * from across the room, and then the next question is always which. On the
+     * list there is no room for a stage each, so everything still in hand reads
+     * as pending; the board is where the stages are.
+     *
+     * Nothing is returned for a folder of one work, or one whose works all
+     * agree — the badge beside it already says that, and repeating it on every
+     * row would bury the rows where it matters.
+     *
+     * @param  array<string, array<int, string>>  $byStatus
+     */
+    public static function workNote(array $byStatus): ?string
+    {
+        if (count($byStatus) < 2) {
+            return null;
+        }
+
+        // Settled work is named by what happened to it; everything else is
+        // still in hand, whatever stage it has reached.
+        $settled = [
+            self::APPROVED => 'approved',
+            self::RETURNED => 'returned',
+            self::CANCELLED => 'cancelled',
+        ];
+
+        $said = [];
+        $pending = [];
+
+        foreach ($byStatus as $status => $names) {
+            if (! isset($settled[$status])) {
+                $pending = array_merge($pending, $names);
+            }
+        }
+
+        // Read in a fixed order, so the same folder does not describe itself
+        // differently tomorrow because a work moved.
+        foreach ($settled as $status => $word) {
+            if (! empty($byStatus[$status])) {
+                $said[] = implode(', ', $byStatus[$status]).' '.$word;
+            }
+        }
+
+        if ($pending) {
+            $said[] = implode(', ', $pending).' pending';
+        }
+
+        return implode(' · ', $said);
+    }
     private static function workLabelColumn()
     {
         $cancelled = self::CANCELLED;

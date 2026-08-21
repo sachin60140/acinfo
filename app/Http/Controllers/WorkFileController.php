@@ -94,6 +94,13 @@ class WorkFileController extends Controller
         $closedCount = 0;
         $rows = [];
 
+        /*
+         * What each folder's works are doing. "Partly Approved" says they
+         * disagree; the next question is always which, and this answers it
+         * without opening the file. Fetched for the whole page in one query.
+         */
+        $breakdown = WorkFileModel::workBreakdown($files->pluck('id')->all());
+
         foreach ($files as $f) {
             // Decided once and read twice: a closed file is kept out of the
             // count above and greyed in the list below.
@@ -157,6 +164,7 @@ class WorkFileController extends Controller
                 'status' => WorkFileModel::STATUSES[$f->status] ?? $f->status,
                 // The badge colours itself from the raw key, not the label.
                 'status_key' => $f->status,
+                'works_note' => WorkFileModel::workNote($breakdown[$f->id] ?? []),
                 'screenshot' => $f->approval_screenshot ? 'Approval screenshot on file' : null,
                 // The evidence itself. Approval is the one status that has to be
                 // evidenced, so the screenshot has to be reachable from the list
@@ -200,17 +208,17 @@ class WorkFileController extends Controller
                 // A party statement is opened to be read against this list, and
                 // this list is behind a status and date filter — taking the tab
                 // with it means setting the filter again to come back.
-                ['key' => 'customer', 'label' => 'Customer', 'type' => 'link', 'linkTo' => 'customer_url', 'newTab' => true],
+                ['key' => 'customer', 'label' => 'Customer', 'type' => 'link', 'linkTo' => 'customer_url'],
                 // Debit green, credit red — the same two directions the rest of
                 // the ledger uses, carried by the class the sheet already defines.
                 ['key' => 'charged', 'label' => 'Charged', 'type' => 'money', 'class' => 'dr', 'sub' => 'charged_was'],
-                ['key' => 'vendor', 'label' => 'Vendor', 'type' => 'link', 'linkTo' => 'vendor_url', 'newTab' => true],
+                ['key' => 'vendor', 'label' => 'Vendor', 'type' => 'link', 'linkTo' => 'vendor_url'],
                 ['key' => 'cost', 'label' => 'Cost', 'type' => 'money', 'class' => 'cr', 'sub' => 'cost_was'],
                 // A margin has a side: earned reads Dr, lost reads Cr, and neither
                 // needs a minus sign to be read correctly.
                 ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold'],
                 ['key' => 'status', 'label' => 'Status', 'type' => 'badge',
-                    'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url'],
+                    'note' => 'works_note', 'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url'],
                 // A column of the word "Edit" is noise in a spreadsheet, and in the
                 // search box it is worse: every row matches anyone typing "edit".
                 ['key' => 'action', 'label' => 'Action', 'type' => 'link', 'linkTo' => 'edit_url',

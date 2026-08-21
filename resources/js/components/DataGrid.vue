@@ -32,13 +32,16 @@ import {
 const props = defineProps({
     /*
      * { key, label, type, sortable, exportable, searchable, hidden, width,
-     *   sub, subLinkTo, class, linkTo, newTab, sortBy }
+     *   sub, note, subLinkTo, class, linkTo, newTab, sortBy }
      *
      * type: text | money | balance | count | badge | link
      * sortBy   sort this column on another field's value — a date shown as
      *          dd-mm-yyyy sorts by day of the month unless pointed at the ISO one
-     * newTab   open the link in a new tab, for anything opened to be read beside
-     *          the list rather than instead of it
+     * note     a second quiet line of plain text, above sub — for a cell that
+     *          has something to say as well as something to open
+     * newTab   open the link in a new tab. Only for somewhere outside the
+     *          application: within it, a second tab loses the filters and the
+     *          place in the list the reader was working in
      * searchable: false  keep a fixed label like "Edit" out of the search text,
      *          or every row matches the word
      */
@@ -604,8 +607,13 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                 </span>
                                 <span v-else :class="moneyClass(row, column)">{{ display(row, column) }}</span>
 
-                                <!-- A quiet second line, which may itself be a link:
-                                     an attachment is worth naming and worth opening. -->
+                                <!-- What else the cell has to say. The note is a
+                                     statement, the sub may be a link: an attachment
+                                     is worth naming and worth opening. -->
+                                <div v-if="column.note && row[column.note]" class="ui-sub">
+                                    {{ row[column.note] }}
+                                </div>
+
                                 <div v-if="column.sub && row[column.sub]" class="ui-sub">
                                     <a
                                         v-if="column.subLinkTo && row[column.subLinkTo]"

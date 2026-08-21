@@ -804,6 +804,73 @@ class WorkFileItemTest extends TestCase
 
         $done->refresh()->approval_screenshot && @unlink(public_path($done->refresh()->approval_screenshot));
     }
+    /**
+     * The list says which way a partly approved folder's works disagree.
+     *
+     * "Partly Approved" is the thing worth knowing from across the room, and
+     * the question straight after it is always which one came through. Reading
+     * it off the list beats opening the file to find out.
+     */
+    public function test_the_list_says_which_works_are_through(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0117');
+        [$done, $pending] = $file->items->all();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$done->id => WorkFileModel::APPROVED],
+            'approved_on' => [$done->id => now()->toDateString()],
+            'screenshots' => [$done->id => UploadedFile::fake()->image('rto.jpg')],
+        ])->assertRedirect();
+
+        $row = collect($this->getJson(route('workfile.index'))->assertOk()->json('props.rows'))
+            ->firstWhere('id', $file->id);
+
+        $this->assertSame(
+            $done->workType->name.' approved · '.$pending->workType->name.' pending',
+            $row['works_note']
+        );
+
+        $done->refresh()->approval_screenshot && @unlink(public_path($done->refresh()->approval_screenshot));
+    }
+
+    /**
+     * And says nothing when there is nothing to add. A folder of one work, or
+     * one whose works all agree, is described by its badge — repeating that on
+     * every row would bury the rows where it matters.
+     */
+    public function test_a_folder_whose_works_agree_says_nothing_extra(): void
+    {
+        $this->actingAs($this->admin());
+
+        $several = $this->twoWorkFile('BR01ZZ0118');
+        $single = $this->file();
+
+        $rows = collect($this->getJson(route('workfile.index'))->assertOk()->json('props.rows'));
+
+        $this->assertNull($rows->firstWhere('id', $several->id)['works_note'], 'both still in hand');
+        $this->assertNull($rows->firstWhere('id', $single->id)['works_note'], 'only one work');
+    }
+
+    /**
+     * Cancelled and returned work is named by what happened to it, not lumped
+     * in with what is still being chased.
+     */
+    public function test_the_note_names_what_happened_to_each_work(): void
+    {
+        $this->assertSame(
+            'HPA approved · TR cancelled · HPT pending',
+            WorkFileModel::workNote([
+                WorkFileModel::APPROVED => ['HPA'],
+                'file_dispatch' => ['HPT'],
+                WorkFileModel::CANCELLED => ['TR'],
+            ])
+        );
+
+        $this->assertNull(WorkFileModel::workNote([WorkFileModel::APPROVED => ['HPA', 'TR']]), 'they agree');
+        $this->assertNull(WorkFileModel::workNote([]), 'nothing to describe');
+    }
     private function vendor(): PartyModel
     {
         $vendor = new PartyModel;

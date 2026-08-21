@@ -286,10 +286,6 @@ class AuthController extends Controller
                     'label' => 'Statement',
                     'type' => 'link',
                     'linkTo' => 'statement_url',
-                    // A statement is read beside the list it was opened from,
-                    // which is what the old link did and what anyone reconciling
-                    // accounts needs.
-                    'newTab' => true,
                     'sortable' => false,
                     'searchable' => false,
                     'exportable' => false,

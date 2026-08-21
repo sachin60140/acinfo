@@ -215,13 +215,13 @@
             "timeline": {
                 "list_of": {
                     "date": "string",
-                    "from": "null",
+                    "from": "string",
                     "id": "number",
                     "kind": "string",
                     "remark": "null",
                     "time": "string",
                     "to": "string",
-                    "user": "null"
+                    "user": "string"
                 }
             },
             "values": {
@@ -405,7 +405,8 @@
                     "status_key": "string",
                     "vendor": "string",
                     "vendor_url": "string",
-                    "work_type": "string"
+                    "work_type": "string",
+                    "works_note": "string"
                 }
             },
             "title": "string",
@@ -459,7 +460,8 @@
                     "status_key": "string",
                     "vendor": "string",
                     "vendor_url": "string",
-                    "work_type": "string"
+                    "work_type": "string",
+                    "works_note": "string"
                 }
             },
             "title": "string",
@@ -541,7 +543,8 @@
                     "status_key": "string",
                     "vendor": "string",
                     "vendor_url": "string",
-                    "work_type": "string"
+                    "work_type": "string",
+                    "works_note": "string"
                 }
             },
             "title": "string",
