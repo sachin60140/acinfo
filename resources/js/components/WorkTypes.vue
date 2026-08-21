@@ -688,6 +688,17 @@ const sortIcon = (key) => {
 }
 
 /* Says why the row has no delete, so nobody goes looking for one. */
+/*
+ * Deleting a work type cannot be undone, so on a phone it is a target rather
+ * than a word to aim at between two others.
+ */
+@media (pointer: coarse) {
+    .wt-delete {
+        min-height: var(--tap);
+        padding: 0 var(--s-2);
+    }
+}
+
 .wt-locked {
     cursor: help;
     white-space: nowrap;

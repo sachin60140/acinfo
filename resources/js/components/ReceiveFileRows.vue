@@ -673,6 +673,27 @@ watch(total, (value) => {
     outline-offset: 1px;
 }
 
+/*
+ * Both of these are small on a mouse and too small on a thumb. Removing a work
+ * or a whole file takes a charge off the batch, so they are the last controls
+ * that should be easy to miss and hit by accident in turn.
+ */
+@media (pointer: coarse) {
+    .rcv-work__remove {
+        height: var(--tap);
+        width: var(--tap);
+    }
+
+    .rcv-work {
+        grid-template-columns: minmax(0, 1fr) 10.5rem var(--tap);
+    }
+
+    .rcv-file__remove,
+    .rcv-past__head {
+        min-height: var(--tap);
+    }
+}
+
 .rcv-works__add {
     align-self: flex-start;
 }
@@ -807,7 +828,7 @@ watch(total, (value) => {
     /* The amount drops under the work rather than being squeezed beside it,
        and the remove button keeps its own corner. */
     .rcv-work {
-        grid-template-columns: minmax(0, 1fr) 2.25rem;
+        grid-template-columns: minmax(0, 1fr) minmax(2.25rem, auto);
     }
 
     .rcv-work__amount {

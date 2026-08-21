@@ -197,6 +197,18 @@ onBeforeUnmount(unbind);
     outline-offset: 2px;
 }
 
+/*
+ * A thumb, not a mouse pointer. The design system sets 44px as the smallest
+ * anything interactive may be on touch, and a 36px cross in the corner of a
+ * dialog is exactly the control that rule exists for.
+ */
+@media (pointer: coarse) {
+    .preview__close {
+        height: var(--tap);
+        width: var(--tap);
+    }
+}
+
 .preview__body {
     align-items: center;
     background: var(--n-050, #f8fafc);
