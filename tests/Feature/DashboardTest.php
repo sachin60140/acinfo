@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\PartyLedgerModel;
 use App\Models\PartyModel;
 use App\Models\User;
+use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -228,6 +229,21 @@ class DashboardTest extends TestCase
         $customer = $this->party('customer', '9000000403');
         $this->entry($customer->id, 'debit', 750);
 
+        /*
+         * Every one of these screens draws a table of work, and four of them
+         * show an empty state instead when they have none to draw — correctly,
+         * since there is nothing to put in a grid.
+         *
+         * So the work is made here rather than hoped for. This ran against
+         * whatever the database happened to hold, and passed for months until
+         * the last unassigned file was given to a vendor: then Give to Vendor
+         * had nothing to offer, showed its empty state, and the test called a
+         * working screen broken.
+         */
+        $vendor = $this->party('vendor', '9000000405');
+        $this->workFile($customer->id);
+        $this->workFile($customer->id, $vendor->id);
+
         $screens = [
             'admin/parties/customer',
             'admin/party/statement/'.$customer->id,
@@ -251,6 +267,43 @@ class DashboardTest extends TestCase
         }
     }
 
+    /**
+     * A file with one work on it, the way receiving writes it: the folder, and
+     * a row saying what the papers are for.
+     */
+    private function workFile(int $customerId, ?int $vendorId = null): WorkFileModel
+    {
+        $type = WorkTypeModel::where('is_active', 1)->first();
+
+        if (! $type) {
+            $type = new WorkTypeModel;
+            $type->name = 'Mount Work '.uniqid();
+            $type->is_active = 1;
+            $type->save();
+        }
+
+        $file = new WorkFileModel;
+        $file->file_no = 'F-MOUNT-'.uniqid();
+        $file->received_date = now()->toDateString();
+        $file->work_type_id = $type->id;
+        $file->customer_id = $customerId;
+        $file->customer_amount = 1000;
+        $file->vendor_id = $vendorId;
+        $file->vendor_amount = $vendorId ? 800 : null;
+        $file->vendor_date = $vendorId ? now()->toDateString() : null;
+        $file->status = $vendorId ? WorkFileModel::DISPATCHED : 'in_office';
+        $file->save();
+
+        $item = new WorkFileItemModel;
+        $item->work_file_id = $file->id;
+        $item->work_type_id = $file->work_type_id;
+        $item->customer_amount = $file->customer_amount;
+        $item->vendor_amount = $file->vendor_amount;
+        $item->status = $file->status;
+        $item->save();
+
+        return $file;
+    }
     /**
      * A DataTables table must never contain a body row with fewer cells than
      * the header — it stops the table initialising and throws "Incorrect column

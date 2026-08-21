@@ -53,10 +53,60 @@ class ScreenPropsTest extends TestCase
     }
 
     /**
+     * Work for the screens that only draw a grid when they have some.
+     *
+     * Give to Vendor, the two return screens and the board all show an empty
+     * state instead of a table when there is nothing to put in one — correctly,
+     * and it mounts nothing. This test ran against whatever the database
+     * happened to hold and passed for months, until the last unassigned file
+     * was given to a vendor: then Give to Vendor had nothing to offer and a
+     * working screen was recorded as having lost its component.
+     *
+     * Rolled back with everything else; see DatabaseTransactions above.
+     */
+    private function seedWork(): void
+    {
+        $customer = \App\Models\PartyModel::where('party_type', 'customer')->where('is_active', 1)->first();
+        $vendor = \App\Models\PartyModel::where('party_type', 'vendor')->where('is_active', 1)->first();
+        $type = \App\Models\WorkTypeModel::where('is_active', 1)->first();
+
+        if (! $customer || ! $type) {
+            return;
+        }
+
+        // One still in hand and unassigned, one out with a vendor: between them
+        // every screen below has a row to draw.
+        foreach ([null, $vendor?->id] as $vendorId) {
+            $file = new \App\Models\WorkFileModel;
+            $file->file_no = 'F-PROPS-'.uniqid();
+            $file->received_date = now()->toDateString();
+            $file->registration_no = 'BR01PR'.random_int(1000, 9999);
+            $file->description = 'Props fixture';
+            $file->work_type_id = $type->id;
+            $file->customer_id = $customer->id;
+            $file->customer_amount = 1000;
+            $file->vendor_id = $vendorId;
+            $file->vendor_amount = $vendorId ? 800 : null;
+            $file->vendor_date = $vendorId ? now()->toDateString() : null;
+            $file->status = $vendorId ? \App\Models\WorkFileModel::DISPATCHED : 'in_office';
+            $file->save();
+
+            $item = new \App\Models\WorkFileItemModel;
+            $item->work_file_id = $file->id;
+            $item->work_type_id = $file->work_type_id;
+            $item->customer_amount = $file->customer_amount;
+            $item->vendor_amount = $file->vendor_amount;
+            $item->status = $file->status;
+            $item->save();
+        }
+    }
+    /**
      * Every screen that mounts something, with a URL that has data behind it.
      */
     private function screens(): array
     {
+        $this->seedWork();
+
         $party = \App\Models\PartyModel::first();
         $file = \App\Models\WorkFileModel::first();
         $client = \Illuminate\Support\Facades\DB::table('client')->first();

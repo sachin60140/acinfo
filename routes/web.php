@@ -62,6 +62,12 @@ Route::group(['middleware' => 'admin'], function () {
 Route::group(['middleware' => 'admin'], function () {
     Route::match(['get', 'post'], 'admin/work-types', [WorkTypeController::class, 'index'])->name('worktype.index');
 
+    /*
+     * Above the {id} route, which would otherwise swallow it: 'delete' reads
+     * as an id and finds no work type by that name.
+     */
+    Route::post('admin/work-types/{id}/delete', [WorkTypeController::class, 'destroy'])->name('worktype.delete');
+
     Route::match(['get', 'post'], 'admin/work-types/{id}', [WorkTypeController::class, 'index'])->name('worktype.edit');
 
     Route::get('admin/files', [WorkFileController::class, 'index'])->name('workfile.index');

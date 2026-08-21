@@ -871,6 +871,95 @@ class WorkFileItemTest extends TestCase
         $this->assertNull(WorkFileModel::workNote([WorkFileModel::APPROVED => ['HPA', 'TR']]), 'they agree');
         $this->assertNull(WorkFileModel::workNote([]), 'nothing to describe');
     }
+    /**
+     * A work type nobody has used can be removed outright.
+     *
+     * One added by mistake, or one tried and abandoned, is clutter in every
+     * dropdown on the system until it goes.
+     */
+    public function test_an_unused_work_type_can_be_deleted(): void
+    {
+        $this->actingAs($this->admin());
+
+        $spare = new WorkTypeModel;
+        $spare->name = 'Spare Work '.uniqid();
+        $spare->is_active = 1;
+        $spare->save();
+
+        $this->post(route('worktype.delete', $spare->id))->assertRedirect();
+
+        $this->assertNull(WorkTypeModel::find($spare->id));
+    }
+
+    /**
+     * One with work behind it cannot. Those files say they are for it, and the
+     * report and the customer's own statement print its name — deleting it
+     * takes that name off all three.
+     */
+    public function test_a_work_type_in_use_cannot_be_deleted(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->file();
+
+        $this->post(route('worktype.delete', $this->workType->id))
+            ->assertSessionHas('error', fn ($error) => str_contains($error, 'cannot be deleted')
+                && str_contains($error, 'Switch it off instead'));
+
+        $this->assertNotNull(WorkTypeModel::find($this->workType->id), 'still there');
+        $this->assertNotNull($file->refresh(), 'and so is the file that names it');
+    }
+
+    /**
+     * Including one used only by the second work on a folder. The folder names
+     * its first work and nothing else, so counting folders would report that
+     * type as unused and let it be deleted out from under a live file.
+     */
+    public function test_a_type_used_by_a_second_work_cannot_be_deleted(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0119');
+        $second = $file->items->last();
+
+        $this->assertNotSame(
+            (int) $file->work_type_id,
+            (int) $second->work_type_id,
+            'the folder does not name this one'
+        );
+
+        $this->post(route('worktype.delete', $second->work_type_id))
+            ->assertSessionHas('error', fn ($error) => str_contains($error, 'cannot be deleted'));
+
+        $this->assertNotNull(WorkTypeModel::find($second->work_type_id));
+    }
+
+    /**
+     * The screen offers delete from the same count the server refuses on, so
+     * the two cannot disagree about which types are safe.
+     */
+    public function test_the_screen_offers_delete_only_where_the_server_allows_it(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0120');
+
+        $spare = new WorkTypeModel;
+        $spare->name = 'Spare Work '.uniqid();
+        $spare->is_active = 1;
+        $spare->save();
+
+        $types = collect($this->getJson(route('worktype.index'))->assertOk()->json('props.types'))
+            ->keyBy('id');
+
+        $this->assertSame(0, $types[$spare->id]['file_count'], 'nothing booked against it');
+
+        foreach ($file->items as $item) {
+            $this->assertGreaterThan(0, $types[$item->work_type_id]['file_count'], 'work is booked against it');
+        }
+
+        $this->assertNotEmpty($types[$spare->id]['delete_url']);
+    }
     private function vendor(): PartyModel
     {
         $vendor = new PartyModel;

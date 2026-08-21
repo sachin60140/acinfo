@@ -26,6 +26,21 @@ const props = defineProps({
 const editing = computed(() => props.editingId !== null);
 
 /*
+ * The type waiting to be confirmed, or null. Deleting is offered only where
+ * there is nothing to lose, and asked for anyway: a list of short codes — HPT,
+ * HPA, TR — is easy to mis-click, and this one cannot be undone.
+ */
+const deleting = ref(null);
+
+function askDelete(type) {
+    deleting.value = type;
+}
+
+const lockedReason = (type) =>
+    `${type.file_count} ${type.file_count === 1 ? 'work is' : 'works are'} booked against this type. `
+    + 'Switch it off instead — it stops being offered for new files and the old ones still read correctly.';
+
+/*
  * The form starts from what the server sent, which is the stored row normally
  * and what was typed after a failed submission — a bounced form must not
  * quietly revert a change the user made.
@@ -398,13 +413,58 @@ const sortIcon = (key) => {
                                     </td>
 
                                     <td data-label="Action" class="wt-action">
-                                        <a :href="type.edit_url" class="ui-link">Edit</a>
+                                        <div class="wt-actions">
+                                            <a :href="type.edit_url" class="ui-link">Edit</a>
+
+                                            <!--
+                                                Offered only for a type nothing has been
+                                                booked against. A type with work behind it
+                                                is what those files say they are for, and
+                                                deleting it would take that name off the
+                                                report and off the customer's statement.
+                                                Switching it off is what does the job, and
+                                                is said here rather than found out by
+                                                pressing a button that refuses.
+                                            -->
+                                            <button
+                                                v-if="!type.file_count"
+                                                type="button"
+                                                class="wt-delete"
+                                                @click="askDelete(type)">
+                                                Delete
+                                            </button>
+                                            <span v-else class="ui-hint wt-locked" :title="lockedReason(type)">
+                                                <i class="bi bi-lock"></i> in use
+                                            </span>
+                                        </div>
                                     </td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
 
+                    <!--
+                        Asked before it happens, and named: a list of short codes
+                        is easy to mis-click, and this one cannot be undone.
+                    -->
+                    <div v-if="deleting" class="wt-confirm">
+                        <div class="wt-confirm__body">
+                            <h3 class="wt-confirm__title">Delete "{{ deleting.name }}"?</h3>
+                            <p class="wt-confirm__text">
+                                Nothing has been booked against it, so nothing loses its name.
+                                This cannot be undone.
+                            </p>
+                            <div class="wt-confirm__actions">
+                                <button type="button" class="ui-btn" @click="deleting = null">Cancel</button>
+                                <form method="POST" :action="deleting.delete_url">
+                                    <input type="hidden" name="_token" :value="csrf">
+                                    <button type="submit" class="ui-btn ui-btn--danger">
+                                        <i class="bi bi-trash"></i> Delete work type
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
                     <div class="ui-card__foot">
                         <span class="ui-hint">{{ info }}</span>
 
@@ -592,6 +652,78 @@ const sortIcon = (key) => {
 .wt .wt-table th.wt-action,
 .wt .wt-table td.wt-action {
     text-align: right;
+}
+
+/* Edit and delete on one line, pushed to the right edge the column sits on. */
+.wt-actions {
+    align-items: center;
+    display: inline-flex;
+    gap: var(--s-3);
+}
+
+/*
+ * A link, not a button: it sits beside Edit and does the same kind of thing —
+ * it opens a question. Coloured for what it leads to, and never the first
+ * thing the eye lands on in a row of them.
+ */
+.wt-delete {
+    background: none;
+    border: 0;
+    color: var(--cr-600);
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.wt-delete:hover {
+    color: var(--cr-700);
+}
+
+.wt-delete:focus-visible {
+    border-radius: var(--r-sm);
+    outline: 2px solid var(--cr-600);
+    outline-offset: 2px;
+}
+
+/* Says why the row has no delete, so nobody goes looking for one. */
+.wt-locked {
+    cursor: help;
+    white-space: nowrap;
+}
+
+/* The confirmation. Inside the card rather than over the whole page: it is
+   about one row of this list and belongs where that row is. */
+.wt-confirm {
+    background: var(--cr-050);
+    border-top: 1px solid var(--cr-600);
+    padding: var(--s-4) var(--s-5);
+}
+
+.wt-confirm__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+}
+
+.wt-confirm__title {
+    color: var(--cr-700);
+    font-size: var(--t-md);
+    font-weight: 700;
+    margin: 0;
+}
+
+.wt-confirm__text {
+    color: var(--n-700);
+    margin: 0;
+    max-width: 52ch;
+}
+
+.wt-confirm__actions {
+    display: flex;
+    gap: var(--s-2);
+    margin-top: var(--s-2);
 }
 
 /* Vue drops the whitespace between the name and the badge, so the gap between

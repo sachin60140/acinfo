@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\WorkFileItemModel;
+use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
 use App\Support\Screen;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 /**
@@ -12,6 +15,39 @@ use Illuminate\Validation\Rule;
  */
 class WorkTypeController extends Controller
 {
+    /**
+     * Remove a work type outright.
+     *
+     * Only one nothing has ever been booked against. A type with work behind it
+     * is what those files say they are for: delete it and the list, the report
+     * and the customer's own statement lose the name of the thing they were
+     * charged for. That is what deactivating is for, and it is offered instead.
+     *
+     * Counted against the works rather than the folders, because a folder holds
+     * several and names only the first — a type used by the second work on a
+     * file would otherwise read as one nobody had ever used.
+     */
+    public function destroy(Request $req, $id)
+    {
+        $type = WorkTypeModel::findOrFail($id);
+
+        $works = WorkFileItemModel::where('work_type_id', $type->id)->count();
+        $files = WorkFileModel::where('work_type_id', $type->id)->count();
+
+        if ($works || $files) {
+            $held = $works ?: $files;
+
+            return back()->with('error', 'Work type "'.$type->name.'" cannot be deleted: '
+                .$held.' '.Str::plural('work', $held).' '.($held === 1 ? 'is' : 'are').' booked against it. '
+                .'Switch it off instead — it stops being offered for new files and the old ones still read correctly.');
+        }
+
+        $name = $type->name;
+        $type->delete();
+
+        return redirect()->route('worktype.index')
+            ->with('success', 'Work type "'.$name.'" deleted.');
+    }
     public function index(Request $req, $id = null)
     {
         $editing = $id ? WorkTypeModel::findOrFail($id) : null;
@@ -65,6 +101,7 @@ class WorkTypeController extends Controller
                 'file_count' => (int) $type->file_count,
                 'billed_total' => (float) $type->billed_total,
                 'edit_url' => route('worktype.edit', $type->id),
+                'delete_url' => route('worktype.delete', $type->id),
             ])->values(),
         ];
 
