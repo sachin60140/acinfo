@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, nextTick, ref } from 'vue';
 import FilePreview from './components/FilePreview.vue';
 import DataGrid from './components/DataGrid.vue';
+import Loader from './components/Loader.vue';
 
 /*
  * The approval document opens over the page it was clicked on.
@@ -176,5 +177,67 @@ describe('the files list', () => {
 
         expect(document.querySelector('.preview__title').textContent.trim())
             .toBe('Approval screenshot on file');
+    });
+});
+
+/*
+ * The loading overlay and a link the page handles itself.
+ *
+ * The overlay is raised on any click heading for another page, and taken down
+ * when that page arrives. A click the page cancels never goes anywhere, so
+ * nothing ever took it down again: opening the approval screenshot left the
+ * spinner sitting over the list, and closing the dialog revealed it still
+ * there.
+ */
+describe('the loading overlay', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    function clickLink(onClick) {
+        const link = document.createElement('a');
+        link.href = '/admin/files';
+        link.textContent = 'Somewhere';
+
+        if (onClick) {
+            link.addEventListener('click', onClick);
+        }
+
+        document.body.appendChild(link);
+        link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        return link;
+    }
+
+    it('stays down for a click the page cancels', async () => {
+        mount(Loader, {});
+        await nextTick();
+
+        const link = clickLink((event) => event.preventDefault());
+
+        vi.advanceTimersByTime(1000);
+        await nextTick();
+
+        expect(document.querySelector('.app-loader')).toBe(null);
+
+        link.remove();
+    });
+
+    it('still comes up for a click that really is going somewhere', async () => {
+        mount(Loader, {});
+        await nextTick();
+
+        const link = clickLink(null);
+
+        vi.advanceTimersByTime(1000);
+        await nextTick();
+
+        expect(document.querySelector('.app-loader')).not.toBe(null);
+
+        link.remove();
     });
 });

@@ -37,6 +37,12 @@ function hide() {
 function onSubmit(event) {
     const form = event.target;
 
+    // Cancelled by the page itself, so nothing is going anywhere. See the note
+    // on the listeners below.
+    if (event.defaultPrevented) {
+        return;
+    }
+
     // A form that failed the browser's own validation never left the page.
     if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
         return;
@@ -46,6 +52,17 @@ function onSubmit(event) {
 }
 
 function onNavigate(event) {
+    /*
+     * A link the page handles itself is not a navigation.
+     *
+     * The approval screenshot opens in a dialog over the list, so its click is
+     * cancelled and nothing unloads — and nothing ever took the overlay back
+     * down. Closing the dialog left the spinner sitting over the page.
+     */
+    if (event.defaultPrevented) {
+        return;
+    }
+
     const link = event.target.closest('a');
 
     if (!link) {
@@ -79,8 +96,14 @@ function onNavigate(event) {
 }
 
 onMounted(() => {
-    document.addEventListener('submit', onSubmit, true);
-    document.addEventListener('click', onNavigate, true);
+    /*
+     * Bubble, not capture. In capture these run before the element's own
+     * handler, so a click the page is about to cancel still looks like a
+     * navigation — which is exactly how the overlay came to be raised for one
+     * that never happened.
+     */
+    document.addEventListener('submit', onSubmit);
+    document.addEventListener('click', onNavigate);
     // Coming back via the browser's back button restores the old page from
     // cache with the overlay still up, so it has to be cleared explicitly.
     window.addEventListener('pageshow', hide);
@@ -102,8 +125,8 @@ function onVisitStart() {
 }
 
 onBeforeUnmount(() => {
-    document.removeEventListener('submit', onSubmit, true);
-    document.removeEventListener('click', onNavigate, true);
+    document.removeEventListener('submit', onSubmit);
+    document.removeEventListener('click', onNavigate);
     window.removeEventListener('pageshow', hide);
     window.removeEventListener('pagehide', hide);
     document.removeEventListener('acinfo:visit-start', onVisitStart);
