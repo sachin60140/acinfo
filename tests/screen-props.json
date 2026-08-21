@@ -111,9 +111,15 @@
                     "description": "string",
                     "file_no": "string",
                     "id": "number",
-                    "received_date": "string",
-                    "vendor_rate": "null",
-                    "work_type": "string"
+                    "items": {
+                        "list_of": {
+                            "customer_amount": "number",
+                            "id": "number",
+                            "vendor_rate": "null",
+                            "work_type": "string"
+                        }
+                    },
+                    "received_date": "string"
                 }
             },
             "oldAmounts": "[]",
@@ -190,6 +196,7 @@
                 "paper_pendency": "string",
                 "paper_returned": "string",
                 "part_pesi_required": "string",
+                "partly_approved": "string",
                 "under_verification": "string"
             },
             "timeline": {
@@ -271,20 +278,37 @@
                     "description": "string",
                     "edit_url": "string",
                     "file_no": "string",
-                    "has_screenshot": "bool",
                     "id": "number",
+                    "items": {
+                        "list_of": {
+                            "approved_on": "null",
+                            "customer_amount": "number",
+                            "has_screenshot": "bool",
+                            "id": "number",
+                            "screenshot_url": "null",
+                            "status": "string",
+                            "work_type": "string"
+                        }
+                    },
                     "last_remark": "null",
                     "received_date": "string",
                     "registration_no": "string",
-                    "returned_amount": "null",
-                    "screenshot_url": "null",
                     "status": "string",
-                    "vendor": "string",
-                    "work_type": "string"
+                    "status_label": "string",
+                    "statuses": {
+                        "approval_done": "string",
+                        "cancelled": "string",
+                        "file_dispatch": "string",
+                        "in_office": "string",
+                        "paper_pendency": "string",
+                        "paper_returned": "string",
+                        "part_pesi_required": "string",
+                        "under_verification": "string"
+                    },
+                    "vendor": "string"
                 }
             },
             "resetUrl": "string",
-            "returnedKey": "string",
             "statuses": {
                 "approval_done": "string",
                 "cancelled": "string",

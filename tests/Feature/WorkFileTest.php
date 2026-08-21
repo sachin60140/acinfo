@@ -6,6 +6,7 @@ use App\Http\Controllers\WorkFileController;
 use App\Models\PartyLedgerModel;
 use App\Models\PartyModel;
 use App\Models\User;
+use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -122,6 +123,20 @@ class WorkFileTest extends TestCase
      */
     private function giveToVendor(array $fileIds, int $vendorId, array $amounts = [], string $date = '2026-04-02'): void
     {
+        /*
+         * These tests price a folder, because that is what they are about. The
+         * rate is agreed per job now, and every file here has exactly one, so
+         * the keys are translated rather than every test being rewritten to
+         * know about a distinction it is not testing.
+         */
+        $byItem = [];
+
+        foreach ($amounts as $fileId => $amount) {
+            $byItem[WorkFileItemModel::where('work_file_id', $fileId)->value('id')] = $amount;
+        }
+
+        $amounts = $byItem;
+
         $this->controller->assign(Request::create('/admin/file/assign', 'POST', [
             'vendor_id' => $vendorId,
             'vendor_date' => $date,
@@ -144,9 +159,27 @@ class WorkFileTest extends TestCase
             }
         }
 
+        /*
+         * These tests speak in files, because that is what they are about. The
+         * board moves jobs, and every file here has exactly one, so the ids are
+         * translated rather than every test being rewritten to know about a
+         * distinction it is not testing.
+         */
+        $byItem = [];
+        $itemRemarks = [];
+
+        foreach ($statuses as $fileId => $status) {
+            $itemId = WorkFileItemModel::where('work_file_id', $fileId)->value('id');
+            $byItem[$itemId] = $status;
+
+            if (array_key_exists($fileId, $remarks)) {
+                $itemRemarks[$itemId] = $remarks[$fileId];
+            }
+        }
+
         $this->controller->status(Request::create('/admin/file/status', 'POST', [
-            'statuses' => $statuses,
-            'remarks' => $remarks,
+            'statuses' => $byItem,
+            'remarks' => $itemRemarks,
         ]));
     }
 
@@ -595,10 +628,13 @@ class WorkFileTest extends TestCase
     {
         $file = $this->receive();
 
+        // Evidence belongs to the job that was approved, so both are keyed on it.
+        $itemId = WorkFileItemModel::where('work_file_id', $file->id)->value('id');
+
         $this->controller->status(Request::create('/admin/file/status', 'POST',
-            ['statuses' => [$file->id => 'approval_done']],
+            ['statuses' => [$itemId => 'approval_done']],
             [],
-            ['screenshots' => [$file->id => UploadedFile::fake()->image('approval.jpg')]]
+            ['screenshots' => [$itemId => UploadedFile::fake()->image('approval.jpg')]]
         ));
 
         $fresh = WorkFileModel::find($file->id);
@@ -898,11 +934,38 @@ class WorkFileTest extends TestCase
             }
         }
 
-        $this->controller->status(Request::create('/admin/file/status', 'POST', [
-            'statuses' => $statuses,
-            'remarks' => $remarks,
-            'refunds' => $refunds,
-        ]));
+        /*
+         * A refund figure is agreed for a folder, not for one job on it, so it
+         * is set where it can be seen and edited down: the return screen. The
+         * board moves the job to returned; the amount comes from here.
+         */
+        $fileIds = array_keys($statuses);
+
+        /*
+         * A first return goes through the return screen, where the figure is
+         * shown and can be edited down. Correcting one afterwards is not a
+         * return — the papers already went back — so it happens where a file
+         * is corrected, which is the edit screen.
+         */
+        $fresh = WorkFileModel::whereIn('id', $fileIds)->get()->keyBy('id');
+        $alreadyBack = $fresh->filter(fn ($file) => $file->status === WorkFileModel::RETURNED);
+
+        foreach ($alreadyBack as $file) {
+            $file->returned_amount = $refunds[$file->id] ?? null;
+            $file->save();
+            $file->syncLedger();
+        }
+
+        $first = array_values(array_diff($fileIds, $alreadyBack->keys()->all()));
+
+        if ($first) {
+            $this->controller->customerReturn(Request::create('/admin/file/customer-return', 'POST', [
+                'returned_on' => '2026-04-20',
+                'files' => $first,
+                'amounts' => array_intersect_key($refunds, array_flip($first)),
+                'remark' => reset($remarks) ?: 'Papers returned',
+            ]));
+        }
     }
 
     /**
@@ -1438,17 +1501,19 @@ class WorkFileTest extends TestCase
     {
         $file = $this->receive();
 
+        $itemId = WorkFileItemModel::where('work_file_id', $file->id)->value('id');
+
         $this->controller->status(Request::create('/admin/file/status', 'POST',
-            ['statuses' => [$file->id => 'approval_done'], 'remarks' => []],
+            ['statuses' => [$itemId => 'approval_done'], 'remarks' => []],
             [],
             // A real image the browser claims is something else entirely.
-            ['screenshots' => [$file->id => UploadedFile::fake()->image('approval.jpg')]]
+            ['screenshots' => [$itemId => UploadedFile::fake()->image('approval.jpg')]]
         ));
 
         $stored = WorkFileModel::find($file->id)->approval_screenshot;
 
         $this->assertNotNull($stored);
-        $this->assertMatchesRegularExpression('#^'.preg_quote(WorkFileModel::UPLOAD_DIR, '#').'/F-\d+-[a-f0-9]{8}\.(jpg|jpeg|png|webp|pdf)$#', $stored);
+        $this->assertMatchesRegularExpression('#^'.preg_quote(WorkFileModel::UPLOAD_DIR, '#').'/F-\d+-[a-f0-9]{12}\.(jpg|jpeg|png|webp|pdf)$#', $stored);
 
         WorkFileModel::find($file->id)->deleteScreenshot();
     }
@@ -1683,10 +1748,14 @@ class WorkFileTest extends TestCase
         )->firstWhere('id', $file->id);
 
         $this->assertNotNull($offered, 'the file is waiting to be given out');
+
+        // The rate is offered per job, because the charge is agreed per job.
+        $job = $offered['items'][0];
+
         // assertEquals, not assertSame: a whole number survives the JSON round
         // trip as an int, and the type is not what this is about.
-        $this->assertEquals(3500.0, $offered['vendor_rate'], 'the vendor cost, not the charge');
-        $this->assertNotSame((float) $offered['customer_amount'], $offered['vendor_rate']);
+        $this->assertEquals(3500.0, $job['vendor_rate'], 'the vendor cost, not the charge');
+        $this->assertNotSame((float) $job['customer_amount'], $job['vendor_rate']);
     }
 
     /**
@@ -1709,7 +1778,7 @@ class WorkFileTest extends TestCase
             $this->getJson(route('workfile.assign'))->assertOk()->json('props.files')
         )->firstWhere('id', $file->id);
 
-        $this->assertNull($offered['vendor_rate']);
+        $this->assertNull($offered['items'][0]['vendor_rate']);
     }
 
     public function test_a_vendor_rate_is_saved_and_read_back(): void

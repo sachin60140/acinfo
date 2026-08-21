@@ -328,6 +328,8 @@ class WorkFileController extends Controller
                         $item->save();
                     }
 
+                    // Reloaded because the status above was written straight to
+                    // the database; the copies in memory still say what they were.
                     $file->load('items');
                     $file->rollUp();
                     $file->save();
@@ -401,6 +403,7 @@ class WorkFileController extends Controller
                 'remark' => 'nullable|string|max:200',
             ], [
                 'files.required' => 'Tick at least one file to give to the vendor.',
+                'amounts.*.numeric' => 'A vendor rate must be a number.',
             ]);
 
             $amounts = $req->input('amounts', []);
@@ -417,18 +420,36 @@ class WorkFileController extends Controller
                 $vendorName = PartyModel::whereKey($req->vendor_id)->value('name');
 
                 foreach ($files as $file) {
-                    $amount = $amounts[$file->id] ?? null;
                     $from = $file->status;
 
+                    /*
+                     * The rate is agreed per job, because the charge is. A folder
+                     * holding a transfer and a hypothecation addition has two
+                     * costs, and the folder's own figure is their sum — set here
+                     * would be erased by the roll-up a moment later.
+                     */
+                    foreach ($file->items as $item) {
+                        $amount = $amounts[$item->id] ?? null;
+                        $item->vendor_amount = ($amount === null || $amount === '') ? null : (float) $amount;
+                        $item->save();
+                    }
+
                     $file->vendor_id = $req->vendor_id;
-                    $file->vendor_amount = ($amount === null || $amount === '') ? null : (float) $amount;
                     $file->vendor_date = $req->vendor_date;
 
                     // Handing a file over is the moment it leaves the office.
                     if ($file->status === WorkFileModel::IN_OFFICE) {
                         $file->status = WorkFileModel::DISPATCHED;
+                        // The jobs move with the folder: the file leaving the office is true of
+                        // every work on it, and the folder's own status is derived from
+                        // theirs — left behind, they would roll it straight back.
+                        $file->items()->update(['status' => WorkFileModel::DISPATCHED]);
                     }
 
+                    // Reloaded because the status above was written straight to
+                    // the database; the copies in memory still say what they were.
+                    $file->load('items');
+                    $file->rollUp();
                     $file->save();
                     $file->syncLedger();
                     $file->logStatus($from, trim(($req->remark ? $req->remark.' — ' : '').'Given to '.$vendorName));
@@ -474,16 +495,26 @@ class WorkFileController extends Controller
                 'id' => (int) $file->id,
                 'file_no' => $file->file_no,
                 'received_date' => date('d-m-Y', strtotime($file->received_date)),
-                'work_type' => $file->workType?->name,
-                // What this kind of work usually costs to have done, so
-                // ticking the file fills the box in. Never the customer
-                // charge: the gap between the two is the margin.
-                'vendor_rate' => $file->workType?->default_vendor_rate === null
-                    ? null
-                    : (float) $file->workType->default_vendor_rate,
                 'description' => $file->description,
                 'customer' => $file->customer?->name,
                 'customer_amount' => (float) $file->customer_amount,
+
+                /*
+                 * A folder is handed over whole, but the rate is agreed per job:
+                 * a transfer and a hypothecation addition in one envelope are two
+                 * charges and two costs.
+                 */
+                'items' => $file->items->map(fn ($item) => [
+                    'id' => (int) $item->id,
+                    'work_type' => $item->workType?->name,
+                    'customer_amount' => (float) $item->customer_amount,
+                    // What this kind of work usually costs to have done, so
+                    // ticking the file fills the box in. Never the customer
+                    // charge: the gap between the two is the margin.
+                    'vendor_rate' => $item->workType?->default_vendor_rate === null
+                        ? null
+                        : (float) $item->workType->default_vendor_rate,
+                ])->values(),
             ])->values(),
         ];
 
@@ -546,6 +577,10 @@ class WorkFileController extends Controller
                     $from = $file->status;
 
                     $file->status = WorkFileModel::RETURNED;
+                    // The jobs move with the folder: papers going back is true of
+                    // every work on it, and the folder's own status is derived from
+                    // theirs — left behind, they would roll it straight back.
+                    $file->items()->update(['status' => WorkFileModel::RETURNED]);
                     $file->returned_on = $req->returned_on;
                     $file->returned_amount = self::partialOrNull($amounts[$file->id] ?? null, $file->customer_amount);
                     $file->save();
@@ -732,48 +767,37 @@ class WorkFileController extends Controller
     {
         if ($req->isMethod('POST')) {
             $req->validate([
+                // Keyed on the job, not the file. Papers for two works are one
+                // folder with two jobs, and each is approved on its own.
                 'statuses' => 'required|array|min:1',
-                'statuses.*' => ['required', Rule::in(array_keys(WorkFileModel::STATUSES))],
+                'statuses.*' => ['required', Rule::in(array_keys(WorkFileModel::JOB_STATUSES))],
                 'remarks' => 'nullable|array',
                 'remarks.*' => 'nullable|string|max:255',
-                'refunds' => 'nullable|array',
-                'refunds.*' => 'nullable|numeric|gt:0|max:99999999',
                 'screenshots' => 'nullable|array',
                 'screenshots.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,pdf|max:4096',
             ]);
 
             $wanted = $req->input('statuses');
             $remarks = $req->input('remarks', []);
-            $refunds = $req->input('refunds', []);
             $uploads = $req->file('screenshots', []);
 
-            $files = WorkFileModel::whereIn('id', array_keys($wanted))->get();
+            $items = WorkFileItemModel::with('file', 'workType')
+                ->whereIn('id', array_keys($wanted))
+                ->get();
 
-            // You cannot hand back more than was charged.
-            $overRefunded = $files
-                ->filter(function ($file) use ($wanted, $refunds) {
-                    $refund = $refunds[$file->id] ?? null;
+            $name = fn ($item) => $item->file->file_no.' · '.($item->workType?->name ?? 'work');
 
-                    return $wanted[$file->id] === WorkFileModel::RETURNED
-                        && $refund !== null && $refund !== ''
-                        && (float) $refund > (float) $file->customer_amount;
-                })
-                ->pluck('file_no');
-
-            if ($overRefunded->isNotEmpty()) {
-                return back()->withInput()->with(
-                    'error',
-                    'A refund cannot exceed what the customer was charged. Check: '.$overRefunded->implode(', ')
-                );
-            }
-
-            // Approval has to be evidenced, so refuse the whole save and name the
-            // files that are missing one rather than storing a bare claim.
-            $missing = $files
-                ->filter(fn ($file) => $wanted[$file->id] === WorkFileModel::APPROVED
-                    && ! isset($uploads[$file->id])
-                    && ! $file->approval_screenshot)
-                ->pluck('file_no');
+            /*
+             * Approval has to be evidenced, and now per job: a hypothecation
+             * addition and a transfer are approved separately, days apart, each
+             * with its own document. Refuse the whole save and name what is
+             * missing rather than storing a bare claim.
+             */
+            $missing = $items
+                ->filter(fn ($item) => $wanted[$item->id] === WorkFileModel::APPROVED
+                    && ! isset($uploads[$item->id])
+                    && ! $item->approval_screenshot)
+                ->map($name);
 
             if ($missing->isNotEmpty()) {
                 return back()->withInput()->with(
@@ -782,88 +806,129 @@ class WorkFileController extends Controller
                 );
             }
 
-            // Cancelling and returning both move money, so they have to say why.
-            // Everything else takes a remark but does not insist on one.
-            $unexplained = $files
-                ->filter(function ($file) use ($wanted, $remarks) {
-                    $to = $wanted[$file->id];
+            /*
+             * Papers go back in one envelope. A folder holding two works cannot
+             * send one of them home — and left half returned it would bill the
+             * customer for papers they are holding. The return screen takes the
+             * whole folder and shows the refund, so it is sent there.
+             */
+            $partReturn = $items
+                ->filter(fn ($item) => $wanted[$item->id] === WorkFileModel::RETURNED
+                    && $item->status !== WorkFileModel::RETURNED
+                    && $item->file->items()->count() > 1)
+                ->map(fn ($item) => $item->file->file_no)
+                ->unique();
 
-                    return $file->status !== $to
-                        && in_array($to, [WorkFileModel::CANCELLED, WorkFileModel::RETURNED], true)
-                        && trim((string) ($remarks[$file->id] ?? '')) === '';
+            if ($partReturn->isNotEmpty()) {
+                return back()->withInput()->with(
+                    'error',
+                    'Papers go back a whole file at a time. Use Return to Customer for: '.$partReturn->implode(', ')
+                );
+            }
+
+            // Cancelling strikes work off the folder and returning gives its
+            // charge back. Both move the customer's balance, so both say why.
+            $unexplained = $items
+                ->filter(function ($item) use ($wanted, $remarks) {
+                    return $item->status !== $wanted[$item->id]
+                        && in_array($wanted[$item->id], [WorkFileModel::CANCELLED, WorkFileModel::RETURNED], true)
+                        && trim((string) ($remarks[$item->id] ?? '')) === '';
                 })
-                ->pluck('file_no');
+                ->map($name);
 
             if ($unexplained->isNotEmpty()) {
                 return back()->withInput()->with(
                     'error',
-                    'Cancelling or returning a file changes the customer\'s balance, so it needs a reason. Add a remark for: '.$unexplained->implode(', ')
+                    'Cancelling work changes the customer\'s balance, so it needs a reason. Add a remark for: '.$unexplained->implode(', ')
                 );
             }
 
-            $changed = DB::transaction(function () use ($files, $wanted, $remarks, $refunds, $uploads) {
-                $touched = [];
+            $changed = DB::transaction(function () use ($items, $wanted, $remarks, $uploads) {
+                $files = [];
+                $notes = [];
+                $moved = 0;
 
-                foreach ($files as $file) {
-                    $upload = $uploads[$file->id] ?? null;
-                    $remark = trim((string) ($remarks[$file->id] ?? '')) ?: null;
-                    $from = $file->status;
-                    $moved = $from !== $wanted[$file->id];
+                foreach ($items as $item) {
+                    $upload = $uploads[$item->id] ?? null;
+                    $remark = trim((string) ($remarks[$item->id] ?? '')) ?: null;
+                    $from = $item->status;
+                    $movedThis = $from !== $wanted[$item->id];
 
-                    /*
-                     * Only touch the refund when one was actually submitted.
-                     *
-                     * A blank box means "the whole charge" and stores null. A key
-                     * that is not posted at all means something different: the
-                     * refund box was not on screen, so the figure already stored
-                     * must stand. Treating the two the same turned un-cancelling a
-                     * part-returned file into a full refund.
-                     */
-                    if ($wanted[$file->id] === WorkFileModel::RETURNED && array_key_exists($file->id, $refunds)) {
-                        // Blank and "the whole charge" are the same thing, and both
-                        // store null. The form pre-fills the full amount so it can
-                        // be seen and edited down; storing that back as a figure
-                        // would mark an untouched row dirty and log a phantom change.
-                        $file->returned_amount = self::partialOrNull($refunds[$file->id], $file->customer_amount);
-                    }
-
-                    // A remark on its own is worth saving: it records chasing a
-                    // customer or an update from the RTO without the file moving.
-                    // isDirty catches a refund figure edited on an already
-                    // returned file, where nothing else about the row changed.
-                    if (! $moved && ! $upload && ! $remark && ! $file->isDirty()) {
+                    // A remark on its own is worth saving: it records chasing the
+                    // RTO about one job without that job moving.
+                    if (! $movedThis && ! $upload && ! $remark) {
                         continue;
                     }
 
                     if ($upload) {
-                        $file->storeScreenshot($upload);
+                        // Named after the file it evidences, never after the
+                        // upload, whose name is attacker-controlled. Traceable to
+                        // the folder if it is ever looked at on disk.
+                        $item->approval_screenshot = WorkFileModel::storeUpload(
+                            $upload,
+                            $item->approval_screenshot,
+                            $item->file->file_no
+                        );
                     }
 
-                    $file->status = $wanted[$file->id];
-                    $file->save();
-                    $file->syncLedger();
-                    $file->logStatus($from, $remark);
+                    $item->status = $wanted[$item->id];
+                    $item->save();
 
-                    $touched[] = $file->file_no;
+                    if ($movedThis) {
+                        $moved++;
+                    }
+
+                    $file = $item->file;
+
+                    // The folder's status before any of its jobs moved, so the
+                    // timeline can say where it came from even when two jobs
+                    // change in the same save.
+                    $files[$file->id] ??= ['file' => $file, 'from' => $file->status];
+
+                    /*
+                     * The remark is what a person typed, kept verbatim: it is what
+                     * the work report prints under Remarks, and a machine-written
+                     * prefix would turn that column into noise. Which job it is
+                     * about is recorded beside it instead.
+                     */
+                    $notes[$file->id][] = ['item' => $item->id, 'remark' => $remark];
                 }
 
-                return $touched;
-            });
+                /*
+                 * The folder follows its jobs, and is written once after all of
+                 * them have moved — a file whose two jobs both changed must not
+                 * be saved twice with an answer that was only true in between.
+                 *
+                 * The timeline comes after the roll-up for the same reason: an
+                 * entry written first would record the status the folder was
+                 * leaving as the one it arrived at.
+                 */
+                foreach ($files as ['file' => $file, 'from' => $from]) {
+                    // Reloaded because the status above was written straight to
+                    // the database; the copies in memory still say what they were.
+                    $file->load('items');
+                    $file->rollUp();
+                    $file->save();
+                    $file->syncLedger();
 
-            if (! $changed) {
-                return back()->with('error', 'Nothing to update — no status was changed.');
+                    foreach ($notes[$file->id] as $note) {
+                        $file->logStatus($from, $note['remark'], $note['item']);
+                    }
+                }
+
+                return ['items' => $moved, 'files' => count($files)];
+            });
+            if (! $changed['files']) {
+                return back()->with('error', 'Nothing was changed.');
             }
 
-            return redirect()->route('workfile.status')
-                ->with('success', count($changed).' '.Str::plural('file', count($changed)).' updated: '.implode(', ', $changed));
+            return redirect()->route('workfile.status', array_filter([
+                'status' => $req->query('status'),
+                'work_type' => $req->query('work_type'),
+            ]))->with('success', $changed['items']
+                ? $changed['items'].' '.Str::plural('work', $changed['items']).' updated on '.$changed['files'].' '.Str::plural('file', $changed['files']).'.'
+                : 'Remarks saved.');
         }
-
-        $req->validate([
-            'status' => ['nullable', 'string'],
-            'work_type' => 'nullable|integer|exists:work_type,id',
-        ]);
-
-        // Defaults to work still in hand, which is what this screen is for.
         $filter = $req->query('status', 'open');
 
         // 'open' and 'all' are tabs rather than stored statuses, so they cannot
@@ -888,8 +953,12 @@ class WorkFileController extends Controller
             'action' => route('workfile.status'),
             'csrf' => csrf_token(),
             'resetUrl' => route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId])),
-            'statuses' => WorkFileModel::STATUSES,
-            'returnedKey' => WorkFileModel::RETURNED,
+            // Only what a single job can be put into. Returning papers is agreed
+            // for a folder and has its own screen; partly approved describes a
+            // folder whose jobs disagree, and one job never disagrees with itself.
+            'statuses' => WorkFileModel::JOB_STATUSES,
+            // Also offered per folder below, because a folder of several works
+            // cannot send one of them home. See jobStatusesFor().
             'approvedKey' => WorkFileModel::APPROVED,
             'cancelledKey' => WorkFileModel::CANCELLED,
             'files' => $files->map(fn ($file) => [
@@ -897,20 +966,33 @@ class WorkFileController extends Controller
                 'file_no' => $file->file_no,
                 'received_date' => date('d-m-Y', strtotime($file->received_date)),
                 'registration_no' => $file->registration_no,
-                'work_type' => $file->workType?->name,
                 'description' => $file->description,
                 'customer' => $file->customer?->name,
                 'vendor' => $file->vendor?->name,
                 'customer_amount' => (float) $file->customer_amount,
-                'returned_amount' => $file->returned_amount === null ? null : (float) $file->returned_amount,
+                // The folder's own state, derived from the jobs below it. Shown,
+                // never chosen: it is an answer, not a question.
                 'status' => $file->status,
-                'has_screenshot' => (bool) $file->approval_screenshot,
-                'screenshot_url' => $file->screenshotUrl(),
+                'status_label' => WorkFileModel::STATUSES[$file->status] ?? $file->status,
                 'edit_url' => route('workfile.edit', $file->id),
                 'last_remark' => $lastRemarks[$file->id] ?? null,
+                'statuses' => WorkFileModel::jobStatusesFor($file->items->count()),
+
+                /*
+                 * The jobs. Each is approved on its own, days apart, with its own
+                 * evidence — which is the whole reason the board moved onto them.
+                 */
+                'items' => $file->items->map(fn ($item) => [
+                    'id' => $item->id,
+                    'work_type' => $item->workType?->name,
+                    'customer_amount' => (float) $item->customer_amount,
+                    'status' => $item->status,
+                    'has_screenshot' => (bool) $item->approval_screenshot,
+                    'screenshot_url' => $item->approval_screenshot ? url($item->approval_screenshot) : null,
+                    'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
+                ])->values(),
             ])->values(),
         ];
-
         $statuses = WorkFileModel::STATUSES;
 
         return Screen::make('admin.work.status', 'vue-status-board', $props, [
@@ -993,6 +1075,26 @@ class WorkFileController extends Controller
                 $file->description = $req->description;
                 $file->remarks = $req->remarks;
                 $file->save();
+
+                /*
+                 * The jobs are the record of what the file is for, so a
+                 * correction made here has to reach them or the two disagree.
+                 *
+                 * Only for a folder holding exactly one job. A folder with
+                 * several has no single type, price or status to correct from
+                 * one set of boxes, and the board is where those are moved —
+                 * so this screen leaves them alone rather than flattening them.
+                 */
+                $items = $file->items()->get();
+
+                if ($items->count() === 1) {
+                    $item = $items->first();
+                    $item->work_type_id = $file->work_type_id;
+                    $item->customer_amount = $file->customer_amount;
+                    $item->vendor_amount = $file->vendor_amount;
+                    $item->status = $file->status;
+                    $item->save();
+                }
 
                 $file->syncLedger();
 

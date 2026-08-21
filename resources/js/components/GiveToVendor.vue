@@ -3,7 +3,7 @@
  * Handing a batch of files to one vendor.
  *
  * Field names are the ones WorkFileController::assign() already validates —
- * vendor_id, vendor_date, files[], amounts[<id>] and remark — so the form still
+ * vendor_id, vendor_date, files[], amounts[<job id>] and remark — so the form still
  * posts normally and the server still checks every value. That is what makes it
  * safe to convert a screen on a live ledger: only the rendering moves, the money
  * logic does not.
@@ -11,6 +11,10 @@
  * The screen's job is one handover at a counter: tick the files going out, agree
  * a price on each, and see before saving what the vendor is being credited in
  * total and where that leaves their balance.
+ *
+ * A folder is ticked whole — the envelope goes across the counter in one piece —
+ * but the price is agreed per job inside it. Papers for a transfer and a
+ * hypothecation addition are one file, two works, and two costs.
  */
 import { computed, onMounted, reactive, ref } from 'vue';
 import { balance, money, side } from '../money';
@@ -40,11 +44,18 @@ const remarkText = ref(props.remark);
  */
 const picked = ref(props.pickedFiles.map(Number));
 
+// Keyed on the job, because that is what carries a rate.
 const amounts = reactive(
-    Object.fromEntries(props.files.map((file) => [file.id, props.oldAmounts[file.id] ?? '']))
+    Object.fromEntries(
+        props.files.flatMap((file) =>
+            file.items.map((item) => [item.id, props.oldAmounts[item.id] ?? ''])
+        )
+    )
 );
 
 const isPicked = (file) => picked.value.includes(file.id);
+
+const jobs = (file) => file.items ?? [];
 
 /*
  * Ticking a file fills in what this kind of work usually costs.
@@ -59,9 +70,15 @@ const isPicked = (file) => picked.value.includes(file.id);
  * book every file at nothing.
  */
 function onPick(file) {
-    if (isPicked(file) && file.vendor_rate && String(amounts[file.id]).trim() === '') {
-        amounts[file.id] = Number(file.vendor_rate).toFixed(2);
+    if (! isPicked(file)) {
+        return;
     }
+
+    jobs(file).forEach((item) => {
+        if (item.vendor_rate && String(amounts[item.id]).trim() === '') {
+            amounts[item.id] = Number(item.vendor_rate).toFixed(2);
+        }
+    });
 }
 
 const allPicked = computed({
@@ -75,15 +92,14 @@ const allPicked = computed({
     },
 });
 
+const pickedJobs = computed(() => props.files.filter(isPicked).flatMap(jobs));
+
 const total = computed(() =>
-    props.files.reduce(
-        (sum, file) => (isPicked(file) ? sum + (Number(amounts[file.id]) || 0) : sum),
-        0
-    )
+    pickedJobs.value.reduce((sum, item) => sum + (Number(amounts[item.id]) || 0), 0)
 );
 
-const blanks = computed(() =>
-    props.files.filter((file) => isPicked(file) && String(amounts[file.id]).trim() === '').length
+const blanks = computed(
+    () => pickedJobs.value.filter((item) => String(amounts[item.id]).trim() === '').length
 );
 
 const vendor = computed(
@@ -112,6 +128,12 @@ const summary = computed(() => {
 
     const count = picked.value.length;
     const parts = [`${count} ${count === 1 ? 'file' : 'files'} going out`];
+
+    const works = pickedJobs.value.length;
+
+    if (works !== count) {
+        parts.push(`${works} works`);
+    }
 
     if (blanks.value) {
         parts.push(`${blanks.value} without a price yet`);
@@ -264,14 +286,23 @@ onMounted(() => {
 
                                 <td data-label="Received">{{ file.received_date }}</td>
 
-                                <td data-label="Work Type">{{ file.work_type }}</td>
+                                <!-- The three columns below stack one line per job
+                                     and stay in step, so a folder with two works reads
+                                     across: this work, charged this, costing that. -->
+                                <td data-label="Work Type">
+                                    <div v-for="item in jobs(file)" :key="item.id" class="give-job">
+                                        {{ item.work_type || '&mdash;' }}
+                                    </div>
+                                </td>
 
                                 <td data-label="Details">{{ file.description }}</td>
 
                                 <td data-label="Customer">{{ file.customer }}</td>
 
                                 <td data-label="Charged" class="num">
-                                    <span class="ui-money ui-money--dr">{{ money(file.customer_amount) }}</span>
+                                    <div v-for="item in jobs(file)" :key="item.id" class="give-job">
+                                        <span class="ui-money ui-money--dr">{{ money(item.customer_amount) }}</span>
+                                    </div>
                                 </td>
 
                                 <td data-label="Vendor Amount" class="num">
@@ -279,15 +310,17 @@ onMounted(() => {
                                          posts nothing, so an amount left on an unticked
                                          row cannot reach the server, and the greying out
                                          says so before anyone presses save. -->
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        step="0.01"
-                                        class="ui-input ui-input--amount"
-                                        :name="`amounts[${file.id}]`"
-                                        v-model="amounts[file.id]"
-                                        :disabled="!isPicked(file)"
-                                        placeholder="0.00">
+                                    <div v-for="item in jobs(file)" :key="item.id" class="give-job">
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            class="ui-input ui-input--amount"
+                                            :name="`amounts[${item.id}]`"
+                                            v-model="amounts[item.id]"
+                                            :disabled="!isPicked(file)"
+                                            placeholder="0.00">
+                                    </div>
                                 </td>
                             </tr>
                         </tbody>
@@ -364,6 +397,23 @@ onMounted(() => {
     height: 1.1rem;
     margin: 0;
     width: 1.1rem;
+}
+
+/* One line per job. The same rule in all three stacked columns is what keeps
+   them level, so the amount box sits beside the work it prices. */
+.give-job {
+    align-items: center;
+    display: flex;
+    justify-content: flex-end;
+    min-height: 2.5rem;
+}
+
+.give td:not(.num) .give-job {
+    justify-content: flex-start;
+}
+
+.give-job + .give-job {
+    margin-top: var(--s-1);
 }
 
 /* Beats .ui-table's row hover, which would otherwise wash the tick out. */

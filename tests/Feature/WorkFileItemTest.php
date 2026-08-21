@@ -106,22 +106,28 @@ class WorkFileItemTest extends TestCase
     }
 
     /**
-     * Until the screens write items directly, the file is still what says what
-     * it is for — so an edit has to carry to the item. A stale item would have
-     * the next screen to read one describing the job the file used to be.
+     * The jobs are the record of what a file is for, so a correction made on
+     * the edit screen has to reach them — otherwise the folder and its work
+     * disagree, and the board would show the job the file used to be.
      */
-    public function test_editing_a_file_carries_to_its_item(): void
+    public function test_correcting_a_file_reaches_its_job(): void
     {
+        $this->actingAs($this->admin());
+
         $file = $this->file();
         $other = new WorkTypeModel;
         $other->name = 'Other Work '.uniqid();
         $other->is_active = 1;
         $other->save();
 
-        $file->work_type_id = $other->id;
-        $file->customer_amount = 7500;
-        $file->status = 'under_verification';
-        $file->save();
+        $this->post(route('workfile.edit', $file->id), [
+            'file_no' => $file->file_no,
+            'received_date' => $file->received_date,
+            'work_type_id' => $other->id,
+            'customer_id' => $this->customer->id,
+            'customer_amount' => '7500',
+            'status' => 'under_verification',
+        ])->assertRedirect();
 
         $item = $file->items()->first();
 
@@ -313,6 +319,161 @@ class WorkFileItemTest extends TestCase
         $file->rollUp();
 
         $this->assertEquals(1500, $file->vendor_amount);
+    }
+
+    /**
+     * Papers for two works given to one vendor, at a rate agreed for each.
+     *
+     * This is the other half of per-work pricing. The customer is charged per
+     * job, so the vendor is paid per job, and the folder's cost is the sum —
+     * which is what reaches the vendor's statement as one credit for the file.
+     */
+    public function test_a_vendor_is_credited_the_rate_agreed_on_each_work(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0100');
+        $vendor = $this->vendor();
+        [$first, $second] = $file->items->all();
+
+        $this->post(route('workfile.assign'), [
+            'vendor_id' => $vendor->id,
+            'vendor_date' => now()->toDateString(),
+            'files' => [$file->id],
+            'amounts' => [$first->id => '1200', $second->id => '1800'],
+        ])->assertRedirect();
+
+        $file->refresh()->load('items');
+
+        $this->assertEquals(1200, $file->items->firstWhere('id', $first->id)->vendor_amount);
+        $this->assertEquals(1800, $file->items->firstWhere('id', $second->id)->vendor_amount);
+        $this->assertEquals(3000, $file->vendor_amount, 'the folder costs what its works cost');
+
+        // A vendor's balance sits on the credit side, so being owed 3000 moves
+        // it 3000 that way.
+        $this->assertSame(-3000.0, PartyLedgerModel::currentBalance($vendor->id));
+    }
+
+    /**
+     * One rate agreed, the other still being haggled over. The file goes out
+     * anyway — it has to, the vendor is holding the papers — and owes only what
+     * was actually agreed, with the rest reported as outstanding.
+     */
+    public function test_a_work_left_unpriced_owes_only_what_was_agreed(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0101');
+        $vendor = $this->vendor();
+        [$first, $second] = $file->items->all();
+
+        $this->post(route('workfile.assign'), [
+            'vendor_id' => $vendor->id,
+            'vendor_date' => now()->toDateString(),
+            'files' => [$file->id],
+            'amounts' => [$first->id => '1200', $second->id => ''],
+        ])->assertRedirect();
+
+        $file->refresh()->load('items');
+
+        $this->assertNull($file->items->firstWhere('id', $second->id)->vendor_amount, 'not agreed yet');
+        $this->assertEquals(1200, $file->vendor_amount);
+        $this->assertSame(-1200.0, PartyLedgerModel::currentBalance($vendor->id));
+    }
+
+    /**
+     * Papers go back in one envelope.
+     *
+     * A folder holding a transfer and a hypothecation addition cannot send one
+     * of them home: left half returned it would credit nothing and go on
+     * billing the customer for papers sitting in their own hand. The return
+     * screen takes the whole folder, and shows the refund figure while doing
+     * it, so the board sends the operator there.
+     */
+    public function test_papers_cannot_go_back_one_work_at_a_time(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0102');
+        $item = $file->items->first();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$item->id => WorkFileModel::RETURNED],
+            'remarks' => [$item->id => 'Customer asked for the papers back'],
+        ])->assertSessionHas('error', fn ($error) => str_contains($error, 'Papers go back a whole file at a time')
+            && str_contains($error, $file->file_no));
+
+        $this->assertSame('in_office', $item->refresh()->status, 'nothing moved');
+        $this->assertSame('in_office', $file->refresh()->status);
+    }
+
+    /**
+     * The ordinary file still returns in one click.
+     *
+     * Most files are for one work, where the folder is the job, and returning
+     * it from the board is how it has always been done. The rule above must not
+     * take that away.
+     */
+    public function test_a_file_of_one_work_still_returns_from_the_board(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->file();
+        $item = $file->items()->first();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$item->id => WorkFileModel::RETURNED],
+            'remarks' => [$item->id => 'Work could not be done'],
+        ])->assertRedirect();
+
+        $this->assertSame(WorkFileModel::RETURNED, $file->refresh()->status);
+    }
+
+    /**
+     * The board offers a folder of several works no way to send one home, so
+     * the refusal above is never something an operator can walk into.
+     */
+    public function test_the_board_does_not_offer_a_part_return(): void
+    {
+        $this->assertArrayHasKey(WorkFileModel::RETURNED, WorkFileModel::jobStatusesFor(1));
+        $this->assertArrayNotHasKey(WorkFileModel::RETURNED, WorkFileModel::jobStatusesFor(2));
+    }
+
+    private function vendor(): PartyModel
+    {
+        $vendor = new PartyModel;
+        $vendor->party_type = 'vendor';
+        $vendor->name = 'Item Vendor '.uniqid();
+        $vendor->mobile = '9333300002';
+        $vendor->is_active = 1;
+        $vendor->save();
+
+        return $vendor;
+    }
+
+    /**
+     * Papers for one vehicle and two works, received the way the screen does it.
+     */
+    private function twoWorkFile(string $registration): WorkFileModel
+    {
+        $second = new WorkTypeModel;
+        $second->name = 'Second Work '.uniqid();
+        $second->is_active = 1;
+        $second->save();
+
+        $this->post(route('workfile.receive'), [
+            'received_date' => now()->toDateString(),
+            'customer_id' => $this->customer->id,
+            'rows' => [[
+                'registration_no' => $registration,
+                'works' => [
+                    ['work_type_id' => $this->workType->id, 'amount' => '2000'],
+                    ['work_type_id' => $second->id, 'amount' => '3000'],
+                ],
+            ]],
+        ])->assertRedirect();
+
+        return WorkFileModel::where('registration_no', $registration)->firstOrFail()->load('items');
     }
 
 }

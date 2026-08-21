@@ -21,6 +21,12 @@ class WorkFileModel extends Model
 
     public const APPROVED = 'approval_done';
 
+    /**
+     * Some jobs on the file are through and some are not. Derived, never set by
+     * hand, and still work in hand — which is why it is an open status.
+     */
+    public const PARTLY_APPROVED = 'partly_approved';
+
     public const RETURNED = 'paper_returned';
 
     public const IN_OFFICE = 'in_office';
@@ -28,6 +34,32 @@ class WorkFileModel extends Model
     public const DISPATCHED = 'file_dispatch';
 
     public const STATUSES = [
+        'in_office' => 'In Office',
+        'paper_pendency' => 'Paper Pendency',
+        'file_dispatch' => 'File Dispatch',
+        'part_pesi_required' => 'Part Pesi Required',
+        'under_verification' => 'Under Verification',
+        'partly_approved' => 'Partly Approved',
+        'approval_done' => 'Approval Done',
+        'paper_returned' => 'Paper Returned to Customer',
+        'cancelled' => 'Cancelled',
+    ];
+
+    /**
+     * The states a single job can be put into from the board.
+     *
+     * Partly approved is missing on purpose: it describes a folder whose jobs
+     * disagree with each other, and a single job never disagrees with itself.
+     *
+     * Returning papers is here for the ordinary file, which holds one job: it
+     * is how a return has always been recorded and it still reads true. On a
+     * folder holding several works it is refused — papers go back in one
+     * envelope, so a return is agreed for the folder, on the return screen,
+     * where the refund figure can be seen and edited down.
+     *
+     * @see returnableJobStatuses()
+     */
+    public const JOB_STATUSES = [
         'in_office' => 'In Office',
         'paper_pendency' => 'Paper Pendency',
         'file_dispatch' => 'File Dispatch',
@@ -43,7 +75,7 @@ class WorkFileModel extends Model
      * Everything else is an end state — approved, given back, or written off.
      */
     public const OPEN_STATUSES = ['in_office', 'paper_pendency', 'file_dispatch',
-        'part_pesi_required', 'under_verification'];
+        'part_pesi_required', 'under_verification', 'partly_approved'];
 
     /**
      * Bootstrap contextual class per status, for the badge on the list.
@@ -54,6 +86,7 @@ class WorkFileModel extends Model
         'file_dispatch' => 'bg-info text-dark',
         'part_pesi_required' => 'bg-warning text-dark',
         'under_verification' => 'bg-primary',
+        'partly_approved' => 'bg-info text-dark',
         'approval_done' => 'bg-success',
         'paper_returned' => 'bg-dark',
         'cancelled' => 'bg-danger',
@@ -130,44 +163,6 @@ class WorkFileModel extends Model
             }
         });
 
-        /*
-         * While the file is still the source of truth for what it is for, its
-         * single item is kept in step with it. Without this an edit to a file
-         * would leave its item describing the job it used to be, and the
-         * screens that move onto items next would read the old answer.
-         *
-         * This goes when the receive screen starts writing items directly and
-         * the file rolls up from them instead.
-         */
-        static::saved(function (self $file) {
-            /*
-             * Only while a file has the one item the migration gave it. A file
-             * booked with several jobs is described by its items, and copying
-             * the file's roll-up over the first of them would overwrite one
-             * job with the total of them all.
-             */
-            $item = $file->items()->first();
-
-            /*
-             * Only ever updates, never creates. A file is saved once before its
-             * jobs exist — receive() needs its id to write them against — and
-             * creating one here filled that gap with an empty job the papers
-             * were never for. And a file with several jobs is described by
-             * them, so copying the roll-up over the first would overwrite one
-             * job with the total of them all.
-             */
-            if (! $item || $file->items()->count() > 1) {
-                return;
-            }
-
-            $item->work_file_id = $file->id;
-            $item->work_type_id = $file->work_type_id;
-            $item->customer_amount = $file->customer_amount;
-            $item->vendor_amount = $file->vendor_amount;
-            $item->status = $file->status;
-            $item->approval_screenshot = $file->approval_screenshot;
-            $item->save();
-        });
     }
 
     public function workType(): BelongsTo
@@ -211,10 +206,13 @@ class WorkFileModel extends Model
      * @param  string|null  $from  the status before the change; null when the file
      *                             was just received
      */
-    public function logStatus(?string $from, ?string $remark = null): WorkFileStatusLogModel
+    public function logStatus(?string $from, ?string $remark = null, ?int $itemId = null): WorkFileStatusLogModel
     {
         $log = new WorkFileStatusLogModel;
         $log->work_file_id = $this->id;
+        // Which job this is about, on a folder that holds several. Null when it
+        // is about the folder itself.
+        $log->work_file_item_id = $itemId;
         $log->from_status = $from;
         $log->to_status = $this->status;
         $log->remark = $remark ?: null;
@@ -337,6 +335,52 @@ class WorkFileModel extends Model
      * uploaded name — a browser-supplied name is attacker-controlled and would
      * otherwise decide where in the filesystem this lands.
      */
+    /**
+     * Put an uploaded document where approvals live, and return its path.
+     *
+     * Shared by files and by the jobs on them, because approval evidence now
+     * belongs to the job — two approvals days apart, a document each — and
+     * both need the same care about extensions and about not deleting what
+     * they replace until the row that replaced it has committed.
+     *
+     * @param  string|null  $previous  a path this one replaces
+     */
+    public static function storeUpload(UploadedFile $upload, ?string $previous = null, string $prefix = 'item'): string
+    {
+        $directory = public_path(self::UPLOAD_DIR);
+
+        if (! is_dir($directory)) {
+            mkdir($directory, 0755, true);
+        }
+
+        // Guessed from the content, never taken from the browser: this
+        // directory is web-served and what lands in it should not depend on a
+        // validation rule elsewhere staying exactly as it is.
+        $extension = strtolower($upload->extension() ?: 'bin');
+        // The prefix is stripped of anything that is not plainly a file name,
+        // because it comes from data even if that data is ours.
+        $safe = preg_replace('/[^A-Za-z0-9_-]+/', '-', $prefix) ?: 'item';
+        $name = $safe.'-'.substr(md5(uniqid('', true)), 0, 12).'.'.$extension;
+
+        $upload->move($directory, $name);
+        $stored = self::UPLOAD_DIR.'/'.$name;
+
+        // The one it replaces goes only once the row pointing at the new path
+        // has safely committed, or a rollback leaves evidence deleted and a
+        // row still naming it.
+        if ($previous && $previous !== $stored) {
+            DB::afterCommit(function () use ($previous) {
+                $path = public_path($previous);
+
+                if (is_file($path)) {
+                    unlink($path);
+                }
+            });
+        }
+
+        return $stored;
+    }
+
     public function storeScreenshot(UploadedFile $upload): void
     {
         $directory = public_path(self::UPLOAD_DIR);
@@ -638,7 +682,7 @@ class WorkFileModel extends Model
     public static function unassigned()
     {
         return self::query()
-            ->with('workType', 'customer')
+            ->with('workType', 'customer', 'items.workType')
             ->whereNull('vendor_id')
             // Only work still in hand can be given out. A file that is approved,
             // returned or cancelled has nothing left for a vendor to do.
@@ -672,12 +716,16 @@ class WorkFileModel extends Model
      */
     public static function forStatusBoard(string $filter, $workTypeId = null)
     {
-        $query = self::query()->with('workType', 'customer', 'vendor');
+        // The jobs come with the file: the board moves each of them along on
+        // its own, because approvals arrive one at a time.
+        $query = self::query()->with('workType', 'customer', 'vendor', 'items.workType');
 
         self::applyStatusFilter($query, $filter);
 
         if ($workTypeId) {
-            $query->where('work_type_id', $workTypeId);
+            // Matched against the jobs, so a file is shown when any of its work
+            // is of that type — not only when the first one is.
+            $query->whereHas('items', fn ($q) => $q->where('work_type_id', $workTypeId));
         }
 
         return $query
@@ -936,6 +984,72 @@ class WorkFileModel extends Model
      * it, and a file with two jobs has no single type — workLabel() is what
      * says the whole truth, and the screens move onto it as they are touched.
      */
+    /**
+     * What the folder's status is, given the state of the jobs in it.
+     *
+     * Approvals arrive separately, so the interesting case is the mixed one:
+     * a hypothecation addition through while the transfer on the same papers
+     * is not. Calling that approved claims work that is not done; calling it
+     * pending hides work that is. It is partly approved, and the file is still
+     * in hand.
+     *
+     * While jobs are still open and none has been approved, the file shows the
+     * least advanced of them — the one actually holding the folder up, which
+     * is what someone looking at the list wants to know.
+     *
+     * With nothing open left: all cancelled is cancelled, all returned is
+     * returned, and anything else means work was done and approved.
+     */
+    /**
+     * What this folder's jobs may be set to on the board.
+     *
+     * One job means the folder is that job, so returning it returns the
+     * papers and the old one-click return still works. Two jobs and the
+     * option goes: half an envelope cannot go back, and a folder left with
+     * one job returned and one approved would bill the customer for work
+     * they have in their hand.
+     */
+    public static function jobStatusesFor(int $jobCount): array
+    {
+        $statuses = self::JOB_STATUSES;
+
+        if ($jobCount > 1) {
+            unset($statuses[self::RETURNED]);
+        }
+
+        return $statuses;
+    }
+
+    public static function statusFromItems($items): string
+    {
+        $open = $items->filter(fn ($item) => in_array($item->status, self::OPEN_STATUSES, true));
+        $approved = $items->filter(fn ($item) => $item->status === self::APPROVED);
+
+        if ($open->isNotEmpty()) {
+            if ($approved->isNotEmpty()) {
+                return self::PARTLY_APPROVED;
+            }
+
+            // OPEN_STATUSES is in the order work moves through, so the first
+            // one present is the furthest back.
+            foreach (self::OPEN_STATUSES as $stage) {
+                if ($open->contains(fn ($item) => $item->status === $stage)) {
+                    return $stage;
+                }
+            }
+        }
+
+        if ($items->every(fn ($item) => $item->status === self::CANCELLED)) {
+            return self::CANCELLED;
+        }
+
+        if ($items->every(fn ($item) => $item->status === self::RETURNED)) {
+            return self::RETURNED;
+        }
+
+        return self::APPROVED;
+    }
+
     public function rollUp(): void
     {
         $items = $this->items()->get();
@@ -945,12 +1059,33 @@ class WorkFileModel extends Model
         }
 
         $this->work_type_id = $items->first()->work_type_id;
-        $this->customer_amount = round($items->sum(fn ($item) => (float) $item->customer_amount), 2);
 
-        $priced = $items->filter(fn ($item) => $item->vendor_amount !== null);
+        /*
+         * A cancelled job stops counting, exactly as a cancelled file always
+         * has: it was entered in error and charges nobody. Leaving it in the
+         * sum would keep billing the customer for work struck off the folder.
+         */
+        $live = $items->reject(fn ($item) => $item->status === self::CANCELLED);
+
+        $this->customer_amount = round($live->sum(fn ($item) => (float) $item->customer_amount), 2);
+
+        $priced = $live->filter(fn ($item) => $item->vendor_amount !== null);
         $this->vendor_amount = $priced->isEmpty()
             ? null
             : round($priced->sum(fn ($item) => (float) $item->vendor_amount), 2);
+
+        $this->status = self::statusFromItems($items);
+
+        /*
+         * Evidence belongs to the job that was approved, but the files list
+         * still offers one link per folder — so the folder points at the first
+         * approval it has. A folder with two approvals has two documents and
+         * both are reachable from its own screen; this is the shortcut for the
+         * list, not the record.
+         */
+        $this->approval_screenshot = $items
+            ->firstWhere(fn ($item) => $item->status === self::APPROVED && $item->approval_screenshot)
+            ?->approval_screenshot;
     }
 
     /**
