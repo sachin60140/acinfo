@@ -140,7 +140,26 @@ class WorkFileModel extends Model
          * the file rolls up from them instead.
          */
         static::saved(function (self $file) {
-            $item = $file->items()->first() ?: new WorkFileItemModel;
+            /*
+             * Only while a file has the one item the migration gave it. A file
+             * booked with several jobs is described by its items, and copying
+             * the file's roll-up over the first of them would overwrite one
+             * job with the total of them all.
+             */
+            $item = $file->items()->first();
+
+            /*
+             * Only ever updates, never creates. A file is saved once before its
+             * jobs exist — receive() needs its id to write them against — and
+             * creating one here filled that gap with an empty job the papers
+             * were never for. And a file with several jobs is described by
+             * them, so copying the roll-up over the first would overwrite one
+             * job with the total of them all.
+             */
+            if (! $item || $file->items()->count() > 1) {
+                return;
+            }
+
             $item->work_file_id = $file->id;
             $item->work_type_id = $file->work_type_id;
             $item->customer_amount = $file->customer_amount;
@@ -901,6 +920,48 @@ class WorkFileModel extends Model
      * Billed and cost stay as they are. Those are facts about what has
      * happened; only their difference is the thing that cannot be known yet.
      */
+    /**
+     * Recompute what the file says from the jobs on it.
+     *
+     * The customer is charged per job, so the file's figure is their sum —
+     * and that sum is what reaches their statement, which is why this runs
+     * before syncLedger and not after.
+     *
+     * The vendor cost is a sum too, but stays null while every job is still
+     * unpriced: null means "not agreed" everywhere else in this application
+     * and a file whose vendor rates are all outstanding has not agreed one.
+     * Summing them to zero would post nothing while claiming a figure.
+     *
+     * work_type_id keeps pointing at the first job. Every screen still reads
+     * it, and a file with two jobs has no single type — workLabel() is what
+     * says the whole truth, and the screens move onto it as they are touched.
+     */
+    public function rollUp(): void
+    {
+        $items = $this->items()->get();
+
+        if ($items->isEmpty()) {
+            return;
+        }
+
+        $this->work_type_id = $items->first()->work_type_id;
+        $this->customer_amount = round($items->sum(fn ($item) => (float) $item->customer_amount), 2);
+
+        $priced = $items->filter(fn ($item) => $item->vendor_amount !== null);
+        $this->vendor_amount = $priced->isEmpty()
+            ? null
+            : round($priced->sum(fn ($item) => (float) $item->vendor_amount), 2);
+    }
+
+    /**
+     * Every job on the file, named. "HPA, TR" rather than a made-up work type
+     * called HPA + TR, which is what the list had to hold before.
+     */
+    public function workLabel(): string
+    {
+        return $this->items->map(fn ($item) => $item->workType?->name)->filter()->implode(', ');
+    }
+
     public static function rowTotals($row): array
     {
         $billed = self::netCustomer($row->status, $row->customer_amount, $row->returned_amount);

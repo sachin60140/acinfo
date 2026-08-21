@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\PartyModel;
+use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
 use App\Support\Screen;
@@ -270,28 +271,37 @@ class WorkFileController extends Controller
                 'customer_id' => ['required', 'integer', Rule::exists('party', 'id')->where('party_type', 'customer')],
                 'rows' => 'required|array|min:1|max:50',
                 'rows.*.registration_no' => 'nullable|string|max:20',
-                'rows.*.work_type_id' => 'required|integer|exists:work_type,id',
-                'rows.*.amount' => 'required|numeric|gte:0|max:99999999',
                 'rows.*.description' => 'nullable|string|max:255',
+                // Papers for one vehicle can be for several jobs at once, and
+                // each is charged for separately.
+                'rows.*.works' => 'required|array|min:1|max:10',
+                'rows.*.works.*.work_type_id' => 'required|integer|exists:work_type,id',
+                'rows.*.works.*.amount' => 'required|numeric|gte:0|max:99999999',
                 'remarks' => 'nullable|string|max:255',
             ], [
                 'rows.required' => 'Add at least one file.',
-                'rows.*.work_type_id.required' => 'Every row needs a type of work.',
-                'rows.*.amount.required' => 'Every row needs an amount.',
+                'rows.*.works.required' => 'Every file needs at least one work.',
+                'rows.*.works.*.work_type_id.required' => 'Every work needs a type.',
+                'rows.*.works.*.amount.required' => 'Every work needs an amount.',
             ]);
 
             $saved = DB::transaction(function () use ($req) {
                 $files = [];
 
                 foreach ($req->input('rows') as $row) {
+                    $works = $row['works'];
+
                     $file = new WorkFileModel;
                     $file->received_date = $req->received_date;
-                    $file->work_type_id = $row['work_type_id'];
+                    // The first job, for the columns that still read a single type.
+                    $file->work_type_id = $works[0]['work_type_id'];
                     // Stored one way however it was typed, so the same vehicle
                     // is always found by the history lookup.
                     $file->registration_no = WorkFileModel::normaliseRegistration($row['registration_no'] ?? null) ?: null;
                     $file->customer_id = $req->customer_id;
-                    $file->customer_amount = (float) $row['amount'];
+                    // Replaced by the roll-up below once the jobs exist; set here
+                    // so the row is never written without a figure at all.
+                    $file->customer_amount = 0;
                     // A file that has only just arrived is sitting in the office;
                     // moving it along is what the status screen is for.
                     $file->status = WorkFileModel::IN_OFFICE;
@@ -302,6 +312,24 @@ class WorkFileController extends Controller
                     // Derived from the id the insert just produced, still inside the
                     // transaction, so no one ever sees a file without its number.
                     $file->file_no = $file->generateFileNo();
+                    $file->save();
+
+                    /*
+                     * The jobs the papers are for. Written after the file so they
+                     * have its id, and before syncLedger so the figure that
+                     * reaches the customer's statement is the sum of them.
+                     */
+                    foreach ($works as $work) {
+                        $item = new WorkFileItemModel;
+                        $item->work_file_id = $file->id;
+                        $item->work_type_id = $work['work_type_id'];
+                        $item->customer_amount = (float) $work['amount'];
+                        $item->status = WorkFileModel::IN_OFFICE;
+                        $item->save();
+                    }
+
+                    $file->load('items');
+                    $file->rollUp();
                     $file->save();
 
                     $file->syncLedger();
@@ -325,7 +353,8 @@ class WorkFileController extends Controller
         $customers = PartyModel::selectList('customer');
 
         // On a validation failure the user gets their rows back, not a blank form.
-        $oldRows = old('rows', [['registration_no' => '', 'work_type_id' => '', 'description' => '', 'amount' => '']]);
+        // A bounced submission gets its rows back, works and all.
+        $oldRows = old('rows', [['registration_no' => '', 'description' => '', 'works' => [['work_type_id' => '', 'amount' => '']]]]);
 
         $props = [
             'workTypes' => $workTypes->map(fn ($type) => [
@@ -336,9 +365,11 @@ class WorkFileController extends Controller
             'historyUrl' => route('api.workfile.history'),
             'oldRows' => collect($oldRows)->map(fn ($row) => [
                 'registration_no' => $row['registration_no'] ?? '',
-                'work_type_id' => $row['work_type_id'] ?? '',
                 'description' => $row['description'] ?? '',
-                'amount' => $row['amount'] ?? '',
+                'works' => collect($row['works'] ?? [[]])->map(fn ($work) => [
+                    'work_type_id' => $work['work_type_id'] ?? '',
+                    'amount' => $work['amount'] ?? '',
+                ])->values(),
             ])->values(),
         ];
 

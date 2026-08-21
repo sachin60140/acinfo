@@ -16,12 +16,22 @@ const props = defineProps({
     oldRows: { type: Array, default: () => [] },
 });
 
+/*
+ * One job on the papers: a type and what the customer is charged for it.
+ *
+ * Papers for one vehicle are often for several at once — a transfer and a
+ * hypothecation addition together — and each is charged for separately, so
+ * each is a line rather than a work type invented to name the pair.
+ */
+function blankWork() {
+    return { work_type_id: '', amount: '' };
+}
+
 function blankRow() {
     return {
         registration_no: '',
-        work_type_id: '',
         description: '',
-        amount: '',
+        works: [blankWork()],
         // Lookup state, never submitted.
         history: null,
         looking: false,
@@ -32,13 +42,34 @@ function blankRow() {
 
 const rows = reactive(
     props.oldRows.length
-        ? props.oldRows.map((row) => ({ ...blankRow(), ...row }))
+        ? props.oldRows.map((row) => ({
+            ...blankRow(),
+            ...row,
+            // A bounced form comes back with the works as they were typed.
+            works: (row.works ?? []).length ? row.works.map((w) => ({ ...blankWork(), ...w })) : [blankWork()],
+        }))
         : [blankRow()]
 );
 
 const total = computed(() =>
-    rows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0)
+    rows.reduce(
+        (sum, row) => sum + row.works.reduce((rowSum, work) => rowSum + (Number(work.amount) || 0), 0),
+        0
+    )
 );
+
+const workCount = computed(() => rows.reduce((count, row) => count + row.works.length, 0));
+
+function addWork(row) {
+    row.works.push(blankWork());
+}
+
+function removeWork(row, index) {
+    // Never the last one: a file with no work on it is not a file.
+    if (row.works.length > 1) {
+        row.works.splice(index, 1);
+    }
+}
 
 const money = (value) =>
     (Number(value) || 0).toLocaleString('en-IN', {
@@ -60,11 +91,11 @@ function removeRow(index) {
  * Picking a work type fills in its standard rate, but never overwrites an
  * amount already typed — the rate is a starting point, not a rule.
  */
-function onWorkTypeChange(row) {
-    const type = props.workTypes.find((t) => String(t.id) === String(row.work_type_id));
+function onWorkTypeChange(work) {
+    const type = props.workTypes.find((t) => String(t.id) === String(work.work_type_id));
 
-    if (type && type.default_rate && !row.amount) {
-        row.amount = Number(type.default_rate).toFixed(2);
+    if (type && type.default_rate && !work.amount) {
+        work.amount = Number(type.default_rate).toFixed(2);
     }
 }
 
@@ -147,7 +178,8 @@ watch(total, (value) => {
             <div>
                 <h5 class="card-title mb-0">Files Received</h5>
                 <div class="side-hint">
-                    Each row is saved as its own file with its own number, and its own line on the customer's statement.
+                    Each row is one file with its own number and its own line on the customer's statement.
+                    Papers for several works go on one row, priced separately.
                 </div>
             </div>
             <button type="button" class="btn btn-outline-primary btn-sm" @click="addRow">
@@ -179,19 +211,52 @@ watch(total, (value) => {
                         </div>
                     </div>
 
-                    <div class="rf rf--work">
-                        <label class="form-label">Type of Work <span class="required-mark">*</span></label>
-                        <select
-                            class="form-select"
-                            :name="`rows[${index}][work_type_id]`"
-                            v-model="row.work_type_id"
-                            @change="onWorkTypeChange(row)"
-                            required>
-                            <option value="">Select work</option>
-                            <option v-for="type in workTypes" :key="type.id" :value="type.id">
-                                {{ type.name }}<template v-if="type.default_rate"> — {{ money(type.default_rate) }}</template>
-                            </option>
-                        </select>
+                    <div class="rf rf--works">
+                        <label class="form-label">
+                            Work &amp; Amount <span class="required-mark">*</span>
+                        </label>
+
+                        <!-- One line per job. Each is charged for and approved on
+                             its own, so each gets its own type and its own price. -->
+                        <div v-for="(work, wi) in row.works" :key="wi" class="rf-work">
+                            <select
+                                class="form-select"
+                                :name="`rows[${index}][works][${wi}][work_type_id]`"
+                                v-model="work.work_type_id"
+                                @change="onWorkTypeChange(work)"
+                                required>
+                                <option value="">Select work</option>
+                                <option v-for="type in workTypes" :key="type.id" :value="type.id">
+                                    {{ type.name }}<template v-if="type.default_rate"> — {{ money(type.default_rate) }}</template>
+                                </option>
+                            </select>
+
+                            <div class="input-group rf-work__amount">
+                                <span class="input-group-text">INR</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    class="form-control text-end"
+                                    :name="`rows[${index}][works][${wi}][amount]`"
+                                    v-model="work.amount"
+                                    placeholder="0.00"
+                                    required>
+                            </div>
+
+                            <button
+                                type="button"
+                                class="btn btn-sm btn-outline-danger"
+                                :disabled="row.works.length === 1"
+                                title="Remove this work"
+                                @click="removeWork(row, wi)">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+
+                        <button type="button" class="btn btn-sm btn-outline-primary rf-work__add" @click="addWork(row)">
+                            <i class="bi bi-plus-lg"></i> Add another work
+                        </button>
                     </div>
 
                     <div class="rf rf--details">
@@ -205,21 +270,6 @@ watch(total, (value) => {
                             placeholder="Party name, reference">
                     </div>
 
-                    <div class="rf rf--amount">
-                        <label class="form-label">Amount <span class="required-mark">*</span></label>
-                        <div class="input-group">
-                            <span class="input-group-text">INR</span>
-                            <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                class="form-control text-end"
-                                :name="`rows[${index}][amount]`"
-                                v-model="row.amount"
-                                placeholder="0.00"
-                                required>
-                        </div>
-                    </div>
 
                     <div class="rf rf--remove">
                         <button
@@ -327,7 +377,22 @@ watch(total, (value) => {
 .rf--reg { flex: 0 0 12rem; }
 .rf--work { flex: 1 1 12rem; }
 .rf--details { flex: 2 1 14rem; }
-.rf--amount { flex: 0 0 10rem; }
+.rf--works { flex: 1 1 24rem; }
+
+/* A job and its price sit on one line, with the button that removes it. */
+.rf-work {
+    align-items: center;
+    display: flex;
+    gap: 0.4rem;
+}
+
+.rf-work + .rf-work { margin-top: 0.35rem; }
+
+.rf-work .form-select { flex: 1 1 auto; min-width: 0; }
+
+.rf-work__amount { flex: 0 0 9.5rem; }
+
+.rf-work__add { margin-top: 0.4rem; }
 .rf--remove { flex: 0 0 auto; }
 
 .rf .form-label {

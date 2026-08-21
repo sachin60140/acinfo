@@ -239,10 +239,14 @@
             "historyUrl": "string",
             "oldRows": {
                 "list_of": {
-                    "amount": "string",
                     "description": "string",
                     "registration_no": "string",
-                    "work_type_id": "string"
+                    "works": {
+                        "list_of": {
+                            "amount": "string",
+                            "work_type_id": "string"
+                        }
+                    }
                 }
             },
             "workTypes": {
