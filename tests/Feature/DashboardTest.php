@@ -268,6 +268,69 @@ class DashboardTest extends TestCase
     }
 
     /**
+     * A file with no agreed rate has no margin, and is not counted as having
+     * earned its whole charge.
+     *
+     * The month's margin read COALESCE(vendor_amount, 0) — "not agreed" as
+     * free — so a file out with a vendor at a rate nobody had settled reported
+     * its entire charge as profit, on the one figure the business is run from.
+     */
+    public function test_the_months_margin_leaves_out_what_it_cannot_know(): void
+    {
+        $customer = $this->party('customer', '9000000701');
+        $vendor = $this->party('vendor', '9000000702');
+
+        $before = WorkFileModel::summary();
+
+        $file = $this->workFile($customer->id, $vendor->id);
+        $file->vendor_amount = null;
+        $file->save();
+        $file->items()->update(['vendor_amount' => null]);
+
+        $after = WorkFileModel::summary();
+
+        $this->assertSame(
+            round($before['month_margin'], 2),
+            round($after['month_margin'], 2),
+            'a cost nobody has agreed is not a cost of nothing'
+        );
+
+        $this->assertSame(
+            $before['month_unpriced'] + 1,
+            $after['month_unpriced'],
+            'and the tile can say how many it left out'
+        );
+
+        // Billing is a fact whatever the cost turns out to be.
+        $this->assertSame(
+            round($before['month_billed'] + 1000, 2),
+            round($after['month_billed'], 2)
+        );
+    }
+
+    /**
+     * Once the rate is agreed the file counts again, at what it actually made.
+     */
+    public function test_an_agreed_rate_puts_the_file_back_in_the_margin(): void
+    {
+        $customer = $this->party('customer', '9000000703');
+        $vendor = $this->party('vendor', '9000000704');
+
+        $before = WorkFileModel::summary();
+
+        // The helper bills 1,000 and agrees 800.
+        $this->workFile($customer->id, $vendor->id);
+
+        $after = WorkFileModel::summary();
+
+        $this->assertSame(
+            round($before['month_margin'] + 200, 2),
+            round($after['month_margin'], 2)
+        );
+
+        $this->assertSame($before['month_unpriced'], $after['month_unpriced'], 'nothing outstanding');
+    }
+    /**
      * A file with one work on it, the way receiving writes it: the folder, and
      * a row saying what the papers are for.
      */

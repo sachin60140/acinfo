@@ -125,6 +125,15 @@
                             <div class="stat closing">
                                 <span class="label">Margin</span>
                                 <span class="value {{ $billed - $cost < 0 ? 'cr' : 'dr' }}">{{ number_format($billed - $cost, 2, '.', ',') }}</span>
+                                {{--
+                                    A file with a rate still to be agreed has no margin
+                                    yet, so it is not in this figure. Said out loud,
+                                    because a total that quietly covers fewer files than
+                                    the two beside it reads as the whole answer.
+                                --}}
+                                @if ($unpricedCount)
+                                    <span class="stat-note">on {{ $fileCount - $unpricedCount }} of {{ $fileCount }} files &mdash; {{ $unpricedCount }} awaiting a price</span>
+                                @endif
                             </div>
                         </div>
 

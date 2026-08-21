@@ -92,6 +92,7 @@ class WorkFileController extends Controller
         $billed = 0.0;
         $cost = 0.0;
         $closedCount = 0;
+        $unpricedCount = 0;
         $rows = [];
 
         /*
@@ -110,14 +111,28 @@ class WorkFileController extends Controller
                 $closedCount++;
             }
 
-            // Part refunds and vendor returns both change what a file really
-            // earned and cost. Leaving those out made this page disagree with
-            // the statements and the dashboard it is meant to summarise.
-            $netCustomer = WorkFileModel::netCustomer($f->status, $f->customer_amount, $f->returned_amount);
-            $netVendor = WorkFileModel::netVendor($f->status, $f->vendor_amount, $f->vendor_returned_on !== null, $f->vendor_returned_amount);
+            /*
+             * Part refunds and vendor returns both change what a file really
+             * earned and cost. Leaving those out made this page disagree with
+             * the statements and the dashboard it is meant to summarise.
+             *
+             * Asked of rowTotals rather than worked out here, which is the
+             * whole reason that method exists. This page did its own
+             * subtraction and so answered differently: a file out with a
+             * vendor at no agreed rate showed the entire charge as margin,
+             * while the report beside it correctly left the cell empty.
+             */
+            $line = WorkFileModel::rowTotals($f);
+            $netCustomer = $line['billed'];
+            $netVendor = $line['cost'];
 
             $billed += $netCustomer;
             $cost += $netVendor;
+
+            // Counted so the margin total can say what it is a total of.
+            // Summing the rest as zero would quietly cover fewer files than
+            // the two figures beside it.
+            $unpricedCount += $line['margin'] === null ? 1 : 0;
 
             $rows[] = [
                 'id' => $f->id,
@@ -159,7 +174,9 @@ class WorkFileController extends Controller
                     ? 'was '.number_format((float) $f->vendor_amount, 2, '.', ',')
                     : null,
 
-                'margin' => $netCustomer - $netVendor,
+                // Null while a price is outstanding on any work: a difference
+                // between a figure and a blank is not a margin.
+                'margin' => $line['margin'],
 
                 'status' => WorkFileModel::STATUSES[$f->status] ?? $f->status,
                 // The badge colours itself from the raw key, not the label.
@@ -234,6 +251,7 @@ class WorkFileController extends Controller
             'billed' => $billed,
             'cost' => $cost,
             'closedCount' => $closedCount,
+            'unpricedCount' => $unpricedCount,
             'fileCount' => count($rows),
             // 'open' is a view of several statuses rather than one of them, so
             // it has no entry in the stored list to look up.
@@ -451,7 +469,16 @@ class WorkFileController extends Controller
                         // The jobs move with the folder: the file leaving the office is true of
                         // every work on it, and the folder's own status is derived from
                         // theirs — left behind, they would roll it straight back.
-                        $file->items()->update(['status' => WorkFileModel::DISPATCHED]);
+                        /*
+                         * Cancelled work is left where it is. It was struck off
+                         * the folder and off the customer's statement, and moving
+                         * it with the rest brought it back to life — the roll-up
+                         * counts a work that is not cancelled, so the charge
+                         * reappeared on a statement nobody had touched.
+                         */
+                        $file->items()
+                            ->where('status', '<>', WorkFileModel::CANCELLED)
+                            ->update(['status' => WorkFileModel::DISPATCHED]);
                     }
 
                     // Reloaded because the status above was written straight to
@@ -588,7 +615,12 @@ class WorkFileController extends Controller
                     // The jobs move with the folder: papers going back is true of
                     // every work on it, and the folder's own status is derived from
                     // theirs — left behind, they would roll it straight back.
-                    $file->items()->update(['status' => WorkFileModel::RETURNED]);
+                    // Except work already cancelled, which is struck off the
+                    // folder: papers going back does not un-strike it, and
+                    // moving it would put its charge back on the statement.
+                    $file->items()
+                        ->where('status', '<>', WorkFileModel::CANCELLED)
+                        ->update(['status' => WorkFileModel::RETURNED]);
                     $file->returned_on = $req->returned_on;
                     $file->returned_amount = self::partialOrNull($amounts[$file->id] ?? null, $file->customer_amount);
                     $file->save();

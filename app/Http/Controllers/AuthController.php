@@ -150,7 +150,10 @@ class AuthController extends Controller
                 'label' => 'File Margin',
                 'value' => (float) $work['month_margin'],
                 'type' => 'money',
-                'note' => 'on '.number_format($work['month_billed'], 2, '.', ',').' billed · '.now()->format('F Y'),
+                'note' => 'on '.number_format($work['month_billed'], 2, '.', ',').' billed · '.now()->format('F Y')
+                    .($work['month_unpriced']
+                        ? ' · '.$work['month_unpriced'].' of '.$work['month_files'].' awaiting a price'
+                        : ''),
             ],
         ];
 

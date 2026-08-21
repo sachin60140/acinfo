@@ -960,6 +960,201 @@ class WorkFileItemTest extends TestCase
 
         $this->assertNotEmpty($types[$spare->id]['delete_url']);
     }
+    /**
+     * A folder with one rate agreed and one still to come has no margin yet.
+     *
+     * Its own total is 1,200, which is a figure greater than zero, so it read
+     * as fully priced: the list showed a margin against a cost that was going
+     * to grow, and the report that chases missing rates passed it over. The
+     * work with no rate on it could sit there indefinitely with nobody told.
+     */
+    public function test_a_half_priced_folder_has_no_margin_and_is_still_chased(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0121');
+        $vendor = $this->vendor();
+        [$first, $second] = $file->items->all();
+
+        $this->post(route('workfile.assign'), [
+            'vendor_id' => $vendor->id,
+            'vendor_date' => now()->toDateString(),
+            'files' => [$file->id],
+            'amounts' => [$first->id => '1200', $second->id => ''],
+        ])->assertRedirect();
+
+        $this->assertEquals(1200, $file->refresh()->vendor_amount, 'the folder owes what was agreed');
+
+        $listed = collect($this->getJson(route('workfile.index'))->assertOk()->json('props.rows'))
+            ->firstWhere('id', $file->id);
+
+        $this->assertNull($listed['margin'], 'a cost still to grow is not a margin');
+
+        $chased = collect($this->getJson(route('workfile.index', ['pending' => 'vendor']))
+            ->assertOk()->json('props.rows'))->pluck('id');
+
+        $this->assertContains($file->id, $chased->all(), 'and somebody is told the rate is missing');
+    }
+
+    /**
+     * The list and the report are two views of the same figures and must not
+     * answer differently. The list worked its own margin out, so a file out
+     * with a vendor at no agreed rate showed the whole charge as profit on one
+     * page and an empty cell on the other.
+     */
+    public function test_the_list_and_the_report_agree_about_margin(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0122');
+        $vendor = $this->vendor();
+
+        $this->post(route('workfile.assign'), [
+            'vendor_id' => $vendor->id,
+            'vendor_date' => now()->toDateString(),
+            'files' => [$file->id],
+            'amounts' => [],
+        ])->assertRedirect();
+
+        $listed = collect($this->getJson(route('workfile.index'))->assertOk()->json('props.rows'))
+            ->firstWhere('id', $file->id);
+
+        $reported = collect($this->getJson(route('report.files'))->assertOk()->json('props.rows'))
+            ->firstWhere('id', $file->id);
+
+        $this->assertNull($listed['margin']);
+        $this->assertSame($reported['margin'], $listed['margin'], 'one answer, two pages');
+    }
+
+    /**
+     * Once every rate is agreed the file has a margin again, and both pages
+     * state the same one.
+     */
+    public function test_a_fully_priced_folder_has_a_margin(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0123');
+        $vendor = $this->vendor();
+        [$first, $second] = $file->items->all();
+
+        $this->post(route('workfile.assign'), [
+            'vendor_id' => $vendor->id,
+            'vendor_date' => now()->toDateString(),
+            'files' => [$file->id],
+            'amounts' => [$first->id => '1200', $second->id => '1800'],
+        ])->assertRedirect();
+
+        $listed = collect($this->getJson(route('workfile.index'))->assertOk()->json('props.rows'))
+            ->firstWhere('id', $file->id);
+
+        // Charged 5,000 across the two works, costing 3,000.
+        $this->assertEquals(2000, $listed['margin']);
+
+        $chased = collect($this->getJson(route('workfile.index', ['pending' => 'vendor']))
+            ->assertOk()->json('props.rows'))->pluck('id');
+
+        $this->assertNotContains($file->id, $chased->all(), 'nothing left to chase');
+    }
+    /**
+     * Work struck off a folder stays struck off when the folder moves.
+     *
+     * Handing the papers to a vendor moved every work on the file, cancelled
+     * ones included — and the roll-up counts a work that is not cancelled, so
+     * the charge came back onto a customer's statement that nobody had
+     * touched. A file billed 2,000 after a cancellation went back to 5,000 for
+     * doing nothing but giving it out.
+     */
+    public function test_giving_a_folder_out_does_not_revive_cancelled_work(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0124');
+        $vendor = $this->vendor();
+        [$kept, $struck] = $file->items->all();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$struck->id => WorkFileModel::CANCELLED],
+            'remarks' => [$struck->id => 'Entered by mistake'],
+        ])->assertRedirect();
+
+        $this->assertEquals(2000, $file->refresh()->customer_amount, 'the charge went with it');
+
+        $this->post(route('workfile.assign'), [
+            'vendor_id' => $vendor->id,
+            'vendor_date' => now()->toDateString(),
+            'files' => [$file->id],
+            'amounts' => [$kept->id => '1200'],
+        ])->assertRedirect();
+
+        $this->assertSame(WorkFileModel::CANCELLED, $struck->refresh()->status, 'still struck off');
+        $this->assertEquals(2000, $file->refresh()->customer_amount, 'and still billed 2,000');
+        $this->assertSame(2000.0, (float) PartyLedgerModel::where('work_file_id', $file->id)
+            ->where('file_role', 'customer')->value('amount'), 'on the statement too');
+    }
+
+    /**
+     * And when the papers go home. Returning a folder credits back what was
+     * charged; a cancelled work was never charged, so reviving it as returned
+     * would put a charge on the statement and refund part of it in one move.
+     */
+    public function test_returning_a_folder_does_not_revive_cancelled_work(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0125');
+        [$kept, $struck] = $file->items->all();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$struck->id => WorkFileModel::CANCELLED],
+            'remarks' => [$struck->id => 'Entered by mistake'],
+        ])->assertRedirect();
+
+        $this->post(route('workfile.customerreturn'), [
+            'returned_on' => now()->toDateString(),
+            'files' => [$file->id],
+            'remark' => 'Could not be done',
+        ])->assertRedirect();
+
+        $this->assertSame(WorkFileModel::CANCELLED, $struck->refresh()->status, 'still struck off');
+        $this->assertSame(WorkFileModel::RETURNED, $kept->refresh()->status, 'the live work went back');
+        $this->assertSame(WorkFileModel::RETURNED, $file->refresh()->status);
+        $this->assertEquals(2000, $file->customer_amount, 'still billed only what was live');
+    }
+    /**
+     * Both money queries must carry the outstanding-work counts.
+     *
+     * awaitingPrice() falls back to the folder's own total when they are
+     * missing, which is the right answer for a file of one work and the wrong
+     * one for a folder half priced. The fallback exists so an unrelated caller
+     * cannot crash a page; it is not meant to be how the list and the report
+     * answer, and a refactor that quietly dropped the columns would put the
+     * phantom margin straight back with every test still green.
+     */
+    public function test_the_money_queries_count_outstanding_work(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0126');
+
+        $listed = WorkFileModel::listing()->firstWhere('id', $file->id);
+        $reported = WorkFileModel::report('customer')->firstWhere('id', $file->id);
+
+        foreach (['listing' => $listed, 'report' => $reported] as $which => $row) {
+            $this->assertNotNull($row, "$which returns the file");
+
+            foreach (['unpriced_works', 'unbilled_works'] as $column) {
+                $this->assertTrue(
+                    property_exists($row, $column),
+                    "$which must select $column, or awaitingPrice() silently answers from the folder's total"
+                );
+            }
+        }
+
+        // Two works received, neither priced by a vendor yet.
+        $this->assertSame(2, (int) $listed->unpriced_works);
+        $this->assertSame(0, (int) $listed->unbilled_works);
+    }
     private function vendor(): PartyModel
     {
         $vendor = new PartyModel;

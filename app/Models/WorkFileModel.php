@@ -699,20 +699,49 @@ class WorkFileModel extends Model
                      - LEAST(COALESCE(vendor_returned_amount, COALESCE(vendor_amount, 0)), COALESCE(vendor_amount, 0))
             ELSE COALESCE(vendor_amount, 0) END";
 
+        /*
+         * A file whose price is still to be agreed has no margin yet, so it is
+         * left out of the month's rather than counted at a cost of nothing.
+         *
+         * COALESCE(vendor_amount, 0) above reads "not agreed" as free, so a
+         * file out with a vendor at no agreed rate reported its entire charge
+         * as profit — on the one figure the business is run from.
+         *
+         * The arms mirror awaitingPrice(): settled files are not outstanding,
+         * and a folder is asked about along with every live work on it, because
+         * a folder half priced totals more than zero and reads as settled.
+         */
+        $shortWork = fn (string $column) => "EXISTS (
+            SELECT 1 FROM work_file_item
+            WHERE work_file_item.work_file_id = work_file.id
+              AND work_file_item.status <> '".self::CANCELLED."'
+              AND (work_file_item.$column IS NULL OR work_file_item.$column <= 0))";
+
+        $outstanding = "(status NOT IN ('".self::CANCELLED."', '".self::RETURNED."') AND (
+            customer_amount IS NULL OR customer_amount <= 0
+            OR ".$shortWork('customer_amount')."
+            OR (vendor_id IS NOT NULL AND (
+                vendor_amount IS NULL OR vendor_amount <= 0
+                OR ".$shortWork('vendor_amount')."))))";
+
         $month = DB::table('work_file')
             ->whereYear('received_date', now()->year)
             ->whereMonth('received_date', now()->month)
             ->selectRaw("COALESCE(SUM($earned), 0) as billed")
-            ->selectRaw("COALESCE(SUM($earned - ($spent)), 0) as margin")
+            ->selectRaw("COALESCE(SUM(CASE WHEN $outstanding THEN 0 ELSE $earned - ($spent) END), 0) as margin")
+            // Counted so the tile can say what its figure is a figure of.
+            ->selectRaw("COALESCE(SUM(CASE WHEN $outstanding THEN 1 ELSE 0 END), 0) as unpriced")
+            ->selectRaw('COUNT(*) as files')
             ->first();
 
         return [
             'open' => $open,
             'month_billed' => (float) ($month->billed ?? 0),
             'month_margin' => (float) ($month->margin ?? 0),
+            'month_files' => (int) ($month->files ?? 0),
+            'month_unpriced' => (int) ($month->unpriced ?? 0),
         ];
     }
-
     /**
      * Files waiting to be given to a vendor: received, not cancelled, nobody
      * working on them yet. This is exactly the set the assign screen offers, and
@@ -1024,6 +1053,48 @@ class WorkFileModel extends Model
 
         return implode(' · ', $said);
     }
+    /**
+     * How many works on a file are still waiting on a figure — one column per
+     * side, so a report can tell "nothing agreed" from "a figure of zero".
+     *
+     * The folder's own total cannot answer this any more. A folder with a
+     * transfer priced at 1,200 and a hypothecation addition not priced at all
+     * totals 1,200, which is a number greater than zero — so the file read as
+     * fully priced, showed a margin against a cost that was still going to
+     * grow, and was chased by nothing.
+     *
+     * Cancelled work is left out: it is not charged for and never will be
+     * priced, so it is not outstanding.
+     *
+     * The test inside is the one syncSide() uses to decide there is nothing to
+     * post — null, or zero or less. The two have to agree, or a work falls
+     * between them and is reported by neither.
+     */
+    private static function unpricedWorksColumn()
+    {
+        $cancelled = self::CANCELLED;
+
+        return DB::raw(<<<SQL
+            (SELECT COUNT(*) FROM work_file_item
+              WHERE work_file_item.work_file_id = work_file.id
+                AND work_file_item.status <> '$cancelled'
+                AND (work_file_item.vendor_amount IS NULL OR work_file_item.vendor_amount <= 0)
+            ) AS unpriced_works
+            SQL);
+    }
+
+    private static function unbilledWorksColumn()
+    {
+        $cancelled = self::CANCELLED;
+
+        return DB::raw(<<<SQL
+            (SELECT COUNT(*) FROM work_file_item
+              WHERE work_file_item.work_file_id = work_file.id
+                AND work_file_item.status <> '$cancelled'
+                AND (work_file_item.customer_amount IS NULL OR work_file_item.customer_amount <= 0)
+            ) AS unbilled_works
+            SQL);
+    }
     private static function workLabelColumn()
     {
         $cancelled = self::CANCELLED;
@@ -1063,6 +1134,8 @@ class WorkFileModel extends Model
                 'work_file.vendor_returned_on',
                 'work_file.vendor_returned_amount',
                 self::workLabelColumn(),
+                self::unpricedWorksColumn(),
+                self::unbilledWorksColumn(),
                 'customer.name as customer_name',
                 'vendor.name as vendor_name',
                 DB::raw(($isVendor ? 'vendor.id' : 'customer.id').' as party_id'),
@@ -1118,11 +1191,36 @@ class WorkFileModel extends Model
             return false;
         }
 
-        $unbilled = (float) ($row->customer_amount ?? 0) <= 0;
-        // Coalesced: rowTotals is called with rows from several different
-        // queries, and not all of them select every column.
-        $unpriced = ($row->vendor_id ?? null) !== null && (float) ($row->vendor_amount ?? 0) <= 0;
+        /*
+         * Asked of the works, because that is where a figure is agreed now.
+         * The folder's total says nothing about a folder that is half
+         * priced: 1,200 agreed on one work and nothing on the other totals
+         * 1,200, and reads as settled.
+         *
+         * The folder is the fallback for a caller that did not select the
+         * counts — the answer it gives is the old one, which is right for
+         * the file of one work that most of them are.
+         */
+        /*
+         * Asked of the folder and of the works, and outstanding if either says
+         * so. Never one instead of the other:
+         *
+         * The folder's total cannot see a folder that is half priced — 1,200
+         * agreed on one work and nothing on the other totals 1,200, and reads
+         * as settled. The works cannot see a folder that has none, which is not
+         * a state receiving can produce but is exactly the row this report
+         * should not pass over in silence.
+         *
+         * Coalesced, because rowTotals is called with rows from several
+         * different queries and not all of them select the counts. Without
+         * them the answer is the old one, which is right for the file of one
+         * work that most of them are.
+         */
+        $unbilled = (float) ($row->customer_amount ?? 0) <= 0
+            || (int) ($row->unbilled_works ?? 0) > 0;
 
+        $unpriced = ($row->vendor_id ?? null) !== null
+            && ((float) ($row->vendor_amount ?? 0) <= 0 || (int) ($row->unpriced_works ?? 0) > 0);
         return $unbilled || $unpriced;
     }
 
@@ -1319,14 +1417,33 @@ class WorkFileModel extends Model
          * vendor amount typed as 0 stores 0.00, posted nothing, and was
          * reported by nothing.
          */
-        $unbilled = fn ($q) => $q->where('work_file.customer_amount', '<=', 0);
+        /*
+         * The folder's own figure, or any work on it without one. Either makes
+         * a file outstanding, for the reasons set out in awaitingPrice(): the
+         * folder cannot see a half priced file, and the works cannot see a
+         * folder that has none.
+         */
+        $short = fn ($q, string $table, string $column) => $q
+            ->where(fn ($v) => $v->whereNull("$table.$column")->orWhere("$table.$column", '<=', 0));
+
+        $anyWorkShort = fn (string $column) => fn ($w) => $short(
+            $w->select(DB::raw(1))
+                ->from('work_file_item')
+                ->whereColumn('work_file_item.work_file_id', 'work_file.id')
+                ->where('work_file_item.status', '<>', self::CANCELLED),
+            'work_file_item',
+            $column
+        );
+
+        $outstanding = fn ($q, string $column) => $q->where(
+            fn ($o) => $short($o, 'work_file', $column)->orWhereExists($anyWorkShort($column))
+        );
+
+        $unbilled = fn ($q) => $outstanding($q, 'customer_amount');
 
         // Only meaningful once there is a vendor — an in-house file has no rate
         // to agree and never will.
-        $unpriced = fn ($q) => $q->whereNotNull('work_file.vendor_id')
-            ->where(fn ($v) => $v->whereNull('work_file.vendor_amount')
-                ->orWhere('work_file.vendor_amount', '<=', 0));
-
+        $unpriced = fn ($q) => $outstanding($q->whereNotNull('work_file.vendor_id'), 'vendor_amount');
         match ($which) {
             'customer' => $unbilled($query),
             'vendor' => $unpriced($query),
@@ -1413,6 +1530,8 @@ class WorkFileModel extends Model
                 'work_file.returned_amount',
                 'work_file.vendor_returned_amount',
                 self::workLabelColumn(),
+                self::unpricedWorksColumn(),
+                self::unbilledWorksColumn(),
                 'customer.name as customer_name',
                 'customer.id as customer_id',
                 'vendor.name as vendor_name',
