@@ -253,7 +253,9 @@ class WorkFileController extends Controller
                 // needs a minus sign to be read correctly.
                 ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold'],
                 ['key' => 'status', 'label' => 'Status', 'type' => 'badge',
-                    'note' => 'works_note', 'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url'],
+                    'note' => 'works_note', 'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url',
+                    // An image or a PDF, so it opens over the list.
+                    'subPreview' => true],
                 // Written to every export, drawn on no screen. See exportOnly
                 // in DataGrid, and workSplit() for what each holds.
                 ['key' => 'works_done', 'label' => 'Approved Works', 'exportOnly' => true],

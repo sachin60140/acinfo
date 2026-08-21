@@ -108,39 +108,93 @@ class AuditWorkFiles extends Command
         }
 
         // ---- The statements say what the file says ------------------------
+
+        /*
+         * What syncSide() would write, asked the same way it asks.
+         *
+         * It writes nothing without both a party and an amount above zero: a
+         * file can be taken in, and even given to a vendor, before either price
+         * is agreed, and a statement must not carry a line worth nothing. So a
+         * file awaiting a price is not a file missing its entry — this is what
+         * the dashboard's Awaiting Price tile is counting, and reporting it
+         * here as a disagreement buries the ones that are.
+         */
+        $expected = [
+            'customer' => ! $file->isCancelled()
+                && $file->customer_id
+                && (float) $file->customer_amount > 0,
+
+            'vendor' => ! $file->isCancelled()
+                && $file->vendor_id
+                && (float) $file->vendor_amount > 0,
+
+            'customer_return' => $file->isReturned()
+                && $file->customer_id
+                && $file->refundToCustomer() > 0,
+
+            'vendor_return' => $file->vendor_returned_on
+                && ! $file->isCancelled()
+                && $file->vendor_id
+                && $file->reversedToVendor() > 0,
+        ];
+
+        $amounts = [
+            'customer' => (float) $file->customer_amount,
+            'vendor' => (float) $file->vendor_amount,
+            'customer_return' => $file->refundToCustomer(),
+            'vendor_return' => $file->reversedToVendor(),
+        ];
+
+        $whose = [
+            'customer' => (int) $file->customer_id,
+            'vendor' => (int) $file->vendor_id,
+            'customer_return' => (int) $file->customer_id,
+            'vendor_return' => (int) $file->vendor_id,
+        ];
+
+        $said = [
+            'customer' => 'charges the customer',
+            'vendor' => 'owes the vendor',
+            'customer_return' => 'refunds the customer',
+            'vendor_return' => 'takes back from the vendor',
+        ];
+
         $entries = PartyLedgerModel::where('work_file_id', $file->id)->get()->keyBy('file_role');
-        $customer = $entries->get('customer');
 
-        if ($file->isCancelled()) {
-            if ($customer) {
-                $note($id, 'is cancelled but still debits the customer');
-            }
-        } elseif (! $customer) {
-            $note($id, 'has no entry on the customer statement');
-        } else {
-            if ((int) $customer->party_id !== (int) $file->customer_id) {
-                $note($id, "is billed to party {$customer->party_id}, but the file says {$file->customer_id}");
+        foreach ($expected as $role => $wanted) {
+            $entry = $entries->get($role);
+
+            if ($wanted && ! $entry) {
+                $note($id, "$said[$role] ".number_format($amounts[$role], 2).' but has no entry for it');
+
+                continue;
             }
 
-            if (abs((float) $customer->amount - (float) $file->customer_amount) > 0.005) {
-                $note($id, "debits the customer {$customer->amount} but charges {$file->customer_amount}");
+            if (! $wanted && $entry) {
+                $note($id, "has a \"$role\" entry of {$entry->amount} that nothing on the file calls for");
+
+                continue;
             }
 
-            if ($customer->particular !== $file->ledgerParticular()) {
-                $note($id, 'reads "'.$customer->particular.'" on the statement, and "'.$file->ledgerParticular().'" on the file'
-                    .' — files:relabel-ledger puts this right');
+            if (! $entry) {
+                continue;
+            }
+
+            if (abs((float) $entry->amount - $amounts[$role]) > 0.005) {
+                $note($id, "$said[$role] ".number_format($amounts[$role], 2)." but the entry says {$entry->amount}");
+            }
+
+            if ((int) $entry->party_id !== $whose[$role]) {
+                $note($id, "posts \"$role\" against party {$entry->party_id}, and the file says {$whose[$role]}");
             }
         }
 
-        $vendor = $entries->get('vendor');
-        $owes = $file->vendor_id && $file->vendor_amount !== null && ! $file->isCancelled();
+        // The wording, which files:relabel-ledger is what puts right.
+        $customer = $entries->get('customer');
 
-        if ($owes && ! $vendor) {
-            $note($id, 'owes a vendor but has no entry on their statement');
-        } elseif ($owes && abs((float) $vendor->amount - (float) $file->vendor_amount) > 0.005) {
-            $note($id, "credits the vendor {$vendor->amount} but costs {$file->vendor_amount}");
-        } elseif (! $owes && $vendor) {
-            $note($id, 'has an entry on a vendor statement it should not');
+        if ($customer && $customer->particular !== $file->ledgerParticular()) {
+            $note($id, 'reads "'.$customer->particular.'" on the statement and "'.$file->ledgerParticular().'" on the file'
+                .' — files:relabel-ledger puts this right');
         }
 
         // ---- An approval is dated and evidenced ---------------------------

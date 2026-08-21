@@ -25,6 +25,25 @@ import FilePreview from './FilePreview.vue';
  */
 const preview = ref(null);
 
+/*
+ * A second line that links somewhere.
+ *
+ * A document — an approval screenshot — opens over the list, because checking
+ * one is a glance and the reader is part way down a page that is filtered and
+ * scrolled. Anything else is a page and is followed normally: opened in the
+ * dialog it would land in a frame with none of its own navigation, which is
+ * how a party statement came to be a viewer saying it could not load.
+ */
+function onSubLink(event, column, row) {
+    if (! column.subPreview) {
+        return;
+    }
+
+    event.preventDefault();
+
+    preview.value = { src: row[column.subLinkTo], title: row[column.sub] };
+}
+
 import {
     cellText,
     exportColumns as exportableColumns,
@@ -47,6 +66,10 @@ const props = defineProps({
      *          dd-mm-yyyy sorts by day of the month unless pointed at the ISO one
      * note     a second quiet line of plain text, above sub — for a cell that
      *          has something to say as well as something to open
+     * subPreview  the sub link is a document rather than a page, so it opens over
+     *          the list instead of replacing it. Only for something a viewer can
+     *          show: a page opened this way lands in a frame with none of its own
+     *          navigation, which is how a party statement came to be unreadable
      * exportOnly  kept out of the table but written to every export. For detail
      *          a spreadsheet can sort and filter and a screen has no room for:
      *          the works on a file, which are summarised in a cell here and
@@ -629,14 +652,15 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                 </div>
 
                                 <div v-if="column.sub && row[column.sub]" class="ui-sub">
-                                    <!-- Opened over the list, not instead of it:
-                                         checking a screenshot is a glance, and the
-                                         reader is part way down a filtered page. -->
+                                    <!-- A document opens over the list, not instead
+                                         of it: checking a screenshot is a glance, and
+                                         the reader is part way down a filtered page.
+                                         Anything else is a page, and is followed. -->
                                     <a
                                         v-if="column.subLinkTo && row[column.subLinkTo]"
                                         :href="row[column.subLinkTo]"
                                         class="ui-link"
-                                        @click.prevent="preview = { src: row[column.subLinkTo], title: row[column.sub] }">
+                                        @click="onSubLink($event, column, row)">
                                         {{ row[column.sub] }}
                                     </a>
                                     <template v-else>{{ row[column.sub] }}</template>

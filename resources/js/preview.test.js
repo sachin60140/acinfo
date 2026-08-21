@@ -133,6 +133,7 @@ describe('the files list', () => {
             type: 'badge',
             sub: 'screenshot',
             subLinkTo: 'screenshot_url',
+            subPreview: true,
         },
     ];
 
@@ -292,5 +293,50 @@ describe('export-only columns', () => {
 
         expect(header).toEqual(['File No.', 'Status', 'Approved Works', 'Approved On', 'Pending Works']);
         expect(body[0]).toEqual(['F-16028', 'Partly Approved', 'HPA', '21-08-2026', 'HPT, TR']);
+    });
+});
+
+/*
+ * A second line that links to a page, not a document.
+ *
+ * The parties list puts a party's statement there. Opened in the dialog it
+ * landed in a frame with none of its own navigation, and the viewer reported
+ * it as a document that could not be loaded — so the dialog is opt-in, and
+ * everything else is followed as the link it is.
+ */
+describe('a sub link to a page', () => {
+    const columns = [
+        { key: 'name', label: 'Name' },
+        {
+            key: 'balance',
+            label: 'Balance',
+            sub: 'statement_action',
+            subLinkTo: 'statement_url',
+        },
+    ];
+
+    const rows = [{
+        id: 1,
+        name: 'Carr 4 Sales',
+        balance: '12,500.00 Dr',
+        statement_action: 'Statement',
+        statement_url: '/admin/party/statement/1',
+    }];
+
+    it('is followed, not opened over the list', async () => {
+        const host = mount(DataGrid, { columns, rows, title: 'Customers' });
+        await nextTick();
+
+        const link = [...host.querySelectorAll('a')]
+            .find((a) => a.textContent.includes('Statement'));
+
+        expect(link).toBeTruthy();
+
+        const click = new window.MouseEvent('click', { bubbles: true, cancelable: true });
+        link.dispatchEvent(click);
+        await nextTick();
+
+        expect(click.defaultPrevented).toBe(false);
+        expect(document.querySelector('.preview')).toBe(null);
     });
 });
