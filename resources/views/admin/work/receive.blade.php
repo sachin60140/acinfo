@@ -6,70 +6,44 @@
     @include('admin.party._style')
 
     <style>
-        .row-table {
-            font-size: 13px;
+        /*
+         * The batch's own header. Everything below it is drawn by the component,
+         * which uses the application's own primitives — these are the few things
+         * this page adds on top.
+         */
+        .rcv-head {
+            display: grid;
+            gap: var(--s-4);
+            grid-template-columns: 2fr 1fr 1fr;
         }
 
-        .row-table th {
-            color: #64748b;
-            font-size: 0.74rem;
+        /* Where the customer's balance lands once this batch is booked. Under
+           the select, because it means nothing until one is chosen. */
+        .rcv-balance {
+            align-items: baseline;
+            background: var(--n-050);
+            border: 1px solid var(--n-200);
+            border-radius: var(--r-sm);
+            display: inline-flex;
+            font-size: var(--t-sm);
+            font-weight: 700;
+            gap: var(--s-2);
+            margin-top: var(--s-1);
+            padding: var(--s-2) var(--s-3);
+        }
+
+        .rcv-balance__label {
+            color: var(--n-500);
+            font-size: var(--t-xs);
             font-weight: 700;
             letter-spacing: 0.04em;
             text-transform: uppercase;
-            white-space: nowrap;
         }
 
-        .row-table td {
-            vertical-align: top;
-        }
-
-        .row-table .form-control,
-        .row-table .form-select {
-            min-height: 40px;
-        }
-
-        .row-table td.row-no {
-            color: #94a3b8;
-            font-weight: 700;
-            padding-top: 0.65rem;
-            width: 2rem;
-        }
-
-        .batch-total {
-            background: #f6f9ff;
-            border: 1px solid #4154f1;
-            border-radius: 7px;
-            padding: 0.7rem 0.95rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            gap: 1rem;
-        }
-
-        .batch-total .label {
-            color: #64748b;
-            font-size: 0.78rem;
-            font-weight: 700;
-            text-transform: uppercase;
-        }
-
-        .batch-total .value {
-            color: #0f172a;
-            font-size: 1.3rem;
-            font-weight: 700;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .balance-chip {
-            background: #eef2ff;
-            border: 1px solid #c7d2fe;
-            border-radius: 7px;
-            color: #3730a3;
-            display: inline-flex;
-            font-size: 0.85rem;
-            font-weight: 700;
-            margin-top: 0.55rem;
-            padding: 0.45rem 0.7rem;
+        @media (max-width: 991.98px) {
+            .rcv-head {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 @endsection
@@ -108,69 +82,91 @@
             <form id="receive_form" action="{{ route('workfile.receive') }}" method="POST">
                 @csrf
 
-                <div class="card">
-                    <div class="card-body">
-                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-4">
-                            <h5 class="card-title mb-0">Who and When</h5>
-                            <a href="{{ route('workfile.index') }}" class="btn btn-outline-secondary btn-sm">
-                                <i class="bi bi-list-ul me-1"></i> All Files
+                <div class="ui">
+                    <div class="ui-card">
+                        <div class="ui-card__head">
+                            <div>
+                                <h2 class="ui-card__title">Who and When</h2>
+                                <div class="ui-hint">These apply to every file in this batch.</div>
+                            </div>
+                            <a href="{{ route('workfile.index') }}" class="ui-btn ui-btn--sm">
+                                <i class="bi bi-list-ul"></i> All Files
                             </a>
                         </div>
 
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <label for="customer_id" class="form-label">Customer <span class="required-mark">*</span></label>
-                                <div class="input-group">
-                                    <span class="input-group-text"><i class="bi bi-people"></i></span>
-                                    <select class="form-select" id="customer_id" name="customer_id" required autofocus>
+                        <div class="ui-card__body">
+                            <div class="rcv-head">
+                                <div class="ui-field">
+                                    <label class="ui-label" for="customer_id">
+                                        Customer <span class="ui-label__req">*</span>
+                                    </label>
+                                    <select class="ui-select" id="customer_id" name="customer_id" required autofocus>
                                         <option value="">Select customer</option>
                                         @foreach ($customers as $c)
                                             <option value="{{ $c->id }}" data-balance="{{ $c->current_balance }}" {{ old('customer_id') == $c->id ? 'selected' : '' }}>{{ $c->name }} ({{ $c->mobile }})</option>
                                         @endforeach
                                     </select>
+
+                                    <div class="rcv-balance">
+                                        <span class="rcv-balance__label">Balance after</span>
+                                        <span class="ui-money" id="balance_hint">0.00</span>
+                                    </div>
                                 </div>
-                                <div class="balance-chip" id="balance_hint">Current balance: 0.00</div>
-                            </div>
 
-                            <div class="col-md-3">
-                                <label for="received_date_display" class="form-label">Received Date <span class="required-mark">*</span></label>
-                                @include('partials._datefield', [
-                                    'name' => 'received_date',
-                                    'value' => old('received_date', date('Y-m-d')),
-                                    'required' => true,
-                                ])
-                            </div>
+                                <div class="ui-field">
+                                    <label class="ui-label" for="received_date_display">
+                                        Received Date <span class="ui-label__req">*</span>
+                                    </label>
+                                    {{--
+                                        The markup assets/js/datepicker.js binds by class,
+                                        written out here rather than through the shared
+                                        partial so the box carries this screen's own input
+                                        styling. The contract it binds to — js-datefield,
+                                        data-target, and the hidden Y-m-d beside it — is
+                                        unchanged.
+                                    --}}
+                                    @php
+                                        $rcvDate = old('received_date', date('Y-m-d'));
+                                        $rcvShown = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $rcvDate)
+                                            ? date('d-m-Y', strtotime($rcvDate))
+                                            : '';
+                                    @endphp
+                                    <input type="text"
+                                           class="ui-input js-datefield"
+                                           id="received_date_display"
+                                           data-target="received_date"
+                                           value="{{ $rcvShown }}"
+                                           placeholder="dd-mm-yyyy"
+                                           inputmode="numeric"
+                                           maxlength="10"
+                                           autocomplete="off"
+                                           required>
+                                    <input type="hidden" id="received_date" name="received_date" value="{{ $rcvDate }}">
+                                </div>
 
-                            <div class="col-md-3">
-                                <label for="remarks" class="form-label">Remarks</label>
-                                <div class="input-group">
-                                    <span class="input-group-text"><i class="bi bi-chat-left-text"></i></span>
-                                    <input type="text" class="form-control" id="remarks" name="remarks" value="{{ old('remarks') }}" maxlength="255" placeholder="Applies to every file below">
+                                <div class="ui-field">
+                                    <label class="ui-label" for="remarks">Remarks</label>
+                                    <input type="text"
+                                           class="ui-input"
+                                           id="remarks"
+                                           name="remarks"
+                                           value="{{ old('remarks') }}"
+                                           maxlength="255"
+                                           placeholder="Applies to every file below">
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="card">
-                    <div class="card-body">
-                        {{--
-                            Rendered by Vue. The inputs keep the very names the
-                            controller already validates, so the form still posts
-                            normally and the server still checks every field —
-                            which is what makes converting one screen at a time
-                            safe on a live application.
-                        --}}
-                        <div data-vue="vue-receive-rows" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
-
-                        <div class="d-flex flex-wrap gap-2 justify-content-end mt-3">
-                            <a href="{{ route('workfile.index') }}" class="btn btn-outline-secondary">Cancel</a>
-                            <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-check2-circle me-1"></i> Receive Files
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                {{--
+                    Rendered by Vue, card and footer included. The inputs keep the
+                    very names the controller already validates, so the form still
+                    posts normally and the server still checks every field — which
+                    is what makes converting one screen at a time safe on a live
+                    application.
+                --}}
+                <div data-vue="vue-receive-rows" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>
             </form>
         @endif
     </section>
@@ -212,8 +208,9 @@
             let total = 0;
 
             const paint = function () {
-                balanceHint.textContent = 'Balance after: '
-                    + (customer.value ? balance(current() + total) : money(total));
+                // The label beside it is markup now, so only the figure is
+                // written here.
+                balanceHint.textContent = customer.value ? balance(current() + total) : money(total);
             };
 
             // The rows are a Vue component now; it announces its running total

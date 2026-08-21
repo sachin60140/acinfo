@@ -256,6 +256,7 @@
     },
     "file-receive": {
         "vue-receive-rows": {
+            "cancelUrl": "string",
             "historyUrl": "string",
             "oldRows": {
                 "list_of": {
