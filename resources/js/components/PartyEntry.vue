@@ -292,7 +292,7 @@ function resetDateField() {
             <div v-if="selected" class="ui-card entry-statement">
                 <div class="ui-card__body">
                     <h2 class="ui-card__title">Statement</h2>
-                    <a :href="statementHref" class="ui-btn entry-statement__link" target="_blank" rel="noopener">
+                    <a :href="statementHref" class="ui-btn entry-statement__link">
                         <i class="bi bi-file-earmark-text"></i> Open full statement
                     </a>
                 </div>

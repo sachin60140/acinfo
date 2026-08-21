@@ -167,6 +167,7 @@ class WorkFileTest extends TestCase
          */
         $byItem = [];
         $itemRemarks = [];
+        $approvedOn = [];
 
         foreach ($statuses as $fileId => $status) {
             $itemId = WorkFileItemModel::where('work_file_id', $fileId)->value('id');
@@ -175,11 +176,22 @@ class WorkFileTest extends TestCase
             if (array_key_exists($fileId, $remarks)) {
                 $itemRemarks[$itemId] = $remarks[$fileId];
             }
+
+            /*
+             * An approval is dated, and the screen fills the box with today.
+             * Supplied here for the same reason the reason above is: these
+             * tests are about what the approval does to the money, not about
+             * the rule that it has to say when it happened.
+             */
+            if ($status === WorkFileModel::APPROVED) {
+                $approvedOn[$itemId] = now()->toDateString();
+            }
         }
 
         $this->controller->status(Request::create('/admin/file/status', 'POST', [
             'statuses' => $byItem,
             'remarks' => $itemRemarks,
+            'approved_on' => $approvedOn,
         ]));
     }
 
@@ -632,7 +644,9 @@ class WorkFileTest extends TestCase
         $itemId = WorkFileItemModel::where('work_file_id', $file->id)->value('id');
 
         $this->controller->status(Request::create('/admin/file/status', 'POST',
-            ['statuses' => [$itemId => 'approval_done']],
+            // Dated, as the board dates it: this test is about the document,
+            // not about the rule that an approval says when it happened.
+            ['statuses' => [$itemId => 'approval_done'], 'approved_on' => [$itemId => now()->toDateString()]],
             [],
             ['screenshots' => [$itemId => UploadedFile::fake()->image('approval.jpg')]]
         ));
@@ -1504,7 +1518,7 @@ class WorkFileTest extends TestCase
         $itemId = WorkFileItemModel::where('work_file_id', $file->id)->value('id');
 
         $this->controller->status(Request::create('/admin/file/status', 'POST',
-            ['statuses' => [$itemId => 'approval_done'], 'remarks' => []],
+            ['statuses' => [$itemId => 'approval_done'], 'remarks' => [], 'approved_on' => [$itemId => now()->toDateString()]],
             [],
             // A real image the browser claims is something else entirely.
             ['screenshots' => [$itemId => UploadedFile::fake()->image('approval.jpg')]]

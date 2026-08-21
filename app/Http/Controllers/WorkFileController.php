@@ -775,11 +775,23 @@ class WorkFileController extends Controller
                 'remarks.*' => 'nullable|string|max:255',
                 'screenshots' => 'nullable|array',
                 'screenshots.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,pdf|max:4096',
+
+                /*
+                 * The day the RTO approved it, which is not always the day
+                 * someone got round to recording it. A future date is not an
+                 * approval that has happened.
+                 */
+                'approved_on' => 'nullable|array',
+                'approved_on.*' => 'nullable|date_format:Y-m-d|before_or_equal:today',
+            ], [
+                'approved_on.*.date_format' => 'An approval date must be a real date.',
+                'approved_on.*.before_or_equal' => 'An approval cannot be dated in the future.',
             ]);
 
             $wanted = $req->input('statuses');
             $remarks = $req->input('remarks', []);
             $uploads = $req->file('screenshots', []);
+            $approvedOn = $req->input('approved_on', []);
 
             $items = WorkFileItemModel::with('file', 'workType')
                 ->whereIn('id', array_keys($wanted))
@@ -803,6 +815,44 @@ class WorkFileController extends Controller
                 return back()->withInput()->with(
                     'error',
                     'Approval Done needs a screenshot. Attach one for: '.$missing->implode(', ')
+                );
+            }
+
+            /*
+             * An approval is a thing that happened on a day, and which day is
+             * the whole question when two of them arrive a week apart. So it
+             * is asked for rather than assumed to be today: work approved on
+             * Friday and entered on Monday would otherwise be recorded wrong,
+             * and the file's history is what settles arguments later.
+             */
+            $undated = $items
+                ->filter(fn ($item) => $wanted[$item->id] === WorkFileModel::APPROVED
+                    && trim((string) ($approvedOn[$item->id] ?? '')) === ''
+                    && ! $item->approved_on)
+                ->map($name);
+
+            if ($undated->isNotEmpty()) {
+                return back()->withInput()->with(
+                    'error',
+                    'Approval Done needs the date it was approved. Add one for: '.$undated->implode(', ')
+                );
+            }
+
+            // Papers cannot be approved before they were taken in.
+            $tooEarly = $items
+                ->filter(function ($item) use ($wanted, $approvedOn) {
+                    $date = trim((string) ($approvedOn[$item->id] ?? ''));
+
+                    return $wanted[$item->id] === WorkFileModel::APPROVED
+                        && $date !== ''
+                        && $date < $item->file->received_date;
+                })
+                ->map(fn ($item) => $name($item).' (received '.date('d-m-Y', strtotime($item->file->received_date)).')');
+
+            if ($tooEarly->isNotEmpty()) {
+                return back()->withInput()->with(
+                    'error',
+                    'An approval cannot be dated before the papers came in. Check: '.$tooEarly->implode(', ')
                 );
             }
 
@@ -843,7 +893,7 @@ class WorkFileController extends Controller
                 );
             }
 
-            $changed = DB::transaction(function () use ($items, $wanted, $remarks, $uploads) {
+            $changed = DB::transaction(function () use ($items, $wanted, $remarks, $uploads, $approvedOn) {
                 $files = [];
                 $notes = [];
                 $moved = 0;
@@ -872,6 +922,18 @@ class WorkFileController extends Controller
                     }
 
                     $item->status = $wanted[$item->id];
+
+                    /*
+                     * Set before the save, because the model stamps today's
+                     * date on an approval that arrives without one — that is
+                     * the backstop for older files, not the answer here.
+                     */
+                    $date = trim((string) ($approvedOn[$item->id] ?? ''));
+
+                    if ($date !== '' && $item->isApproved()) {
+                        $item->approved_on = $date;
+                    }
+
                     $item->save();
 
                     if ($movedThis) {
@@ -959,6 +1021,11 @@ class WorkFileController extends Controller
             'statuses' => WorkFileModel::JOB_STATUSES,
             // Also offered per folder below, because a folder of several works
             // cannot send one of them home. See jobStatusesFor().
+
+            // Today, from the server: an approval cannot be dated after it, and
+            // the browser's own clock is not the one the ledger is kept by.
+            'today' => date('Y-m-d'),
+
             'approvedKey' => WorkFileModel::APPROVED,
             'cancelledKey' => WorkFileModel::CANCELLED,
             'files' => $files->map(fn ($file) => [
@@ -978,19 +1045,37 @@ class WorkFileController extends Controller
                 'last_remark' => $lastRemarks[$file->id] ?? null,
                 'statuses' => WorkFileModel::jobStatusesFor($file->items->count()),
 
+                // How much of the folder is finished, since the board only
+                // lists what is left of it.
+                'works' => $file->items->count(),
+                'settled' => $file->items->filter(fn ($item) => $item->isSettled())->count(),
+
                 /*
                  * The jobs. Each is approved on its own, days apart, with its own
                  * evidence — which is the whole reason the board moved onto them.
+                 *
+                 * On the 'in hand' view only the work still in hand is listed. Work
+                 * that is through is done with: leaving it on the board asked the
+                 * operator to read past a finished job every time they came back to
+                 * the one that was not, on a screen whose whole purpose is what is
+                 * still outstanding. Every other tab shows the whole folder.
                  */
-                'items' => $file->items->map(fn ($item) => [
-                    'id' => $item->id,
-                    'work_type' => $item->workType?->name,
-                    'customer_amount' => (float) $item->customer_amount,
-                    'status' => $item->status,
-                    'has_screenshot' => (bool) $item->approval_screenshot,
-                    'screenshot_url' => $item->approval_screenshot ? url($item->approval_screenshot) : null,
-                    'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
-                ])->values(),
+                'items' => $file->items
+                    ->filter(fn ($item) => $filter !== 'open' || ! $item->isSettled())
+                    ->map(fn ($item) => [
+                        'id' => $item->id,
+                        'work_type' => $item->workType?->name,
+                        'customer_amount' => (float) $item->customer_amount,
+                        'status' => $item->status,
+                        'has_screenshot' => (bool) $item->approval_screenshot,
+                        'screenshot_url' => $item->approval_screenshot ? url($item->approval_screenshot) : null,
+                        'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
+                        // The box is filled with today, which is right far more
+                        // often than it is wrong, and can be typed over.
+                        'approved_on_value' => $item->approved_on
+                            ? date('Y-m-d', strtotime($item->approved_on))
+                            : date('Y-m-d'),
+                    ])->values(),
             ])->values(),
         ];
         $statuses = WorkFileModel::STATUSES;

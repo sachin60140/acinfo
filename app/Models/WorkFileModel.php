@@ -460,6 +460,49 @@ class WorkFileModel extends Model
     }
 
     /**
+     * What this file is called on a statement.
+     *
+     * Every work it is still charged for, then the vehicle those papers are
+     * for. Naming it by the folder's own work type is how an eleven thousand
+     * rupee entry covering a hypothecation termination, a transfer and a
+     * hypothecation addition came to read "HPA" — true of a fifth of it, and
+     * no help at all to a customer checking what they were billed.
+     *
+     * Cancelled work is left out, because it is not in the figure beside it.
+     *
+     * Read through a fresh query rather than the loaded relation: an edit that
+     * changed the work leaves the cached copy saying what it used to be.
+     */
+    public function ledgerParticular(): string
+    {
+        $works = $this->items()->with('workType')->get()
+            ->reject(fn ($item) => $item->status === self::CANCELLED)
+            ->map(fn ($item) => $item->workType?->name)
+            ->filter()
+            ->unique()
+            ->implode(', ');
+
+        // A file with nothing left to charge for still has to be called
+        // something, and its own type is all it has.
+        $parts = [$works !== '' ? $works : ($this->workType()->value('name') ?? 'Work')];
+
+        /*
+         * The registration, then anything else written on the file. Skipped
+         * when it repeats what is already there: files taken in before there
+         * was a registration field have the number in the description, and
+         * "BR01DD1234 - BR01DD1234" helps nobody.
+         */
+        foreach ([$this->registration_no, $this->description] as $detail) {
+            $detail = trim((string) $detail);
+
+            if ($detail !== '' && ! in_array($detail, $parts, true)) {
+                $parts[] = $detail;
+            }
+        }
+
+        return implode(' - ', $parts);
+    }
+    /**
      * Bring this file's ledger entries in line with the file as it now stands.
      *
      * Called after every save. Rather than appending a correction, it updates the
@@ -469,10 +512,7 @@ class WorkFileModel extends Model
      */
     public function syncLedger(): void
     {
-        // Read the name through the relation query, not the loaded relation: on an
-        // edit that changed the work type, the cached relation is the old one.
-        $workType = $this->workType()->value('name') ?? 'Work';
-        $particular = $this->description ? $workType.' - '.$this->description : $workType;
+        $particular = $this->ledgerParticular();
 
         // Cancelling withdraws every side. Passing nulls rather than short-circuiting
         // means the same removal path runs as when a vendor is unassigned, and

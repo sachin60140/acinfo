@@ -8,6 +8,10 @@
  * derived from the jobs beneath it, and reads "Partly Approved" while some are
  * through and some are not.
  *
+ * On the 'in hand' view the board lists only work still outstanding. What is
+ * finished is stated in the folder heading and left off, because this screen
+ * exists to answer "what is still to do".
+ *
  * Field names are the ones WorkFileController::status() already validates, so
  * the form still posts normally and the server still checks every value. That
  * is what makes it safe to change this screen on a live ledger: the rendering
@@ -24,6 +28,9 @@ const props = defineProps({
     resetUrl: { type: String, required: true },
     approvedKey: { type: String, required: true },
     cancelledKey: { type: String, required: true },
+    // Today, from the server: an approval cannot be dated after it, and the
+    // browser's own clock is not the one the ledger is kept by.
+    today: { type: String, default: '' },
 });
 
 /*
@@ -40,6 +47,7 @@ const rows = reactive(
             first: index === 0,
             count: file.items.length,
             chosen: item.status,
+            approvedOn: item.approved_on_value,
             remark: '',
             screenshot: null,
         }))
@@ -57,11 +65,21 @@ const cancelling = (row) => row.chosen === props.cancelledKey;
  */
 const needsReason = (row) => changed(row) && cancelling(row) && row.remark.trim() === '';
 
-// Approval is evidenced per job now, because two approvals days apart arrive
-// with a document each.
+// Approval is evidenced per job, because two approvals days apart arrive with
+// a document each. One already on file is enough.
 const needsEvidence = (row) => approving(row) && !row.screenshot && !row.has_screenshot;
 
-const blocked = computed(() => rows.some((row) => needsReason(row) || needsEvidence(row)));
+/*
+ * And it is dated, because which day is the whole question when the second
+ * approval lands a week after the first. The box is filled with today, which
+ * is right far more often than it is wrong, so this only fires if it is
+ * cleared — but the date is stored from what is in the box, not assumed.
+ */
+const needsDate = (row) => approving(row) && !String(row.approvedOn ?? '').trim();
+
+const blocked = computed(() =>
+    rows.some((row) => needsReason(row) || needsEvidence(row) || needsDate(row))
+);
 
 const touched = computed(() =>
     rows.filter((row) => changed(row) || row.remark.trim() !== '' || row.screenshot)
@@ -71,10 +89,12 @@ const summary = computed(() => {
     if (blocked.value) {
         const reasons = rows.filter(needsReason).length;
         const evidence = rows.filter(needsEvidence).length;
+        const dates = rows.filter(needsDate).length;
         const parts = [];
 
         if (reasons) parts.push(`${reasons} ${reasons === 1 ? 'needs' : 'need'} a reason`);
         if (evidence) parts.push(`${evidence} ${evidence === 1 ? 'needs' : 'need'} a screenshot`);
+        if (dates) parts.push(`${dates} ${dates === 1 ? 'needs' : 'need'} an approval date`);
 
         return { tone: 'error', text: parts.join(', ') + '.' };
     }
@@ -125,11 +145,10 @@ function onScreenshot(row, event) {
                 <table class="ui-table board">
                     <thead>
                         <tr>
-                            <th>File</th>
-                            <th>Work</th>
-                            <th class="num">Charged</th>
-                            <th style="min-width: 12rem;">Status</th>
-                            <th style="min-width: 14rem;">Remark</th>
+                            <th style="width: 26%;">Work</th>
+                            <th class="num" style="width: 7rem;">Charged</th>
+                            <th style="width: 30%;">Status</th>
+                            <th>Remark</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -137,14 +156,23 @@ function onScreenshot(row, event) {
                             <!-- The folder, above its jobs. Its status is derived
                                  from them, so it is stated and not offered. -->
                             <tr v-if="row.first" class="board__file">
-                                <td :colspan="5">
-                                    <a :href="row.file.edit_url" class="ui-link">{{ row.file.file_no }}</a>
-                                    <span class="board__meta">{{ row.file.received_date }}</span>
-                                    <span v-if="row.file.registration_no" class="board__meta">{{ row.file.registration_no }}</span>
-                                    <span class="board__meta">{{ row.file.customer }}</span>
-                                    <span class="board__meta">&rarr; {{ row.file.vendor || 'In-house' }}</span>
-                                    <span class="ui-badge" :data-state="row.file.status">{{ row.file.status_label }}</span>
-                                    <span v-if="row.count > 1" class="board__meta">{{ row.count }} works</span>
+                                <td :colspan="4">
+                                    <div class="board__file-line">
+                                        <a :href="row.file.edit_url" class="board__no">{{ row.file.file_no }}</a>
+                                        <span class="ui-badge" :data-state="row.file.status">{{ row.file.status_label }}</span>
+                                        <span v-if="row.file.registration_no" class="board__reg">
+                                            {{ row.file.registration_no }}
+                                        </span>
+                                        <span class="board__meta">{{ row.file.customer }}</span>
+                                        <span class="board__meta">&rarr; {{ row.file.vendor || 'In-house' }}</span>
+                                        <span class="board__meta board__meta--end">{{ row.file.received_date }}</span>
+                                    </div>
+                                    <!-- Work that is finished is off the list below,
+                                         so the heading is what says it exists. -->
+                                    <div v-if="row.file.settled" class="board__done">
+                                        {{ row.file.settled }} of {{ row.file.works }} works finished &mdash;
+                                        <a :href="row.file.edit_url" class="ui-link">see the file</a>
+                                    </div>
                                 </td>
                             </tr>
 
@@ -153,12 +181,10 @@ function onScreenshot(row, event) {
                                 :class="{
                                     'is-changed': changed(row),
                                     'is-noted': !changed(row) && row.remark.trim() !== '',
-                                    'is-blocked': needsReason(row) || needsEvidence(row),
+                                    'is-blocked': needsReason(row) || needsEvidence(row) || needsDate(row),
                                 }">
-                                <td data-label="File" class="board__spacer"></td>
-
                                 <td data-label="Work">
-                                    <div class="ui-lead">{{ row.work_type || '—' }}</div>
+                                    <div class="board__work">{{ row.work_type || '—' }}</div>
                                     <div v-if="row.approved_on" class="ui-sub">Approved {{ row.approved_on }}</div>
                                 </td>
 
@@ -167,9 +193,6 @@ function onScreenshot(row, event) {
                                 </td>
 
                                 <td data-label="Status">
-                                    <!-- The folder says what its jobs may be set
-                                         to: one holding several works does not offer
-                                         to send half an envelope home. -->
                                     <select
                                         class="ui-select"
                                         :name="`statuses[${row.id}]`"
@@ -180,24 +203,46 @@ function onScreenshot(row, event) {
                                         </option>
                                     </select>
 
-                                    <!-- Approval has to be evidenced, per job. -->
-                                    <div v-if="approving(row)" class="row-extra">
-                                        <label class="ui-label">Approval screenshot <span class="ui-label__req">*</span></label>
-                                        <input
-                                            type="file"
-                                            class="ui-input"
-                                            :name="`screenshots[${row.id}]`"
-                                            accept="image/*,application/pdf"
-                                            @change="onScreenshot(row, $event)">
-                                        <div v-if="row.screenshot_url" class="ui-hint">
+                                    <!-- An approval happened on a day and came with
+                                         a document. Both belong to this job, and
+                                         both are asked for beside each other. -->
+                                    <div v-if="approving(row)" class="board__extra">
+                                        <label class="board__field">
+                                            <span class="board__field-label">
+                                                Approved on <span class="ui-label__req">*</span>
+                                            </span>
+                                            <input
+                                                type="date"
+                                                class="ui-input board__date"
+                                                :class="{ 'ui-input--invalid': needsDate(row) }"
+                                                :name="`approved_on[${row.id}]`"
+                                                v-model="row.approvedOn"
+                                                :max="today">
+                                        </label>
+
+                                        <label class="board__field">
+                                            <span class="board__field-label">
+                                                Screenshot
+                                                <span v-if="!row.has_screenshot" class="ui-label__req">*</span>
+                                                <span v-else class="board__field-opt">&mdash; on file</span>
+                                            </span>
+                                            <input
+                                                type="file"
+                                                class="ui-input board__upload"
+                                                :name="`screenshots[${row.id}]`"
+                                                accept="image/*,application/pdf"
+                                                @change="onScreenshot(row, $event)">
+                                        </label>
+
+                                        <div v-if="row.screenshot_url" class="ui-hint board__note">
                                             <i class="bi bi-paperclip"></i>
-                                            <a :href="row.screenshot_url" target="_blank" rel="noopener">screenshot on file</a>
-                                            &mdash; choose one only to replace it
+                                            <a :href="row.screenshot_url" class="ui-link">View the one on file</a>
+                                            &mdash; choose a file only to replace it
                                         </div>
                                     </div>
 
-                                    <div v-if="changed(row) && cancelling(row)" class="row-extra">
-                                        <div class="ui-hint ui-hint--error">
+                                    <div v-if="changed(row) && cancelling(row)" class="board__extra">
+                                        <div class="ui-hint ui-hint--error board__note">
                                             Takes this work off the file, and its charge off the statement
                                         </div>
                                     </div>
@@ -212,7 +257,7 @@ function onScreenshot(row, event) {
                                         v-model="row.remark"
                                         maxlength="255"
                                         :placeholder="needsReason(row) ? 'A reason is required' : 'Why, or what is pending'">
-                                    <div v-if="row.first && row.file.last_remark" class="ui-sub">
+                                    <div v-if="row.first && row.file.last_remark" class="ui-sub board__last">
                                         <i class="bi bi-clock-history"></i> {{ row.file.last_remark }}
                                     </div>
                                 </td>
@@ -249,40 +294,135 @@ function onScreenshot(row, event) {
 .board tbody tr[data-state="part_pesi_required"] td:first-child { border-left-color: var(--warn-500); }
 .board tbody tr[data-state="under_verification"] td:first-child { border-left-color: var(--brand-500); }
 .board tbody tr[data-state="approval_done"] td:first-child { border-left-color: var(--dr-600); }
+.board tbody tr[data-state="paper_returned"] td:first-child { border-left-color: var(--n-700); }
 .board tbody tr[data-state="cancelled"] td:first-child { border-left-color: var(--cr-600); }
 
 .board tbody tr.is-changed td { background: var(--warn-050); }
 .board tbody tr.is-noted td { background: var(--n-050); }
 .board tbody tr.is-blocked td { background: var(--cr-050); }
 
-/* The folder heading, so its jobs read as belonging to it. */
+/* Controls and two-word cells share a row, so everything is topped out rather
+   than floating in the middle of whatever the tallest cell turned out to be. */
+.board tbody td {
+    padding-bottom: var(--s-3);
+    padding-top: var(--s-3);
+    vertical-align: top;
+}
+
+/* ---- The folder heading ------------------------------------------------ */
+
 .board__file td {
     background: var(--brand-050);
-    border-top: 1px solid var(--n-200);
-    font-weight: 600;
+    border-top: 2px solid var(--brand-100);
+    padding-bottom: var(--s-2);
     padding-top: var(--s-3);
 }
 
+.board tbody tr.board__file td:first-child {
+    border-left: 3px solid var(--brand-500);
+}
+
+.board__file-line {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-3);
+}
+
+.board__no {
+    color: var(--brand-700);
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.board__no:hover {
+    text-decoration: underline;
+}
+
+/* The vehicle, in the shape a number plate is read in. */
+.board__reg {
+    background: var(--n-000);
+    border: 1px solid var(--n-300);
+    border-radius: var(--r-sm);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 0.1rem 0.4rem;
+}
+
 .board__meta {
+    color: var(--n-600);
+    font-size: var(--t-sm);
+}
+
+/* Pushed to the far end so the eye finds the date in the same place on every
+   folder, rather than wherever the customer's name happens to stop. */
+.board__meta--end {
+    margin-left: auto;
+}
+
+.board__done {
     color: var(--n-500);
-    font-weight: 400;
-    margin-left: var(--s-3);
+    font-size: var(--t-xs);
+    margin-top: var(--s-1);
 }
 
-.board__file .ui-badge {
-    margin-left: var(--s-3);
+/* ---- A job ------------------------------------------------------------- */
+
+.board__work {
+    color: var(--n-900);
+    font-weight: 700;
 }
 
-/* Indents a job under its folder without needing a column of its own. */
-.board__spacer {
-    width: 2rem;
+/* What an approval needs: the day it happened and the paper it came on. Side
+   by side, because they are one act recorded twice. */
+.board__extra {
+    display: grid;
+    gap: var(--s-2) var(--s-3);
+    grid-template-columns: minmax(8rem, 1fr) minmax(8rem, 1.1fr);
+    margin-top: var(--s-3);
 }
 
-.row-extra {
+.board__field {
     display: flex;
     flex-direction: column;
     gap: var(--s-1);
-    margin-top: var(--s-2);
+    min-width: 0;
+}
+
+.board__field-label {
+    color: var(--n-600);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+/* Says the requirement is already met, where an asterisk would otherwise ask
+   again for a document that is on file. */
+.board__field-opt {
+    color: var(--dr-600);
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+/* Both native controls set their own metrics and overflow the app's input box
+   otherwise — the file one badly, at full size. */
+.board__date,
+.board__upload {
+    font-size: var(--t-xs);
+    line-height: 1.5;
+    max-width: 100%;
+    padding: var(--s-1) var(--s-2);
+}
+
+.board__note {
+    grid-column: 1 / -1;
+}
+
+.board__last {
+    margin-top: var(--s-1);
 }
 
 .foot-actions {
@@ -321,8 +461,8 @@ function onScreenshot(row, event) {
         margin-bottom: 0;
     }
 
-    .board__spacer {
-        display: none;
+    .board__meta--end {
+        margin-left: 0;
     }
 
     .board tbody td {
@@ -341,6 +481,10 @@ function onScreenshot(row, event) {
         text-transform: uppercase;
     }
 
+    .board__file td::before {
+        content: none;
+    }
+
     .board tbody td.num {
         text-align: left;
     }
@@ -351,6 +495,12 @@ function onScreenshot(row, event) {
 
     .foot-actions .ui-btn {
         flex: 1 1 auto;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .board__extra {
+        grid-template-columns: 1fr;
     }
 }
 </style>

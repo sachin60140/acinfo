@@ -9,6 +9,7 @@ use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
@@ -630,6 +631,178 @@ class WorkFileItemTest extends TestCase
 
         $this->assertSame(1, (int) $usage->file_count, 'the work counts even though the folder names another');
         $this->assertEquals(3000, $usage->billed_total);
+    }
+    /**
+     * The statement names every work the entry covers.
+     *
+     * A customer reading their ledger sees one line for the file and the
+     * figure they were billed. Calling it by the first work alone made an
+     * entry covering three jobs read as though it were for one of them.
+     */
+    public function test_the_statement_names_every_work_the_entry_covers(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0110');
+        $expected = $file->items->map(fn ($item) => $item->workType->name)->implode(', ');
+
+        $particular = PartyLedgerModel::where('work_file_id', $file->id)
+            ->where('file_role', 'customer')
+            ->value('particular');
+
+        $this->assertStringStartsWith($expected, $particular);
+        $this->assertStringContainsString('BR01ZZ0110', $particular, 'and the vehicle it is for');
+    }
+
+    /**
+     * Cancelled work drops off the statement line, because it drops out of the
+     * figure beside it. An entry naming work the customer was not billed for
+     * is one they will ring up about.
+     */
+    public function test_cancelled_work_is_not_named_on_the_statement(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0111');
+        [$first, $second] = $file->items->all();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$second->id => WorkFileModel::CANCELLED],
+            'remarks' => [$second->id => 'Entered by mistake'],
+        ])->assertRedirect();
+
+        $particular = PartyLedgerModel::where('work_file_id', $file->id)
+            ->where('file_role', 'customer')
+            ->value('particular');
+
+        $this->assertStringContainsString($first->workType->name, $particular);
+        $this->assertStringNotContainsString($second->workType->name, $particular);
+    }
+
+    /**
+     * Files taken in before there was a registration field have the number in
+     * the description, and an entry reading "BR01DD1234 - BR01DD1234" helps
+     * nobody.
+     */
+    public function test_the_vehicle_is_not_written_twice(): void
+    {
+        $file = $this->file();
+        $file->registration_no = 'BR01ZZ0112';
+        $file->description = 'BR01ZZ0112';
+        $file->save();
+
+        $this->assertSame(1, substr_count($file->ledgerParticular(), 'BR01ZZ0112'));
+    }
+    /**
+     * An approval says when it happened.
+     *
+     * Work approved on Friday and entered on Monday would otherwise be recorded
+     * as Monday's, and with two approvals a week apart on one folder, which day
+     * each landed is the whole question the file gets asked later.
+     */
+    public function test_an_approval_records_the_day_it_came_through(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0113');
+        $file->received_date = now()->subDays(14)->toDateString();
+        $file->save();
+
+        $item = $file->items->first();
+        $approved = now()->subDays(4)->toDateString();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$item->id => WorkFileModel::APPROVED],
+            'approved_on' => [$item->id => $approved],
+            'screenshots' => [$item->id => UploadedFile::fake()->image('rto.jpg')],
+        ])->assertRedirect();
+
+        $item->refresh();
+
+        $this->assertSame(WorkFileModel::APPROVED, $item->status);
+        $this->assertSame($approved, (string) $item->approved_on, 'the day it was approved, not today');
+
+        $item->approval_screenshot && @unlink(public_path($item->approval_screenshot));
+    }
+
+    public function test_an_approval_without_a_date_is_refused(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0114');
+        $item = $file->items->first();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$item->id => WorkFileModel::APPROVED],
+            'approved_on' => [$item->id => ''],
+            'screenshots' => [$item->id => UploadedFile::fake()->image('rto.jpg')],
+        ])->assertSessionHas('error', fn ($error) => str_contains($error, 'the date it was approved'));
+
+        $this->assertSame('in_office', $item->refresh()->status, 'nothing moved');
+    }
+
+    /**
+     * Papers cannot be approved before they were taken in, and a date in the
+     * future is not an approval that has happened.
+     */
+    public function test_an_approval_cannot_be_dated_outside_the_files_life(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0115');
+        $item = $file->items->first();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$item->id => WorkFileModel::APPROVED],
+            'approved_on' => [$item->id => now()->subYear()->toDateString()],
+            'screenshots' => [$item->id => UploadedFile::fake()->image('rto.jpg')],
+        ])->assertSessionHas('error', fn ($error) => str_contains($error, 'before the papers came in'));
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$item->id => WorkFileModel::APPROVED],
+            'approved_on' => [$item->id => now()->addDay()->toDateString()],
+            'screenshots' => [$item->id => UploadedFile::fake()->image('rto.jpg')],
+        ])->assertSessionHasErrors('approved_on.'.$item->id);
+
+        $this->assertSame('in_office', $item->refresh()->status, 'nothing moved either time');
+    }
+
+    /**
+     * Work that is through comes off the board.
+     *
+     * The board answers one question — what is still to do — and a finished job
+     * sitting on it with a status box and a screenshot prompt is something to
+     * read past every time the operator comes back to the job that is not
+     * finished. It is still there under every other tab, and on the file.
+     */
+    public function test_finished_work_leaves_the_in_hand_board(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0116');
+        [$done, $pending] = $file->items->all();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$done->id => WorkFileModel::APPROVED],
+            'approved_on' => [$done->id => now()->toDateString()],
+            'screenshots' => [$done->id => UploadedFile::fake()->image('rto.jpg')],
+        ])->assertRedirect();
+
+        $onBoard = fn (string $view) => collect(
+            $this->getJson(route('workfile.status', array_filter(['status' => $view])))
+                ->assertOk()->json('props.files')
+        )->firstWhere('id', $file->id);
+
+        $inHand = $onBoard('open');
+
+        $this->assertNotNull($inHand, 'the folder is still in hand');
+        $this->assertSame([$pending->id], array_column($inHand['items'], 'id'), 'only the work still to do');
+        $this->assertSame(2, $inHand['works'], 'and the heading says how many there are');
+        $this->assertSame(1, $inHand['settled'], 'and how many are finished');
+
+        $this->assertCount(2, $onBoard('all')['items'], 'every other view shows the whole folder');
+
+        $done->refresh()->approval_screenshot && @unlink(public_path($done->refresh()->approval_screenshot));
     }
     private function vendor(): PartyModel
     {

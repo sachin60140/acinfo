@@ -367,7 +367,7 @@ onMounted(() => {
                                 accept="image/*,application/pdf">
                             <div v-if="screenshotUrl" class="ui-hint">
                                 <i class="bi bi-paperclip"></i>
-                                <a :href="screenshotUrl" class="ui-link" target="_blank" rel="noopener">Screenshot on file</a>
+                                <a :href="screenshotUrl" class="ui-link">Screenshot on file</a>
                                 &mdash; choose a file only if you want to replace it.
                             </div>
                             <div v-else class="ui-hint">
@@ -686,9 +686,7 @@ onMounted(() => {
                                         <a
                                             v-if="work.screenshot_url"
                                             :href="work.screenshot_url"
-                                            class="ui-link"
-                                            target="_blank"
-                                            rel="noopener">
+                                            class="ui-link">
                                             <i class="bi bi-paperclip"></i> View
                                         </a>
                                         <span v-else class="ui-hint">&mdash;</span>

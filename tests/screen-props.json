@@ -295,6 +295,7 @@
                     "items": {
                         "list_of": {
                             "approved_on": "null",
+                            "approved_on_value": "string",
                             "customer_amount": "number",
                             "has_screenshot": "bool",
                             "id": "number",
@@ -306,6 +307,7 @@
                     "last_remark": "null",
                     "received_date": "string",
                     "registration_no": "string",
+                    "settled": "number",
                     "status": "string",
                     "status_label": "string",
                     "statuses": {
@@ -318,7 +320,8 @@
                         "part_pesi_required": "string",
                         "under_verification": "string"
                     },
-                    "vendor": "string"
+                    "vendor": "string",
+                    "works": "number"
                 }
             },
             "resetUrl": "string",
@@ -331,7 +334,8 @@
                 "paper_returned": "string",
                 "part_pesi_required": "string",
                 "under_verification": "string"
-            }
+            },
+            "today": "string"
         }
     },
     "file-vendor-return": {
@@ -382,11 +386,11 @@
                     "action": "string",
                     "charged": "number",
                     "charged_was": "null",
-                    "cost": "null",
+                    "cost": "number",
                     "cost_was": "null",
                     "customer": "string",
                     "customer_url": "string",
-                    "description": "string",
+                    "description": "null",
                     "edit_url": "string",
                     "file_no": "string",
                     "id": "number",
@@ -395,12 +399,12 @@
                     "received_raw": "string",
                     "registration_no": "string",
                     "row_class": "string",
-                    "screenshot": "null",
-                    "screenshot_url": "null",
+                    "screenshot": "string",
+                    "screenshot_url": "string",
                     "status": "string",
                     "status_key": "string",
                     "vendor": "string",
-                    "vendor_url": "null",
+                    "vendor_url": "string",
                     "work_type": "string"
                 }
             },
@@ -436,11 +440,11 @@
                     "action": "string",
                     "charged": "number",
                     "charged_was": "null",
-                    "cost": "null",
+                    "cost": "number",
                     "cost_was": "null",
                     "customer": "string",
                     "customer_url": "string",
-                    "description": "string",
+                    "description": "null",
                     "edit_url": "string",
                     "file_no": "string",
                     "id": "number",
@@ -449,12 +453,12 @@
                     "received_raw": "string",
                     "registration_no": "string",
                     "row_class": "string",
-                    "screenshot": "null",
-                    "screenshot_url": "null",
+                    "screenshot": "string",
+                    "screenshot_url": "string",
                     "status": "string",
                     "status_key": "string",
                     "vendor": "string",
-                    "vendor_url": "null",
+                    "vendor_url": "string",
                     "work_type": "string"
                 }
             },
@@ -518,11 +522,11 @@
                     "action": "string",
                     "charged": "number",
                     "charged_was": "null",
-                    "cost": "null",
+                    "cost": "number",
                     "cost_was": "null",
                     "customer": "string",
                     "customer_url": "string",
-                    "description": "string",
+                    "description": "null",
                     "edit_url": "string",
                     "file_no": "string",
                     "id": "number",
@@ -531,12 +535,12 @@
                     "received_raw": "string",
                     "registration_no": "string",
                     "row_class": "string",
-                    "screenshot": "null",
-                    "screenshot_url": "null",
+                    "screenshot": "string",
+                    "screenshot_url": "string",
                     "status": "string",
                     "status_key": "string",
                     "vendor": "string",
-                    "vendor_url": "null",
+                    "vendor_url": "string",
                     "work_type": "string"
                 }
             },

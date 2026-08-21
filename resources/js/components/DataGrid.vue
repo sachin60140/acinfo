@@ -610,9 +610,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                     <a
                                         v-if="column.subLinkTo && row[column.subLinkTo]"
                                         :href="row[column.subLinkTo]"
-                                        class="ui-link"
-                                        target="_blank"
-                                        rel="noopener">
+                                        class="ui-link">
                                         {{ row[column.sub] }}
                                     </a>
                                     <template v-else>{{ row[column.sub] }}</template>
