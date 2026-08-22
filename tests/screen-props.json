@@ -119,7 +119,8 @@
                             "work_type": "string"
                         }
                     },
-                    "received_date": "string"
+                    "received_date": "string",
+                    "registration_no": "string"
                 }
             },
             "oldAmounts": "[]",
@@ -151,6 +152,7 @@
                     "file_no": "string",
                     "id": "number",
                     "received_date": "string",
+                    "registration_no": "string",
                     "status": "string",
                     "status_label": "string",
                     "work_type": "string"
@@ -350,6 +352,7 @@
                     "description": "string",
                     "file_no": "string",
                     "id": "number",
+                    "registration_no": "string",
                     "vendor": "string",
                     "vendor_amount": "number",
                     "vendor_date": "null",

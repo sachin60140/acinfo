@@ -583,6 +583,8 @@ class WorkFileController extends Controller
             'files' => $files->map(fn ($file) => [
                 'id' => (int) $file->id,
                 'file_no' => $file->file_no,
+                // What the papers are for, read off the papers.
+                'registration_no' => $file->registration_no,
                 'received_date' => date('d-m-Y', strtotime($file->received_date)),
                 'description' => $file->description,
                 'customer' => $file->customer?->name,
@@ -709,7 +711,10 @@ class WorkFileController extends Controller
                 'id' => $file->id,
                 'file_no' => $file->file_no,
                 'received_date' => date('d-m-Y', strtotime($file->received_date)),
-                'work_type' => $file->workType?->name,
+                'registration_no' => $file->registration_no,
+                // Every work on the file, not the first of them: a folder
+                // for a transfer and a hypothecation addition is both.
+                'work_type' => $file->workLabel() ?: $file->workType?->name,
                 'description' => $file->description,
                 'customer' => $file->customer?->name,
                 'status' => $file->status,
@@ -840,7 +845,10 @@ class WorkFileController extends Controller
                 'file_no' => $file->file_no,
                 'vendor' => $file->vendor?->name,
                 'vendor_date' => $file->vendor_date ? date('d-m-Y', strtotime($file->vendor_date)) : null,
-                'work_type' => $file->workType?->name,
+                'registration_no' => $file->registration_no,
+                // Every work on the file, not the first of them: a folder
+                // for a transfer and a hypothecation addition is both.
+                'work_type' => $file->workLabel() ?: $file->workType?->name,
                 'description' => $file->description,
                 'customer' => $file->customer?->name,
                 'vendor_amount' => $file->vendor_amount === null ? null : (float) $file->vendor_amount,

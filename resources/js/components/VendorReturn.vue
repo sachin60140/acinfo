@@ -260,6 +260,7 @@ const summary = computed(() => {
                                 <tr>
                                     <th class="vr-pick"></th>
                                     <th>File No.</th>
+                                    <th>Vehicle</th>
                                     <th>Vendor</th>
                                     <th>Given On</th>
                                     <th>Work Type</th>
@@ -285,6 +286,11 @@ const summary = computed(() => {
                                     </td>
 
                                     <td data-label="File No."><span class="ui-lead">{{ row.file_no }}</span></td>
+
+                                    <td data-label="Vehicle">
+                                        <span v-if="row.registration_no" class="file-plate">{{ row.registration_no }}</span>
+                                        <span v-else class="ui-money--nil">&mdash;</span>
+                                    </td>
 
                                     <td data-label="Vendor">{{ row.vendor || '—' }}</td>
 
@@ -344,6 +350,19 @@ const summary = computed(() => {
 </template>
 
 <style>
+/* The vehicle, in the shape a number plate is read in. */
+.file-plate {
+    background: var(--n-000);
+    border: 1px solid var(--n-300);
+    border-radius: var(--r-sm);
+    display: inline-block;
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 0.1rem 0.4rem;
+    white-space: nowrap;
+}
+
 /* Date and reason are typed once for the whole batch and read together, so they
    share a line on anything wider than a phone. */
 .vr-when {

@@ -260,6 +260,7 @@ onMounted(() => {
                             <tr>
                                 <th style="width: 2.5rem;"></th>
                                 <th>File No.</th>
+                                <th>Vehicle</th>
                                 <th>Received</th>
                                 <th>Work Type</th>
                                 <th>Details</th>
@@ -282,6 +283,11 @@ onMounted(() => {
 
                                 <td data-label="File No.">
                                     <span class="ui-lead">{{ file.file_no }}</span>
+                                </td>
+
+                                <td data-label="Vehicle">
+                                    <span v-if="file.registration_no" class="file-plate">{{ file.registration_no }}</span>
+                                    <span v-else class="ui-money--nil">&mdash;</span>
                                 </td>
 
                                 <td data-label="Received">{{ file.received_date }}</td>
@@ -416,6 +422,18 @@ onMounted(() => {
     margin-top: var(--s-1);
 }
 
+/* The vehicle, in the shape a number plate is read in. */
+.file-plate {
+    background: var(--n-000);
+    border: 1px solid var(--n-300);
+    border-radius: var(--r-sm);
+    display: inline-block;
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 0.1rem 0.4rem;
+    white-space: nowrap;
+}
 /* Beats .ui-table's row hover, which would otherwise wash the tick out. */
 .ui-table.give tbody tr.is-picked td {
     background: var(--brand-050);

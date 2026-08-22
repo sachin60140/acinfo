@@ -1320,6 +1320,82 @@ class WorkFileItemTest extends TestCase
             'the work was left as it was'
         );
     }
+    /**
+     * The vehicle, on every screen where a file is picked out of a list.
+     *
+     * A file number identifies a file to the office; the registration
+     * identifies it to everyone else. Handing papers to a vendor, or back to a
+     * customer, is done with the envelope in hand — and the number plate is
+     * what is read off it.
+     */
+    public function test_the_pick_a_file_screens_name_the_vehicle(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0132');
+
+        $screens = ['workfile.assign', 'workfile.customerreturn', 'workfile.vendorreturn'];
+
+        // Out with a vendor, so the vendor-return screen has it to offer too.
+        $this->post(route('workfile.assign'), [
+            'vendor_id' => $this->vendor()->id,
+            'vendor_date' => now()->toDateString(),
+            'files' => [$file->id],
+            'amounts' => [$file->items->first()->id => '1200'],
+        ])->assertRedirect();
+
+        foreach ($screens as $route) {
+            $rows = collect($this->getJson(route($route))->assertOk()->json('props.files'));
+            $row = $rows->firstWhere('id', $file->id);
+
+            // Give to Vendor only offers files not yet given out.
+            if ($route === 'workfile.assign') {
+                $this->assertNull($row, 'a file already with a vendor is not offered again');
+
+                continue;
+            }
+
+            $this->assertNotNull($row, "$route lists the file");
+            $this->assertSame('BR01ZZ0132', $row['registration_no'], "$route names the vehicle");
+        }
+    }
+
+    /**
+     * And names every work on it, not the first.
+     *
+     * The two return screens read the folder's own work type, which is the bug
+     * already fixed on the files list: a folder for a transfer and a
+     * hypothecation addition offered itself as one of them, on the screen where
+     * someone decides whether to send it back.
+     */
+    public function test_the_return_screens_name_every_work_on_a_file(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0133');
+        $expected = $file->items->map(fn ($item) => $item->workType->name)->implode(', ');
+
+        $row = collect($this->getJson(route('workfile.customerreturn'))->assertOk()->json('props.files'))
+            ->firstWhere('id', $file->id);
+
+        $this->assertSame($expected, $row['work_type']);
+    }
+
+    /**
+     * A file offered to be given out carries the vehicle as well.
+     */
+    public function test_a_file_waiting_to_go_out_names_its_vehicle(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0134');
+
+        $row = collect($this->getJson(route('workfile.assign'))->assertOk()->json('props.files'))
+            ->firstWhere('id', $file->id);
+
+        $this->assertNotNull($row, 'it is waiting to go out');
+        $this->assertSame('BR01ZZ0134', $row['registration_no']);
+    }
     private function vendor(): PartyModel
     {
         $vendor = new PartyModel;

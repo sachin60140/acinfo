@@ -259,6 +259,7 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                         <tr>
                             <th class="cr-tick">Return</th>
                             <th>File No.</th>
+                            <th>Vehicle</th>
                             <th>Received</th>
                             <th>Work Type</th>
                             <th>Details</th>
@@ -285,6 +286,11 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                             </td>
 
                             <td data-label="File No."><span class="ui-lead">{{ row.file_no }}</span></td>
+
+                            <td data-label="Vehicle">
+                                <span v-if="row.registration_no" class="file-plate">{{ row.registration_no }}</span>
+                                <span v-else class="ui-money--nil">&mdash;</span>
+                            </td>
 
                             <td data-label="Received">{{ row.received_date }}</td>
 
@@ -357,6 +363,19 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
 </template>
 
 <style>
+/* The vehicle, in the shape a number plate is read in. */
+.file-plate {
+    background: var(--n-000);
+    border: 1px solid var(--n-300);
+    border-radius: var(--r-sm);
+    display: inline-block;
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 0.1rem 0.4rem;
+    white-space: nowrap;
+}
+
 .cr {
     display: flex;
     flex-direction: column;

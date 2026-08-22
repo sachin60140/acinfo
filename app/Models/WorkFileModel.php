@@ -614,7 +614,7 @@ class WorkFileModel extends Model
     public static function withVendor()
     {
         return self::query()
-            ->with('workType', 'customer', 'vendor')
+            ->with('workType', 'customer', 'vendor', 'items.workType')
             ->whereNotNull('vendor_id')
             ->whereNull('vendor_returned_on')
             // Only work still in play. A file that has been returned to its
@@ -770,7 +770,7 @@ class WorkFileModel extends Model
     public static function returnableToCustomer()
     {
         return self::query()
-            ->with('workType', 'customer', 'vendor')
+            ->with('workType', 'customer', 'vendor', 'items.workType')
             ->whereNotIn('status', [self::RETURNED, self::CANCELLED])
             ->orderBy('received_date', 'asc')
             ->orderBy('id', 'asc')
