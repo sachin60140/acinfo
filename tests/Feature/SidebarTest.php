@@ -79,6 +79,7 @@ class SidebarTest extends TestCase
             'return from vendor' => ['admin/file/vendor-return', 'Return from Vendor'],
             'return to customer' => ['admin/file/customer-return', 'Return to Customer'],
             'update status' => ['admin/file/status', 'Update Status'],
+            'approved files' => ['admin/files/approved', 'Approved Files'],
             'all files' => ['admin/files', 'All Work Files'],
             'work types' => ['admin/work-types', 'Work Types'],
             'work report' => ['admin/reports/files', 'Work Report'],

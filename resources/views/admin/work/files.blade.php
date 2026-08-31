@@ -1,6 +1,6 @@
 @extends('admin.layouts.app')
 
-@section('title', 'Work Files | Ac Info')
+@section('title', $heading.' | Ac Info')
 
 @section('style')
     @include('admin.layouts._statement-style')
@@ -11,11 +11,14 @@
 @section('content')
 
     <div class="pagetitle">
-        <h1>Work Files</h1>
+        <h1>{{ $heading }}</h1>
         <nav>
             <ol class="breadcrumb">
                 <li class="breadcrumb-item"><a href="{{ url('admin/dashboard') }}">Home</a></li>
-                <li class="breadcrumb-item active">Work Files</li>
+                @if ($crumb !== 'Work Files')
+                    <li class="breadcrumb-item"><a href="{{ route('workfile.index') }}">Work Files</a></li>
+                @endif
+                <li class="breadcrumb-item active">{{ $crumb }}</li>
             </ol>
         </nav>
     </div><!-- End Page Title -->
@@ -30,13 +33,16 @@
 
                         <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
                             <div>
-                                <h5 class="card-title p-0 m-0">Files Received</h5>
+                                <h5 class="card-title p-0 m-0">{{ $cardTitle }}</h5>
+                                @if ($cardHint)
+                                    <div class="side-hint">{{ $cardHint }}</div>
+                                @endif
                                 <div class="statement-period">
                                     {{ $fileCount }} {{ Str::plural('file', $fileCount) }}
                                     @if ($closedCount)
                                         &nbsp;&middot;&nbsp; {{ $closedCount }} cancelled or returned, not counted as billed
                                     @endif
-                                    @if ($statusLabel)
+                                    @if ($statusLabel && $crumb === 'Work Files')
                                         &nbsp;&middot;&nbsp; Status: {{ $statusLabel }}
                                     @endif
                                     @if ($pendingLabel)

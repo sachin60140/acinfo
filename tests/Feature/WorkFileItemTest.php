@@ -1513,6 +1513,124 @@ class WorkFileItemTest extends TestCase
 
         $this->assertNotContains($file->id, $none->all(), 'the work type still applies');
     }
+    /**
+     * Work that is through has a screen of its own.
+     *
+     * Approved files are finished, and reading past them every time is what a
+     * separate section exists to stop.
+     */
+    public function test_the_approved_screen_holds_only_work_that_is_through(): void
+    {
+        $this->actingAs($this->admin());
+
+        $done = $this->twoWorkFile('BR01ZZ0139');
+        $done->received_date = now()->subWeek()->toDateString();
+        $done->save();
+
+        $open = $this->twoWorkFile('BR01ZZ0140');
+
+        foreach ($done->items as $item) {
+            $this->post(route('workfile.status'), [
+                'statuses' => [$item->id => WorkFileModel::APPROVED],
+                'approved_on' => [$item->id => now()->subDay()->toDateString()],
+                'screenshots' => [$item->id => UploadedFile::fake()->image('rto.jpg')],
+            ])->assertRedirect()->assertSessionMissing('error');
+        }
+
+        $this->assertSame(WorkFileModel::APPROVED, $done->refresh()->status);
+
+        $listed = collect($this->getJson(route('workfile.approved'))->assertOk()->json('props.rows'))
+            ->pluck('id');
+
+        $this->assertContains($done->id, $listed->all());
+        $this->assertNotContains($open->id, $listed->all(), 'work still in hand belongs on the other screen');
+
+        // And it says which works came through, and when.
+        $row = collect($this->getJson(route('workfile.approved'))->assertOk()->json('props.rows'))
+            ->firstWhere('id', $done->id);
+
+        $expected = $done->items->map(fn ($item) => $item->workType->name)->implode(', ');
+        $this->assertSame($expected, $row['works_done']);
+        $this->assertStringContainsString(now()->subDay()->format('d-m-Y'), $row['works_approved_on']);
+
+        foreach ($done->items as $item) {
+            $item->refresh()->approval_screenshot && @unlink(public_path($item->approval_screenshot));
+        }
+    }
+
+    /**
+     * All Work Files still holds everything — it is called All. The approved
+     * screen is a second way in, not a move.
+     */
+    public function test_the_files_list_still_holds_approved_work(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0141');
+        $file->received_date = now()->subWeek()->toDateString();
+        $file->save();
+
+        foreach ($file->items as $item) {
+            $this->post(route('workfile.status'), [
+                'statuses' => [$item->id => WorkFileModel::APPROVED],
+                'approved_on' => [$item->id => now()->toDateString()],
+                'screenshots' => [$item->id => UploadedFile::fake()->image('rto.jpg')],
+            ])->assertRedirect()->assertSessionMissing('error');
+        }
+
+        $listed = collect($this->getJson(route('workfile.index'))->assertOk()->json('props.rows'))
+            ->pluck('id');
+
+        $this->assertContains($file->id, $listed->all());
+
+        foreach ($file->items as $item) {
+            $item->refresh()->approval_screenshot && @unlink(public_path($item->approval_screenshot));
+        }
+    }
+
+    /**
+     * The two screens ask different questions, so they draw different columns:
+     * a status that would read the same on every row gives way to the works
+     * that came through and the day they did.
+     */
+    public function test_the_approved_screen_draws_the_approval_not_the_status(): void
+    {
+        $this->actingAs($this->admin());
+
+        $drawn = function (string $route) {
+            return collect($this->getJson(route($route))->assertOk()->json('props.columns'))
+                ->reject(fn ($column) => ($column['hidden'] ?? false) || ($column['exportOnly'] ?? false))
+                ->pluck('label')
+                ->all();
+        };
+
+        $list = $drawn('workfile.index');
+        $approved = $drawn('workfile.approved');
+
+        $this->assertContains('Status', $list);
+        $this->assertNotContains('Status', $approved);
+
+        $this->assertContains('Approved Works', $approved);
+        $this->assertContains('Approved On', $approved);
+
+        // Which works, then when — the other way round reads backwards.
+        $this->assertLessThan(
+            array_search('Approved On', $approved, true),
+            array_search('Approved Works', $approved, true)
+        );
+
+        // Both screens export all three, whichever they draw.
+        foreach (['workfile.index', 'workfile.approved'] as $route) {
+            $exported = collect($this->getJson(route($route))->assertOk()->json('props.columns'))
+                ->reject(fn ($column) => ($column['hidden'] ?? false) || ($column['exportable'] ?? true) === false)
+                ->pluck('label');
+
+            foreach (['Approved Works', 'Approved On', 'Pending Works'] as $label) {
+                $this->assertContains($label, $exported->all(), "$route exports $label");
+                $this->assertSame(1, $exported->filter(fn ($one) => $one === $label)->count(), "$route exports $label once");
+            }
+        }
+    }
     private function vendor(): PartyModel
     {
         $vendor = new PartyModel;

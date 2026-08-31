@@ -72,6 +72,9 @@ Route::group(['middleware' => 'admin'], function () {
 
     Route::get('admin/files', [WorkFileController::class, 'index'])->name('workfile.index');
 
+    // Work that is through, on a screen that says when and shows the evidence.
+    Route::get('admin/files/approved', [WorkFileController::class, 'approved'])->name('workfile.approved');
+
     // The three moments in a file's life, each on its own screen.
     Route::match(['get', 'post'], 'admin/file/receive', [WorkFileController::class, 'receive'])->name('workfile.receive');
 

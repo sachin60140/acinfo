@@ -70,6 +70,43 @@ class WorkFileController extends Controller
     }
 
     /**
+     * Work that is through.
+     *
+     * Approved files are finished, and mixing them with work in hand means
+     * reading past them every time. This is the same list filtered to them,
+     * turned round: the day each work came through and the document it came
+     * with, in place of a status column that would say "Approval Done" on
+     * every row.
+     *
+     * All Work Files still holds everything — it is called All.
+     */
+    public function approved(Request $req)
+    {
+        $req->validate([
+            'from' => 'nullable|date_format:Y-m-d',
+            'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
+            'pending' => 'nullable|string',
+        ]);
+
+        $files = WorkFileModel::listing(
+            WorkFileModel::APPROVED,
+            $req->query('from'),
+            $req->query('to'),
+            $req->query('pending')
+        );
+
+        return $this->filesScreen($files, $req, [
+            'base' => route('workfile.approved'),
+            'heading' => 'Approved Files',
+            'crumb' => 'Approved',
+            'cardTitle' => 'Work Approved',
+            'cardHint' => 'Every work here is through the RTO. The date is when it was approved, '
+                .'and the link beside it is the document it came with.',
+            'approvals' => true,
+        ])->toResponse($req);
+    }
+
+    /**
      * What the files list shows, and what the grid is handed to show it.
      *
      * Built here rather than in the view because the same payload has to be
@@ -77,8 +114,15 @@ class WorkFileController extends Controller
      * that path. Describing it once is what keeps the page and the data from
      * drifting into disagreement.
      */
-    private function filesScreen($files, Request $req): Screen
+    private function filesScreen($files, Request $req, array $options = []): Screen
     {
+        $base = $options['base'] ?? route('workfile.index');
+
+        // Approved work is finished, so the day it came through and the
+        // evidence are what a reader wants; on the list they are exported
+        // rather than drawn, because there is no room and nothing pending
+        // to weigh them against.
+        $approvals = (bool) ($options['approvals'] ?? false);
         // Whether anything is narrowing the list, which decides what an empty
         // one means and therefore what it should say.
         $filtered = (bool) ($req->query('status') || $req->query('from') || $req->query('to') || $req->query('pending'));
@@ -252,14 +296,29 @@ class WorkFileController extends Controller
                 // A margin has a side: earned reads Dr, lost reads Cr, and neither
                 // needs a minus sign to be read correctly.
                 ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold'],
-                ['key' => 'status', 'label' => 'Status', 'type' => 'badge',
-                    'note' => 'works_note', 'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url',
-                    // An image or a PDF, so it opens over the list.
-                    'subPreview' => true],
-                // Written to every export, drawn on no screen. See exportOnly
-                // in DataGrid, and workSplit() for what each holds.
-                ['key' => 'works_done', 'label' => 'Approved Works', 'exportOnly' => true],
-                ['key' => 'works_approved_on', 'label' => 'Approved On', 'exportOnly' => true],
+                /*
+                 * Every row on the approved screen says the same status, so it
+                 * is dropped there and the two columns that differ take its
+                 * place: which works came through, and when.
+                 */
+                /*
+                 * Every row on the approved screen says the same status, so it
+                 * is dropped there and the works that came through take its
+                 * place, carrying the evidence the status column carried.
+                 * Which works, then when: the other way round reads backwards.
+                 */
+                $approvals
+                    ? ['key' => 'works_done', 'label' => 'Approved Works',
+                        'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url', 'subPreview' => true]
+                    : ['key' => 'status', 'label' => 'Status', 'type' => 'badge',
+                        'note' => 'works_note', 'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url',
+                        // An image or a PDF, so it opens over the list.
+                        'subPreview' => true],
+
+                // Exported from both screens, drawn only where they answer the
+                // question. See exportOnly in DataGrid, and workSplit().
+                ['key' => 'works_done', 'label' => 'Approved Works', 'exportOnly' => true, 'hidden' => $approvals],
+                ['key' => 'works_approved_on', 'label' => 'Approved On', 'exportOnly' => ! $approvals],
                 ['key' => 'works_pending', 'label' => 'Pending Works', 'exportOnly' => true],
                 // A column of the word "Edit" is noise in a spreadsheet, and in the
                 // search box it is worse: every row matches anyone typing "edit".
@@ -285,8 +344,14 @@ class WorkFileController extends Controller
                 $req->query('status') === 'open' => 'Work in hand',
                 default => WorkFileModel::STATUSES[$req->query('status')] ?? $req->query('status'),
             },
-            'base' => route('workfile.index'),
+            'base' => $base,
             'maxDate' => now()->toDateString(),
+
+            // Both screens are this same list; only the words differ.
+            'heading' => $options['heading'] ?? 'Work Files',
+            'crumb' => $options['crumb'] ?? 'Work Files',
+            'cardTitle' => $options['cardTitle'] ?? 'Files Received',
+            'cardHint' => $options['cardHint'] ?? null,
 
             /*
              * Files still waiting on a price.
@@ -301,7 +366,7 @@ class WorkFileController extends Controller
             'pendingCounts' => WorkFileModel::pendingCounts(),
             'pendingLabels' => WorkFileModel::PENDING,
             'pendingUrls' => collect(WorkFileModel::PENDING)
-                ->map(fn ($label, $key) => route('workfile.index', ['pending' => $key]))
+                ->map(fn ($label, $key) => $base.'?pending='.$key)
                 ->all(),
         ]);
     }

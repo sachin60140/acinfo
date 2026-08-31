@@ -120,6 +120,13 @@
 
     <li class="nav-item">
       {{-- Editing one file belongs to the list it was opened from. --}}
+      <a class="{{ $navClass($req->routeIs('workfile.approved')) }}" href="{{ route('workfile.approved') }}">
+        <i class="bi bi-patch-check"></i>
+        <span>Approved Files</span>
+      </a>
+    </li>
+
+    <li class="nav-item">
       <a class="{{ $navClass($req->routeIs('workfile.index', 'workfile.edit')) }}" href="{{ route('workfile.index') }}">
         <i class="bi bi-folder2-open"></i>
         <span>All Work Files</span>
