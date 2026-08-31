@@ -509,6 +509,8 @@ class WorkFileController extends Controller
                 'default_rate' => $type->default_rate,
             ])->values(),
             'historyUrl' => route('api.workfile.history'),
+            // What this customer has paid before, looked up when one is chosen.
+            'ratesUrl' => route('api.workfile.customerrates'),
             'cancelUrl' => route('workfile.index'),
             'oldRows' => collect($oldRows)->map(fn ($row) => [
                 'registration_no' => $row['registration_no'] ?? '',

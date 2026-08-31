@@ -220,9 +220,19 @@
                 paint();
             });
 
-            customer.addEventListener('change', paint);
+            const announce = function () {
+                document.dispatchEvent(new CustomEvent('receive-customer', {
+                    detail: customer.value ? Number(customer.value) : null
+                }));
+            };
+
+            customer.addEventListener('change', function () {
+                paint();
+                announce();
+            });
 
             paint();
+            announce();
         });
     </script>
 @endsection

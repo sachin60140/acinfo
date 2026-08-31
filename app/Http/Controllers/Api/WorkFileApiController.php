@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\WorkFileModel;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 /**
  * JSON endpoints for the browser-side screens.
@@ -16,6 +17,39 @@ use Illuminate\Http\Request;
  */
 class WorkFileApiController extends Controller
 {
+    /**
+     * What this customer has been charged for each work before.
+     *
+     * Answers the other question the receive screen needs answered before a
+     * price is typed: what did this customer pay for a transfer last time.
+     *
+     * Fetched rather than sent with the screen, because the customer is chosen
+     * after it loads and the answer is theirs alone.
+     */
+    public function customerRates(Request $req): JsonResponse
+    {
+        $req->validate([
+            'customer_id' => ['required', 'integer', Rule::exists('party', 'id')->where('party_type', 'customer')],
+        ]);
+
+        $rates = WorkFileModel::recentCustomerRates((int) $req->query('customer_id'));
+
+        return response()->json([
+            'customer_id' => (int) $req->query('customer_id'),
+            'works' => collect($rates)->map(fn ($one) => [
+                'work_type_id' => $one['work_type_id'],
+                'rates' => collect($one['rates'])->map(fn ($rate) => [
+                    'file_no' => $rate->file_no,
+                    'received_date' => date('d-m-Y', strtotime($rate->received_date)),
+                    'registration_no' => $rate->registration_no,
+                    'work_type' => $rate->work_type,
+                    'status' => WorkFileModel::STATUSES[$rate->status] ?? $rate->status,
+                    'amount' => (float) $rate->amount,
+                ])->values(),
+            ])->values(),
+        ]);
+    }
+
     /**
      * What has already been booked against a vehicle.
      *

@@ -276,3 +276,144 @@ describe('the works a file may still be for', () => {
         expect(optionsOn(host, 1)).toEqual(['HPA — 2,500.00', 'TR']);
     });
 });
+
+/*
+ * What this customer paid before, where the next price is typed.
+ *
+ * The mirror of the vendor screen's rate history, on the other side of the
+ * counter. The customer is chosen after the page loads, so it is fetched — and
+ * the panel above announces the choice rather than this reaching for it.
+ */
+describe('what this customer paid before', () => {
+    const RATES = {
+        works: [{
+            work_type_id: 1,
+            rates: [
+                { file_no: 'F-00007', received_date: '14-08-2026', registration_no: 'BR06CL5310', work_type: 'HPA', status: 'Approval Done', amount: 2500 },
+                { file_no: 'F-00004', received_date: '02-08-2026', registration_no: 'BR07BA1145', work_type: 'HPA', status: 'File Dispatch', amount: 2200 },
+            ],
+        }],
+    };
+
+    const chooseCustomer = async (id) => {
+        document.dispatchEvent(new window.CustomEvent('receive-customer', { detail: id }));
+
+        // The fetch resolves on its own microtask, then Vue renders.
+        await Promise.resolve();
+        await Promise.resolve();
+        await nextTick();
+    };
+
+    function stubFetch(payload = RATES) {
+        const calls = [];
+
+        global.fetch = (url) => {
+            calls.push(url);
+
+            return Promise.resolve({ ok: true, json: () => Promise.resolve(payload) });
+        };
+
+        return calls;
+    }
+
+    it('asks for the chosen customer, and nothing before one is chosen', async () => {
+        const calls = stubFetch();
+        const host = mount({ ratesUrl: '/admin/api/work-files/customer-rates' });
+
+        await chooseCustomer(null);
+        expect(calls).toEqual([]);
+
+        await chooseCustomer(7);
+        expect(calls).toEqual(['/admin/api/work-files/customer-rates?customer_id=7']);
+
+        host.remove();
+    });
+
+    it('says the last price beside the box where the next one is typed', async () => {
+        stubFetch();
+        const host = mount({ ratesUrl: '/admin/api/work-files/customer-rates' });
+
+        // Nothing until a work type is chosen: the history is per work.
+        await chooseCustomer(7);
+        expect(host.querySelectorAll('.rcv-past__open').length).toBe(0);
+
+        const type = byName(host, 'rows[0][works][0][work_type_id]');
+        type.value = '1';
+        type.dispatchEvent(new window.Event('change'));
+        await nextTick();
+
+        expect(host.querySelectorAll('.rcv-past__open').length).toBe(1);
+        expect(host.querySelector('.rcv-past__open').textContent).toContain('2,500.00');
+    });
+
+    it('opens what they were charged, and closes again', async () => {
+        stubFetch();
+        const host = mount({ ratesUrl: '/admin/api/work-files/customer-rates' });
+
+        await chooseCustomer(7);
+
+        const type = byName(host, 'rows[0][works][0][work_type_id]');
+        type.value = '1';
+        type.dispatchEvent(new window.Event('change'));
+        await nextTick();
+
+        host.querySelector('.rcv-past__open').click();
+        await nextTick();
+
+        const panel = host.querySelector('.rcv-past');
+
+        expect(panel).toBeTruthy();
+        expect(panel.querySelectorAll('tbody tr').length).toBe(2);
+        expect(panel.textContent).toContain('BR07BA1145');
+        expect(panel.textContent).toContain('2,200.00');
+        // Status, because a price on a cancelled file is not a price to repeat.
+        expect(panel.textContent).toContain('Approval Done');
+
+        host.querySelector('.rcv-past__open').click();
+        await nextTick();
+
+        expect(host.querySelector('.rcv-past')).toBe(null);
+    });
+
+    /*
+     * The history is a pricing aid, not part of the form: a price looked up
+     * must never be sent as a price agreed.
+     */
+    it('posts nothing of its own', async () => {
+        stubFetch();
+        const host = mount({ ratesUrl: '/admin/api/work-files/customer-rates' });
+
+        await chooseCustomer(7);
+
+        const type = byName(host, 'rows[0][works][0][work_type_id]');
+        type.value = '1';
+        type.dispatchEvent(new window.Event('change'));
+        await nextTick();
+
+        host.querySelector('.rcv-past__open').click();
+        await nextTick();
+
+        expect([...host.querySelectorAll('.rcv-past [name]')]).toEqual([]);
+    });
+
+    /*
+     * A price can still be agreed without it, so a lookup that fails is quiet
+     * rather than an error in the middle of taking papers in.
+     */
+    it('stays quiet when the lookup fails', async () => {
+        global.fetch = () => Promise.resolve({ ok: false, status: 500 });
+
+        const host = mount({ ratesUrl: '/admin/api/work-files/customer-rates' });
+
+        await chooseCustomer(7);
+
+        const type = byName(host, 'rows[0][works][0][work_type_id]');
+        type.value = '1';
+        type.dispatchEvent(new window.Event('change'));
+        await nextTick();
+
+        expect(host.querySelectorAll('.rcv-past__open').length).toBe(0);
+        // And the row still works.
+        expect(byName(host, 'rows[0][works][0][amount]')).not.toBe(null);
+    });
+});

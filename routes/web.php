@@ -99,6 +99,9 @@ Route::group(['middleware' => 'admin'], function () {
      * vehicle's history and prices are not public just because they are JSON.
      */
     Route::get('admin/api/work-files/history', [WorkFileApiController::class, 'history'])->name('api.workfile.history');
+
+    // What this customer has been charged for each work before.
+    Route::get('admin/api/work-files/customer-rates', [WorkFileApiController::class, 'customerRates'])->name('api.workfile.customerrates');
 });
 
 Route::get('/user', [UserController::class, 'userlogin']);

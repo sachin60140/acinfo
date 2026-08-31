@@ -1845,6 +1845,97 @@ class WorkFileItemTest extends TestCase
         $this->assertNotNull($stranger->refresh(), 'untouched');
         $this->assertCount(2, $other->refresh()->items);
     }
+    /**
+     * What this customer has been charged for each work before.
+     *
+     * A price is settled between two people, so it is their history that is
+     * offered — what another customer paid is not what this one expects.
+     */
+    public function test_the_lookup_returns_only_this_customers_charges(): void
+    {
+        $this->actingAs($this->admin());
+
+        $mine = $this->twoWorkFile('BR01ZZ0149');
+
+        $other = new PartyModel;
+        $other->party_type = 'customer';
+        $other->name = 'Other Customer '.uniqid();
+        $other->mobile = '9333300009';
+        $other->is_active = 1;
+        $other->save();
+
+        // The same work, charged to somebody else at a different price.
+        $theirs = new WorkFileModel;
+        $theirs->file_no = 'F-OTHER-'.uniqid();
+        $theirs->received_date = now()->toDateString();
+        $theirs->customer_id = $other->id;
+        $theirs->work_type_id = $this->workType->id;
+        $theirs->customer_amount = 9999;
+        $theirs->status = 'in_office';
+        $theirs->save();
+
+        $item = new WorkFileItemModel;
+        $item->work_file_id = $theirs->id;
+        $item->work_type_id = $this->workType->id;
+        $item->customer_amount = 9999;
+        $item->status = 'in_office';
+        $item->save();
+
+        $works = collect($this->getJson(route('api.workfile.customerrates', ['customer_id' => $this->customer->id]))
+            ->assertOk()->json('works'));
+
+        $amounts = $works->flatMap(fn ($work) => collect($work['rates'])->pluck('amount'))->map(fn ($a) => (float) $a);
+
+        $this->assertNotEmpty($amounts, 'this customer has been charged before');
+        $this->assertNotContains(9999.0, $amounts->all(), 'and never what somebody else paid');
+
+        // Their own charge is there, against the work it was for.
+        $first = $mine->items->first();
+        $forThatWork = $works->firstWhere('work_type_id', $first->work_type_id);
+
+        $this->assertNotNull($forThatWork);
+        $this->assertContains(
+            (float) $first->customer_amount,
+            collect($forThatWork['rates'])->pluck('amount')->map(fn ($a) => (float) $a)->all()
+        );
+    }
+
+    /**
+     * A cancelled file charged nobody, so its price is not one to repeat.
+     */
+    public function test_the_lookup_leaves_out_what_was_never_charged(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0150');
+        $struck = $file->items->last();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$struck->id => WorkFileModel::CANCELLED],
+            'remarks' => [$struck->id => 'Entered by mistake'],
+        ])->assertRedirect();
+
+        $file->status = WorkFileModel::CANCELLED;
+        $file->save();
+
+        $works = collect($this->getJson(route('api.workfile.customerrates', ['customer_id' => $this->customer->id]))
+            ->assertOk()->json('works'));
+
+        $files = $works->flatMap(fn ($work) => collect($work['rates'])->pluck('file_no'));
+
+        $this->assertNotContains($file->file_no, $files->all());
+    }
+
+    /**
+     * The lookup is behind the same door as everything else: a customer's
+     * prices are not public because the answer happens to be JSON.
+     */
+    public function test_the_lookup_is_not_open_to_anyone(): void
+    {
+        $this->getJson(route('api.workfile.customerrates', ['customer_id' => $this->customer->id]))
+            ->assertRedirect()
+            ->assertDontSee('rates');
+    }
     private function vendor(): PartyModel
     {
         $vendor = new PartyModel;

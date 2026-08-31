@@ -289,6 +289,7 @@
                     }
                 }
             },
+            "ratesUrl": "string",
             "workTypes": {
                 "list_of": {
                     "default_rate": "null",

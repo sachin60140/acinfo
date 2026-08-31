@@ -13,11 +13,13 @@
  * makes it safe to redraw a screen on a live application: the layout moves, the
  * money logic does not.
  */
-import { computed, reactive, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 const props = defineProps({
     workTypes: { type: Array, default: () => [] },
     historyUrl: { type: String, required: true },
+    // Where to ask what this customer has been charged before.
+    ratesUrl: { type: String, default: '' },
     cancelUrl: { type: String, default: '' },
     oldRows: { type: Array, default: () => [] },
 });
@@ -150,6 +152,69 @@ function onWorkTypeChange(work) {
         work.amount = Number(type.default_rate).toFixed(2);
     }
 }
+
+/*
+ * What this customer has paid before, work by work.
+ *
+ * The mirror of the vendor screen's rate history, on the other side of the
+ * counter: a price is agreed with the customer in front of you, and the
+ * question is what they paid last time for the same job. Their own history
+ * rather than everybody's — a price is settled between two people, and what
+ * another customer paid is not what this one expects.
+ *
+ * Fetched rather than sent with the screen, because the customer is chosen
+ * after it loads. The panel above announces the choice; this listens, the same
+ * way it listens for the running total in the other direction.
+ */
+const customerRates = ref([]);
+
+const ratesFor = computed(() =>
+    Object.fromEntries(customerRates.value.map((one) => [one.work_type_id, one.rates]))
+);
+
+const pastRates = (work) => (work.work_type_id ? ratesFor.value[work.work_type_id] ?? [] : []);
+
+// One open at a time, keyed by the row and the line it belongs to.
+const showingRates = ref(null);
+
+function toggleRates(rowIndex, workIndex) {
+    const key = `${rowIndex}-${workIndex}`;
+
+    showingRates.value = showingRates.value === key ? null : key;
+}
+
+const isShowingRates = (rowIndex, workIndex) => showingRates.value === `${rowIndex}-${workIndex}`;
+
+async function loadCustomerRates(customerId) {
+    if (! customerId || ! props.ratesUrl) {
+        customerRates.value = [];
+
+        return;
+    }
+
+    try {
+        const response = await fetch(`${props.ratesUrl}?customer_id=${encodeURIComponent(customerId)}`, {
+            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            credentials: 'same-origin',
+        });
+
+        if (! response.ok) {
+            throw new Error(`Lookup failed: ${response.status}`);
+        }
+
+        customerRates.value = (await response.json()).works ?? [];
+    } catch (error) {
+        // A price can still be agreed without it, so a failed lookup is quiet.
+        customerRates.value = [];
+    }
+}
+
+function onCustomerChosen(event) {
+    loadCustomerRates(event.detail);
+}
+
+onMounted(() => document.addEventListener('receive-customer', onCustomerChosen));
+onBeforeUnmount(() => document.removeEventListener('receive-customer', onCustomerChosen));
 
 /*
  * The history lookup.
@@ -307,7 +372,8 @@ watch(total, (value) => {
 
                             <!-- One line per work: what it is, what it costs the
                                  customer, and the way to take it off again. -->
-                            <div v-for="(work, wi) in row.works" :key="wi" class="rcv-work">
+                            <template v-for="(work, wi) in row.works" :key="wi">
+                            <div class="rcv-work">
                                 <select
                                     class="ui-select"
                                     :name="`rows[${index}][works][${wi}][work_type_id]`"
@@ -320,6 +386,7 @@ watch(total, (value) => {
                                     </option>
                                 </select>
 
+                                <div class="rcv-work__price">
                                 <div class="rcv-affix rcv-work__amount">
                                     <span class="rcv-affix__tag">INR</span>
                                     <input
@@ -333,6 +400,18 @@ watch(total, (value) => {
                                         required>
                                 </div>
 
+                                <!-- What this customer paid for this work before. -->
+                                <button
+                                    v-if="pastRates(work).length"
+                                    type="button"
+                                    class="rcv-past__open"
+                                    title="What this customer has paid for this work before"
+                                    @click="toggleRates(index, wi)">
+                                    <i class="bi bi-clock-history"></i>
+                                    last {{ money(pastRates(work)[0].amount) }}
+                                </button>
+                                </div>
+
                                 <button
                                     type="button"
                                     class="rcv-work__remove"
@@ -343,6 +422,41 @@ watch(total, (value) => {
                                     <span class="rcv-sr">Remove this work</span>
                                 </button>
                             </div>
+
+                            <!-- What this customer paid for this work before. -->
+                            <div v-if="isShowingRates(index, wi)" class="rcv-past">
+                                <div class="rcv-past__head">
+                                    <strong>{{ pastRates(work)[0].work_type }}</strong> &mdash; the last
+                                    {{ pastRates(work).length }}
+                                    {{ pastRates(work).length === 1 ? 'time' : 'times' }} this customer was charged
+                                </div>
+
+                                <div class="ui-table-wrap">
+                                    <table class="ui-table rcv-past__table">
+                                        <thead>
+                                            <tr>
+                                                <th>Received</th>
+                                                <th>File No.</th>
+                                                <th>Vehicle</th>
+                                                <th>Status</th>
+                                                <th class="num">Charged</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="(past, i) in pastRates(work)" :key="i">
+                                                <td data-label="Received">{{ past.received_date }}</td>
+                                                <td data-label="File No."><span class="ui-lead">{{ past.file_no }}</span></td>
+                                                <td data-label="Vehicle">{{ past.registration_no || '—' }}</td>
+                                                <td data-label="Status">{{ past.status }}</td>
+                                                <td data-label="Charged" class="num">
+                                                    <span class="ui-money ui-money--dr">{{ money(past.amount) }}</span>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            </template>
 
                             <button
                                 type="button"
@@ -641,6 +755,7 @@ watch(total, (value) => {
     align-items: center;
     display: grid;
     gap: var(--s-2);
+    align-items: start;
     grid-template-columns: minmax(0, 1fr) 10.5rem 2.25rem;
 }
 
@@ -705,6 +820,47 @@ watch(total, (value) => {
     overflow: hidden;
     position: absolute;
     width: 1px;
+}
+
+/* What this customer paid for this work before: a quiet line on the work it is
+   about, and a panel when it is asked for. */
+/* The price and, under it, what this customer paid last time. One cell, so the
+   row keeps the three columns it is laid out on. */
+.rcv-work__price {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    min-width: 0;
+}
+
+.rcv-work__price .rcv-affix {
+    width: 100%;
+}
+
+.rcv-past__open {
+    background: none;
+    border: 0;
+    color: var(--brand-600);
+    cursor: pointer;
+    font-size: var(--t-xs);
+    padding: 0 var(--s-1);
+    white-space: nowrap;
+}
+
+.rcv-past__open:hover {
+    text-decoration: underline;
+}
+
+.rcv-past__open:focus-visible {
+    border-radius: var(--r-sm);
+    outline: 2px solid var(--brand-500);
+    outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+    .rcv-past__open {
+        min-height: var(--tap);
+    }
 }
 
 /* ---- What this vehicle has been charged before ------------------------- */
