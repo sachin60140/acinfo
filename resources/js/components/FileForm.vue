@@ -107,6 +107,67 @@ const worksCost = computed(() =>
     works.reduce((sum, work) => sum + (Number(work.vendor_amount) || 0), 0)
 );
 
+/*
+ * Work being added to this file.
+ *
+ * Papers turn up later for another job on the same vehicle — a permit surrender
+ * on a folder taken in for a transfer. Recording it as a second file would
+ * split one envelope across two numbers and two lines on the statement.
+ *
+ * These are rows on a form until the file is saved, so one added by mistake is
+ * simply taken off again. A work that has been saved is struck off on the
+ * board, where cancelling asks why and keeps the record.
+ */
+const newWorks = reactive([]);
+
+// One vehicle has one transfer: a work already on the file, or already being
+// added on another line, is not offered again.
+function worksLeftFor(index) {
+    const taken = new Set([
+        ...works.map((work) => String(work.work_type_id)),
+        ...newWorks.filter((_, i) => i !== index).map((work) => String(work.work_type_id)),
+    ].filter(Boolean));
+
+    // A single-work file's own work is in the boxes above, not in the panel.
+    if (! multiWork.value && form.work_type_id) {
+        taken.add(String(form.work_type_id));
+    }
+
+    return props.workTypes.filter((type) => ! taken.has(String(type.id)));
+}
+
+const worksOnFile = computed(() => (multiWork.value ? works.length : 1) + newWorks.length);
+
+const canAddWork = computed(() => worksOnFile.value < props.workTypes.length);
+
+function addWork() {
+    if (canAddWork.value) {
+        newWorks.push({ work_type_id: '', amount: '', vendor_amount: '' });
+    }
+}
+
+function removeNewWork(index) {
+    newWorks.splice(index, 1);
+}
+
+/**
+ * Picking a type fills in what that work usually costs, never over an amount
+ * already typed — the same rule the receiving screen follows.
+ */
+function onNewWorkType(work) {
+    const type = props.workTypes.find((one) => String(one.id) === String(work.work_type_id));
+
+    if (type && type.rate && ! work.amount) {
+        work.amount = Number(type.rate).toFixed(2);
+    }
+}
+
+// A settled file does not gain work: papers arriving after it is approved,
+// returned or cancelled are a new file. Said here rather than on save.
+const settled = computed(() =>
+    [props.approvedKey, props.returnedKey, props.cancelledKey].includes(form.status)
+);
+
 const cancelled = computed(() => form.status === props.cancelledKey);
 const returning = computed(() => form.status === props.returnedKey);
 const approving = computed(() => form.status === props.approvedKey);
@@ -630,7 +691,7 @@ onMounted(() => {
                     Status is not editable here. A work moves on the board, where
                     the evidence goes with it — this screen is for corrections.
                 -->
-                <div v-if="multiWork" class="wf-works">
+                <div v-if="isEdit" class="wf-works">
                     <div class="wf-works__head">
                         <h3 class="wf-section__title">Works on This File</h3>
                         <div class="ui-hint">
@@ -639,7 +700,7 @@ onMounted(() => {
                         </div>
                     </div>
 
-                    <div class="ui-table-wrap">
+                    <div v-if="multiWork" class="ui-table-wrap">
                         <table class="ui-table wf-works__table">
                             <thead>
                                 <tr>
@@ -706,6 +767,78 @@ onMounted(() => {
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+
+                    <!-- Work being added. A row on a form until this is saved. -->
+                    <div v-for="(work, index) in newWorks" :key="index" class="wf-new-work">
+                        <div class="ui-field">
+                            <label class="ui-label">Work <span class="ui-label__req">*</span></label>
+                            <select
+                                class="ui-select"
+                                :name="`new_works[${index}][work_type_id]`"
+                                v-model="work.work_type_id"
+                                @change="onNewWorkType(work)"
+                                required>
+                                <option value="">Select work</option>
+                                <option v-for="type in worksLeftFor(index)" :key="type.id" :value="type.id">
+                                    {{ type.label }}
+                                </option>
+                            </select>
+                        </div>
+
+                        <div class="ui-field">
+                            <label class="ui-label">Charged <span class="ui-label__req">*</span></label>
+                            <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                class="ui-input ui-input--amount"
+                                :name="`new_works[${index}][amount]`"
+                                v-model="work.amount"
+                                placeholder="0.00"
+                                required>
+                        </div>
+
+                        <div class="ui-field">
+                            <label class="ui-label">Vendor Rate</label>
+                            <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                class="ui-input ui-input--amount"
+                                :name="`new_works[${index}][vendor_amount]`"
+                                v-model="work.vendor_amount"
+                                placeholder="Not agreed">
+                        </div>
+
+                        <button
+                            type="button"
+                            class="wf-new-work__remove"
+                            title="Do not add this work"
+                            @click="removeNewWork(index)">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+
+                    <div class="wf-works__add">
+                        <button
+                            type="button"
+                            class="ui-btn ui-btn--sm"
+                            :disabled="settled || ! canAddWork"
+                            :title="settled
+                                ? 'A file that is finished does not gain work — receive the papers as a new file'
+                                : (canAddWork ? 'Add another work to this file' : 'Every work is already on this file')"
+                            @click="addWork">
+                            <i class="bi bi-plus-lg"></i> Add another work
+                        </button>
+
+                        <span v-if="settled" class="ui-hint">
+                            This file is finished. Papers for more work are a new file.
+                        </span>
+                        <span v-else-if="newWorks.length" class="ui-hint">
+                            {{ newWorks.length }} {{ newWorks.length === 1 ? 'work' : 'works' }} will be added when you save,
+                            and charged to the customer.
+                        </span>
                     </div>
                 </div>
                 <div class="ui-card__foot">
@@ -957,6 +1090,71 @@ onMounted(() => {
 .wf-works__head {
     margin-bottom: var(--s-3);
 }
+/* A work being added, laid out on the same grid as the works panel above it so
+   the two read as one list. */
+.wf-new-work {
+    align-items: end;
+    border: 1px dashed var(--brand-400);
+    border-radius: var(--r-md);
+    display: grid;
+    gap: var(--s-3);
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) 2.25rem;
+    margin-top: var(--s-3);
+    padding: var(--s-3);
+}
+
+.wf-new-work__remove {
+    background: none;
+    border: 1px solid var(--n-200);
+    border-radius: var(--r-sm);
+    color: var(--n-500);
+    cursor: pointer;
+    height: 2.25rem;
+    width: 2.25rem;
+}
+
+.wf-new-work__remove:hover {
+    background: var(--cr-050);
+    border-color: var(--cr-600);
+    color: var(--cr-600);
+}
+
+.wf-new-work__remove:focus-visible {
+    outline: 2px solid var(--brand-500);
+    outline-offset: 1px;
+}
+
+.wf-works__add {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-3);
+    margin-top: var(--s-3);
+}
+
+@media (pointer: coarse) {
+    .wf-new-work__remove {
+        height: var(--tap);
+        width: var(--tap);
+    }
+
+    .wf-new-work {
+        grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) var(--tap);
+    }
+}
+
+@media (max-width: 767.98px) {
+    .wf-new-work {
+        grid-template-columns: minmax(0, 1fr) var(--tap);
+    }
+
+    .wf-new-work__remove {
+        grid-column: 2;
+        grid-row: 1 / span 3;
+        height: 100%;
+    }
+}
+
 
 .wf-works__table td {
     vertical-align: middle;

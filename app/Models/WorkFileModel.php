@@ -131,6 +131,18 @@ class WorkFileModel extends Model
     }
 
     /**
+     * Nothing further is expected of this file.
+     *
+     * Approved is done, returned went back and cancelled charged nobody — the
+     * same test a single work uses, for the same reason. Papers arriving after
+     * any of those are a new file, not more work on a settled one.
+     */
+    public function isSettled(): bool
+    {
+        return in_array($this->status, [self::APPROVED, self::RETURNED, self::CANCELLED], true);
+    }
+
+    /**
      * Payment mode stamped on the entries a file generates. A file is work
      * booked on account, not money moving, so it is never Cash.
      */

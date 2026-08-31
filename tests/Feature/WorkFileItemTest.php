@@ -1631,6 +1631,96 @@ class WorkFileItemTest extends TestCase
             }
         }
     }
+    /**
+     * A work can be added to a file that already exists.
+     *
+     * Papers turn up later for another job on the same vehicle — a permit
+     * surrender on a folder taken in for a transfer. Recording it as a second
+     * file splits one envelope across two numbers and two lines on the
+     * customer's statement.
+     */
+    public function test_a_work_can_be_added_to_a_file(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->file();            // one work, charged 5,000
+        $second = new WorkTypeModel;
+        $second->name = 'Later Work '.uniqid();
+        $second->is_active = 1;
+        $second->save();
+
+        $this->post(route('workfile.edit', $file->id), $this->fileForm($file, [
+            'new_works' => [['work_type_id' => $second->id, 'amount' => '3000', 'vendor_amount' => '']],
+        ]))->assertRedirect()->assertSessionMissing('error');
+
+        $file->refresh()->load('items.workType');
+
+        $this->assertCount(2, $file->items, 'the file is for two works now');
+        $this->assertEquals(8000, $file->customer_amount, 'and charges for both');
+
+        $this->assertSame(8000.0, (float) PartyLedgerModel::where('work_file_id', $file->id)
+            ->where('file_role', 'customer')->value('amount'), 'the statement follows');
+
+        // It starts in the office: it has not been anywhere yet.
+        $fresh = $file->items->firstWhere('work_type_id', $second->id);
+        $this->assertSame('in_office', $fresh->status);
+    }
+
+    /**
+     * The rule the whole file lives by holds when work is added, against what
+     * it already has and against the rest of what is being added.
+     */
+    public function test_added_work_cannot_repeat_a_work_the_file_has(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->file();
+
+        $this->post(route('workfile.edit', $file->id), $this->fileForm($file, [
+            'new_works' => [['work_type_id' => $this->workType->id, 'amount' => '3000']],
+        ]))->assertSessionHas('error', fn ($error) => str_contains($error, 'same work twice'));
+
+        $this->assertCount(1, $file->refresh()->items, 'nothing was added');
+    }
+
+    /**
+     * A file that is approved, returned or cancelled is finished. Papers
+     * arriving after that are a new file, not a fourth work on one that has
+     * already been settled and billed.
+     */
+    public function test_a_finished_file_does_not_gain_work(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->file(5000, WorkFileModel::CANCELLED);
+        $second = new WorkTypeModel;
+        $second->name = 'Later Work '.uniqid();
+        $second->is_active = 1;
+        $second->save();
+
+        $this->post(route('workfile.edit', $file->id), $this->fileForm($file, [
+            'status' => WorkFileModel::CANCELLED,
+            'new_works' => [['work_type_id' => $second->id, 'amount' => '3000']],
+        ]))->assertSessionHas('error', fn ($error) => str_contains($error, 'no more work can be added'));
+
+        $this->assertCount(1, $file->refresh()->items);
+    }
+
+    /**
+     * What the file screen posts for a file, with whatever this test is about
+     * laid over it.
+     */
+    private function fileForm(WorkFileModel $file, array $overrides = []): array
+    {
+        return array_merge([
+            'file_no' => $file->file_no,
+            'received_date' => $file->received_date,
+            'work_type_id' => $file->work_type_id,
+            'customer_id' => $file->customer_id,
+            'customer_amount' => (string) $file->customer_amount,
+            'status' => $file->status,
+        ], $overrides);
+    }
     private function vendor(): PartyModel
     {
         $vendor = new PartyModel;

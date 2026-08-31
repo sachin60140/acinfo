@@ -1307,11 +1307,56 @@ class WorkFileController extends Controller
                 'items.*.work_type_id' => 'required|integer|exists:work_type,id',
                 'items.*.customer_amount' => 'required|numeric|gte:0|max:99999999',
                 'items.*.vendor_amount' => 'nullable|numeric|gte:0|max:99999999',
+
+                /*
+                 * Work added to a file that already exists: papers turning up
+                 * later for another job on the same vehicle.
+                 */
+                'new_works' => 'nullable|array',
+                'new_works.*.work_type_id' => 'required|integer|exists:work_type,id',
+                'new_works.*.amount' => 'required|numeric|gte:0|max:99999999',
+                'new_works.*.vendor_amount' => 'nullable|numeric|gte:0|max:99999999',
             ], [
                 'vendor_id.required_with' => 'Select the vendor this file was given to before entering a vendor amount.',
                 'items.*.work_type_id.required' => 'Every work on the file needs a type.',
                 'items.*.customer_amount.required' => 'Every work on the file needs a charge.',
+                'new_works.*.work_type_id.required' => 'Every work added needs a type.',
+                'new_works.*.amount.required' => 'Every work added needs a charge.',
             ]);
+
+            $adding = collect($req->input('new_works', []))
+                ->filter(fn ($work) => ! empty($work['work_type_id']));
+
+            if ($adding->isNotEmpty()) {
+                /*
+                 * A file that is approved, returned or cancelled is finished.
+                 * Papers arriving after that are a new file, not a fourth work
+                 * on one that has already been settled and billed.
+                 */
+                if ($file->isSettled()) {
+                    return back()->withInput()->with(
+                        'error',
+                        'This file is '.strtolower(WorkFileModel::STATUSES[$file->status] ?? $file->status)
+                            .', so no more work can be added to it. Receive the papers as a new file.'
+                    );
+                }
+
+                // The rule the whole file lives by: one vehicle has one
+                // transfer. Checked against what it already holds as well as
+                // against the rest of what is being added.
+                $already = $file->items()->pluck('work_type_id');
+                $wanted = $adding->pluck('work_type_id');
+                $twice = $wanted->duplicates()->merge($wanted->intersect($already))->unique();
+
+                if ($twice->isNotEmpty()) {
+                    $named = WorkTypeModel::whereIn('id', $twice)->pluck('name')->implode(', ');
+
+                    return back()->withInput()->with(
+                        'error',
+                        'A file cannot be for the same work twice. It already has: '.$named
+                    );
+                }
+            }
 
             /*
              * The same rule when a work is corrected: retyping one folder's
@@ -1417,9 +1462,44 @@ class WorkFileController extends Controller
                             : (float) $correction['vendor_amount'];
                         $item->save();
                     }
+                }
 
-                    // The folder is the sum of its works, so it is written
-                    // from them rather than from the boxes above.
+                /*
+                 * Work added to the file. After the corrections, so the boxes
+                 * above still describe the work that was already there — and
+                 * a single-work file keeps its write-through, which is decided
+                 * from the count taken before any of this.
+                 *
+                 * It starts in the office. A folder already with a vendor gains
+                 * work that has not gone anywhere, and the roll-up saying so is
+                 * the truth: part of this file is back on the desk.
+                 */
+                $added = 0;
+
+                foreach ($req->input('new_works', []) as $work) {
+                    if (empty($work['work_type_id'])) {
+                        continue;
+                    }
+
+                    $item = new WorkFileItemModel;
+                    $item->work_file_id = $file->id;
+                    $item->work_type_id = (int) $work['work_type_id'];
+                    $item->customer_amount = (float) $work['amount'];
+                    $item->vendor_amount = ($work['vendor_amount'] ?? '') === ''
+                        ? null
+                        : (float) $work['vendor_amount'];
+                    $item->status = 'in_office';
+                    $item->save();
+
+                    $added++;
+                }
+
+                /*
+                 * The folder is the sum of its works, so it is written from
+                 * them rather than from the boxes above — whenever any of them
+                 * moved.
+                 */
+                if ($added || ($corrections && $items->count() > 1)) {
                     $file->load('items');
                     $file->rollUp();
                     $file->save();
