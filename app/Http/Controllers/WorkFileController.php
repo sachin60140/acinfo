@@ -1316,6 +1316,10 @@ class WorkFileController extends Controller
                 'new_works.*.work_type_id' => 'required|integer|exists:work_type,id',
                 'new_works.*.amount' => 'required|numeric|gte:0|max:99999999',
                 'new_works.*.vendor_amount' => 'nullable|numeric|gte:0|max:99999999',
+
+                // Work being taken off the file, by id.
+                'remove_works' => 'nullable|array',
+                'remove_works.*' => 'integer',
             ], [
                 'vendor_id.required_with' => 'Select the vendor this file was given to before entering a vendor amount.',
                 'items.*.work_type_id.required' => 'Every work on the file needs a type.',
@@ -1358,6 +1362,43 @@ class WorkFileController extends Controller
                 }
             }
 
+            $removing = $file->items()
+                ->whereIn('id', (array) $req->input('remove_works', []))
+                ->with('workType')
+                ->get();
+
+            if ($removing->isNotEmpty()) {
+                /*
+                 * An approved work is a record of something that happened at
+                 * the RTO, with a date and a document behind it. Striking it
+                 * off is cancelling, on the board, where it keeps both.
+                 */
+                $through = $removing->filter(fn ($item) => $item->isApproved())
+                    ->map(fn ($item) => $item->workType?->name ?? 'a work');
+
+                if ($through->isNotEmpty()) {
+                    return back()->withInput()->with(
+                        'error',
+                        'Work that is approved cannot be taken off the file — it has a date and a document '
+                            .'behind it. Cancel it on the status board instead. Check: '.$through->implode(', ')
+                    );
+                }
+
+                // A file is for at least one work, counting whatever is being
+                // added in the same save.
+                $adding = collect($req->input('new_works', []))
+                    ->filter(fn ($work) => ! empty($work['work_type_id']))
+                    ->count();
+
+                if ($file->items()->count() - $removing->count() + $adding < 1) {
+                    return back()->withInput()->with(
+                        'error',
+                        'A file has to be for at least one work. Add another before taking the last one off, '
+                            .'or cancel the whole file.'
+                    );
+                }
+            }
+
             /*
              * The same rule when a work is corrected: retyping one folder's
              * transfer as a hypothecation addition, where it already has one,
@@ -1392,7 +1433,7 @@ class WorkFileController extends Controller
                 return back()->withInput()->with('error', 'Approval Done needs a screenshot of the approval. Attach one and save again.');
             }
 
-            DB::transaction(function () use ($file, $req) {
+            DB::transaction(function () use ($file, $req, $removing) {
                 if ($req->hasFile('approval_screenshot')) {
                     $file->storeScreenshot($req->file('approval_screenshot'));
                 }
@@ -1495,11 +1536,20 @@ class WorkFileController extends Controller
                 }
 
                 /*
+                 * And work taken off it. After the additions, so one work can
+                 * be swapped for another in a single save whichever way round
+                 * the operator did it.
+                 */
+                $removed = $removing->isEmpty()
+                    ? 0
+                    : $file->items()->whereIn('id', $removing->pluck('id'))->delete();
+
+                /*
                  * The folder is the sum of its works, so it is written from
                  * them rather than from the boxes above — whenever any of them
                  * moved.
                  */
-                if ($added || ($corrections && $items->count() > 1)) {
+                if ($added || $removed || ($corrections && $items->count() > 1)) {
                     $file->load('items');
                     $file->rollUp();
                     $file->save();

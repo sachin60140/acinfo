@@ -94,17 +94,18 @@ const works = reactive(
 );
 
 const worksCharged = computed(() =>
-    works.reduce((sum, work) => sum + (Number(work.customer_amount) || 0), 0)
+    keeping.value.reduce((sum, work) => sum + (Number(work.customer_amount) || 0), 0)
+        + newWorks.reduce((sum, work) => sum + (Number(work.amount) || 0), 0)
 );
 
 // A work with no rate agreed leaves the folder's cost short of complete, so it
 // is counted and said rather than quietly summed as nothing.
 const worksUnpriced = computed(
-    () => works.filter((work) => String(work.vendor_amount).trim() === '').length
+    () => keeping.value.filter((work) => String(work.vendor_amount).trim() === '').length
 );
 
 const worksCost = computed(() =>
-    works.reduce((sum, work) => sum + (Number(work.vendor_amount) || 0), 0)
+    keeping.value.reduce((sum, work) => sum + (Number(work.vendor_amount) || 0), 0)
 );
 
 /*
@@ -124,7 +125,7 @@ const newWorks = reactive([]);
 // added on another line, is not offered again.
 function worksLeftFor(index) {
     const taken = new Set([
-        ...works.map((work) => String(work.work_type_id)),
+        ...keeping.value.map((work) => String(work.work_type_id)),
         ...newWorks.filter((_, i) => i !== index).map((work) => String(work.work_type_id)),
     ].filter(Boolean));
 
@@ -136,7 +137,40 @@ function worksLeftFor(index) {
     return props.workTypes.filter((type) => ! taken.has(String(type.id)));
 }
 
-const worksOnFile = computed(() => (multiWork.value ? works.length : 1) + newWorks.length);
+/*
+ * Work being taken off the file.
+ *
+ * Different from cancelling it on the board, and both are wanted. Cancelling
+ * says the work was booked and struck off, and it stays on the file with a
+ * reason. Removing says it should never have been there.
+ *
+ * Marked rather than removed from the page: the row stays, struck through, with
+ * a way back — a row that vanished on a click would take its charge off the
+ * total with nothing to undo and nothing left to say what had gone.
+ */
+const removing = reactive(new Set());
+
+// An approved work has a date and a document behind it, recording something
+// that happened at the RTO. Striking it off is cancelling, on the board.
+const canRemove = (work) => work.status !== props.approvedKey;
+
+const going = (work) => removing.has(work.id);
+
+function toggleRemove(work) {
+    if (! canRemove(work)) {
+        return;
+    }
+
+    removing.has(work.id) ? removing.delete(work.id) : removing.add(work.id);
+}
+
+// What the file is left for, so the last work cannot be taken off and the
+// totals above say what will actually be charged.
+const keeping = computed(() => works.filter((work) => ! going(work)));
+
+const worksOnFile = computed(
+    () => (multiWork.value ? keeping.value.length : 1) + newWorks.length
+);
 
 const canAddWork = computed(() => worksOnFile.value < props.workTypes.length);
 
@@ -709,14 +743,15 @@ onMounted(() => {
                                     <th class="num" style="min-width: 8rem;">Vendor Rate</th>
                                     <th>Status</th>
                                     <th>Approval</th>
+                                    <th class="wf-works__off"></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="work in works" :key="work.id">
+                                <tr v-for="work in works" :key="work.id" :class="{ 'is-going': going(work) }">
                                     <td data-label="Work">
                                         <select
                                             class="ui-select"
-                                            :name="`items[${work.id}][work_type_id]`"
+                                            :name="going(work) ? null : `items[${work.id}][work_type_id]`"
                                             v-model="work.work_type_id">
                                             <option v-for="type in workTypes" :key="type.id" :value="type.id">
                                                 {{ type.label }}
@@ -730,7 +765,7 @@ onMounted(() => {
                                             min="0"
                                             step="0.01"
                                             class="ui-input ui-input--amount"
-                                            :name="`items[${work.id}][customer_amount]`"
+                                            :name="going(work) ? null : `items[${work.id}][customer_amount]`"
                                             v-model="work.customer_amount"
                                             placeholder="0.00">
                                     </td>
@@ -741,7 +776,7 @@ onMounted(() => {
                                             min="0"
                                             step="0.01"
                                             class="ui-input ui-input--amount"
-                                            :name="`items[${work.id}][vendor_amount]`"
+                                            :name="going(work) ? null : `items[${work.id}][vendor_amount]`"
                                             v-model="work.vendor_amount"
                                             placeholder="Not agreed">
                                     </td>
@@ -763,6 +798,23 @@ onMounted(() => {
                                             <i class="bi bi-paperclip"></i> View
                                         </a>
                                         <span v-else class="ui-hint">&mdash;</span>
+                                    </td>
+
+                                    <td class="wf-works__off">
+                                        <input v-if="going(work)" type="hidden" name="remove_works[]" :value="work.id">
+
+                                        <button
+                                            type="button"
+                                            class="wf-work__off"
+                                            :class="{ 'is-going': going(work) }"
+                                            :disabled="! canRemove(work)"
+                                            :title="canRemove(work)
+                                                ? (going(work) ? 'Keep this work after all' : 'Take this work off the file')
+                                                : 'Approved work has a date and a document behind it — cancel it on the status board'"
+                                            @click="toggleRemove(work)">
+                                            <i class="bi" :class="going(work) ? 'bi-arrow-counterclockwise' : 'bi-trash3'"></i>
+                                            <span class="wf-sr">{{ going(work) ? 'Keep this work' : 'Remove this work' }}</span>
+                                        </button>
                                     </td>
                                 </tr>
                             </tbody>
@@ -834,6 +886,10 @@ onMounted(() => {
 
                         <span v-if="settled" class="ui-hint">
                             This file is finished. Papers for more work are a new file.
+                        </span>
+                        <span v-else-if="removing.size" class="ui-hint ui-hint--error">
+                            {{ removing.size }} {{ removing.size === 1 ? 'work comes' : 'works come' }} off the file when you save,
+                            and {{ removing.size === 1 ? 'its charge' : 'their charges' }} off the statement.
                         </span>
                         <span v-else-if="newWorks.length" class="ui-hint">
                             {{ newWorks.length }} {{ newWorks.length === 1 ? 'work' : 'works' }} will be added when you save,
@@ -1092,6 +1148,75 @@ onMounted(() => {
 }
 /* A work being added, laid out on the same grid as the works panel above it so
    the two read as one list. */
+/* A work on its way off the file. Struck through rather than gone, so what is
+   about to happen can be read and undone. */
+.wf-works__table tr.is-going td {
+    background: var(--cr-050);
+    opacity: 0.7;
+}
+
+.wf-works__table tr.is-going .ui-select,
+.wf-works__table tr.is-going .ui-input {
+    text-decoration: line-through;
+}
+
+.wf-works__off {
+    text-align: right;
+    width: 2.75rem;
+}
+
+.wf-work__off {
+    background: none;
+    border: 1px solid var(--n-200);
+    border-radius: var(--r-sm);
+    color: var(--n-500);
+    cursor: pointer;
+    height: 2.25rem;
+    width: 2.25rem;
+}
+
+.wf-work__off:hover:not(:disabled) {
+    background: var(--cr-050);
+    border-color: var(--cr-600);
+    color: var(--cr-600);
+}
+
+.wf-work__off.is-going {
+    background: var(--n-000);
+    border-color: var(--brand-500);
+    color: var(--brand-600);
+}
+
+.wf-work__off:disabled {
+    color: var(--n-300);
+    cursor: not-allowed;
+}
+
+.wf-work__off:focus-visible {
+    outline: 2px solid var(--brand-500);
+    outline-offset: 1px;
+}
+
+/* Named for a screen reader, where an icon on its own says nothing. */
+.wf-sr {
+    clip: rect(0 0 0 0);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    width: 1px;
+}
+
+@media (pointer: coarse) {
+    .wf-work__off {
+        height: var(--tap);
+        width: var(--tap);
+    }
+
+    .wf-works__off {
+        width: calc(var(--tap) + var(--s-2));
+    }
+}
+
 .wf-new-work {
     align-items: end;
     border: 1px dashed var(--brand-400);

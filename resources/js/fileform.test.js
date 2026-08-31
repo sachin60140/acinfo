@@ -215,3 +215,106 @@ describe('adding a work to a file', () => {
         }
     });
 });
+
+/*
+ * Taking a work off a file.
+ *
+ * Marked rather than yanked: a row that vanished on a click would take its
+ * charge off the total with nothing to undo and nothing left to say what had
+ * gone. So the row stays, struck through, with a way back — and stops posting
+ * the corrections that would otherwise be sent for a work about to be deleted.
+ */
+describe('taking a work off a file', () => {
+    const removeButtons = (host) => [...host.querySelectorAll('.wf-work__off')];
+
+    it('is offered on every work that has not been approved', () => {
+        const host = mount({ items: TWO_WORKS });
+
+        expect(removeButtons(host).length).toBe(2);
+        expect(removeButtons(host).every((b) => ! b.disabled)).toBe(true);
+    });
+
+    it('is refused on work that is through, which is cancelled on the board', () => {
+        const host = mount({
+            items: [
+                { ...TWO_WORKS[0], status: 'approval_done', status_label: 'Approval Done', approved_on: '21-08-2026' },
+                TWO_WORKS[1],
+            ],
+        });
+
+        const [approved, open] = removeButtons(host);
+
+        expect(approved.disabled).toBe(true);
+        expect(approved.title).toContain('cancel it on the status board');
+        expect(open.disabled).toBe(false);
+    });
+
+    it('marks the row and posts the id, rather than removing it from the page', async () => {
+        const host = mount({ items: TWO_WORKS });
+
+        removeButtons(host)[1].click();
+        await nextTick();
+
+        // Still on the page, and now marked.
+        expect(host.querySelectorAll('.wf-works__table tbody tr').length).toBe(2);
+        expect(host.querySelectorAll('.wf-works__table tbody tr.is-going').length).toBe(1);
+
+        const marked = [...host.querySelectorAll('[name="remove_works[]"]')].map((i) => i.value);
+        expect(marked).toEqual(['12']);
+    });
+
+    /*
+     * A correction to a work about to be deleted is noise, and the server would
+     * apply it a moment before removing the row.
+     */
+    it('stops posting corrections for a work that is going', async () => {
+        const host = mount({ items: TWO_WORKS });
+
+        expect(host.querySelector('[name="items[12][customer_amount]"]')).not.toBe(null);
+
+        removeButtons(host)[1].click();
+        await nextTick();
+
+        expect(host.querySelector('[name="items[12][customer_amount]"]')).toBe(null);
+        expect(host.querySelector('[name="items[11][customer_amount]"]')).not.toBe(null);
+    });
+
+    it('can be undone before saving', async () => {
+        const host = mount({ items: TWO_WORKS });
+
+        removeButtons(host)[1].click();
+        await nextTick();
+        expect(host.querySelectorAll('[name="remove_works[]"]').length).toBe(1);
+
+        removeButtons(host)[1].click();
+        await nextTick();
+
+        expect(host.querySelectorAll('[name="remove_works[]"]').length).toBe(0);
+        expect(host.querySelectorAll('.wf-works__table tbody tr.is-going').length).toBe(0);
+    });
+
+    it('takes the charge off the total it shows', async () => {
+        const host = mount({ items: TWO_WORKS });
+
+        const charged = () => host.querySelector('.wf-derived .ui-money').textContent.trim();
+
+        expect(charged()).toBe('5,000.00');
+
+        removeButtons(host)[1].click();
+        await nextTick();
+
+        expect(charged()).toBe('2,000.00');
+    });
+
+    it('offers the work again once it is going', async () => {
+        const host = mount({ items: TWO_WORKS });
+
+        removeButtons(host)[1].click();
+        host.querySelector('.wf-works__add button').click();
+        await nextTick();
+
+        // TR is on its way off, so it can be chosen again.
+        expect(optionsOn(host.querySelector('[name="new_works[0][work_type_id]"]')))
+            .toEqual(['TR — 3,000.00', 'HPA']);
+    });
+});

@@ -1721,6 +1721,130 @@ class WorkFileItemTest extends TestCase
             'status' => $file->status,
         ], $overrides);
     }
+    /**
+     * A work picked in error comes off the file.
+     *
+     * Different from cancelling it on the board, and both are wanted:
+     * cancelling says the work was booked and struck off, and it stays with a
+     * reason. Removing says it should never have been there.
+     */
+    public function test_a_work_can_be_taken_off_a_file(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0143');
+        [$kept, $gone] = $file->items->all();
+
+        $this->post(route('workfile.edit', $file->id), $this->fileForm($file, [
+            'remove_works' => [$gone->id],
+        ]))->assertRedirect()->assertSessionMissing('error');
+
+        $file->refresh()->load('items');
+
+        $this->assertCount(1, $file->items);
+        $this->assertSame((int) $kept->id, (int) $file->items->first()->id);
+        $this->assertEquals(2000, $file->customer_amount, 'and its charge came off');
+
+        $this->assertSame(2000.0, (float) PartyLedgerModel::where('work_file_id', $file->id)
+            ->where('file_role', 'customer')->value('amount'), 'the statement follows');
+    }
+
+    /**
+     * Approved work stays. There is a date and a document behind it, recording
+     * something that happened at the RTO, and deleting the row throws both
+     * away. Cancelling on the board keeps them.
+     */
+    public function test_approved_work_cannot_be_taken_off(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0144');
+        $file->received_date = now()->subWeek()->toDateString();
+        $file->save();
+
+        $done = $file->items->first();
+
+        $this->post(route('workfile.status'), [
+            'statuses' => [$done->id => WorkFileModel::APPROVED],
+            'approved_on' => [$done->id => now()->toDateString()],
+            'screenshots' => [$done->id => UploadedFile::fake()->image('rto.jpg')],
+        ])->assertRedirect()->assertSessionMissing('error');
+
+        $this->post(route('workfile.edit', $file->id), $this->fileForm($file->refresh(), [
+            'remove_works' => [$done->id],
+        ]))->assertSessionHas('error', fn ($error) => str_contains($error, 'approved cannot be taken off'));
+
+        $this->assertNotNull($done->refresh(), 'it is still on the file');
+
+        $done->approval_screenshot && @unlink(public_path($done->approval_screenshot));
+    }
+
+    /**
+     * A file is for at least one work. Taking the last one off would leave a
+     * folder that cannot say what it is for.
+     */
+    public function test_the_last_work_cannot_be_taken_off(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0145');
+
+        $this->post(route('workfile.edit', $file->id), $this->fileForm($file, [
+            'remove_works' => $file->items->pluck('id')->all(),
+        ]))->assertSessionHas('error', fn ($error) => str_contains($error, 'at least one work'));
+
+        $this->assertCount(2, $file->refresh()->items, 'nothing came off');
+    }
+
+    /**
+     * Unless something takes its place in the same save: swapping one work for
+     * another is one edit, whichever way round the operator did it.
+     */
+    public function test_every_work_may_go_when_another_takes_their_place(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0146');
+
+        $other = new WorkTypeModel;
+        $other->name = 'Swapped Work '.uniqid();
+        $other->is_active = 1;
+        $other->save();
+
+        $this->post(route('workfile.edit', $file->id), $this->fileForm($file, [
+            'remove_works' => $file->items->pluck('id')->all(),
+            'new_works' => [['work_type_id' => $other->id, 'amount' => '4000']],
+        ]))->assertRedirect()->assertSessionMissing('error');
+
+        $file->refresh()->load('items.workType');
+
+        $this->assertCount(1, $file->items);
+        $this->assertSame($other->name, $file->workLabel());
+        $this->assertEquals(4000, $file->customer_amount);
+
+        // And the folder is filed under a work it actually holds.
+        $this->assertSame((int) $other->id, (int) $file->work_type_id);
+    }
+
+    /**
+     * The ids are matched against this file's own works, so a tampered form
+     * cannot delete a work off somebody else's file.
+     */
+    public function test_removal_cannot_reach_another_files_work(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0147');
+        $other = $this->twoWorkFile('BR01ZZ0148');
+        $stranger = $other->items->first();
+
+        $this->post(route('workfile.edit', $file->id), $this->fileForm($file, [
+            'remove_works' => [$stranger->id],
+        ]))->assertRedirect();
+
+        $this->assertNotNull($stranger->refresh(), 'untouched');
+        $this->assertCount(2, $other->refresh()->items);
+    }
     private function vendor(): PartyModel
     {
         $vendor = new PartyModel;
