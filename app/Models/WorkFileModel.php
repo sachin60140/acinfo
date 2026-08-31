@@ -1148,17 +1148,18 @@ class WorkFileModel extends Model
     }
 
     /**
-     * The last few charges this customer paid, work by work.
+     * The last few charges this customer paid, per work and per office.
      *
      * Asked where a price is being agreed with them in front of you. Their own
-     * history rather than everybody's: a price is a thing settled between two
-     * people, and what another customer paid is not what this one expects.
+     * history rather than everybody's — a price is settled between two people —
+     * and split by office, because the RTO fee is passed on and the same work
+     * costs one thing at BR01 and another at BR06.
      *
-     * One query, then grouped: unlike the vendor lookup this is for one party
-     * at a time, so every work they have ever been charged for comes back in a
-     * single read and the newest few of each are taken from it.
+     * One read of this customer's own work, grouped afterwards. Grouping in the
+     * database would need a window function or a query per pair, and neither is
+     * worth it for one party's history.
      *
-     * @return array<int, array{work_type_id: int, rates: array}>
+     * @return array<int, array{work_type_id: int, rto: string, rates: array}>
      */
     public static function recentCustomerRates(int $customerId, int $limit = 5): array
     {
@@ -1169,7 +1170,7 @@ class WorkFileModel extends Model
             // A charge that was never agreed is not a charge, and a cancelled
             // file charged nobody.
             ->where('work_file_item.customer_amount', '>', 0)
-            ->whereNotIn('work_file.status', [self::CANCELLED])
+            ->where('work_file.status', '<>', self::CANCELLED)
             ->orderByDesc('work_file.received_date')
             ->orderByDesc('work_file.id')
             ->get([
@@ -1182,27 +1183,34 @@ class WorkFileModel extends Model
                 'work_file_item.customer_amount as amount',
             ]);
 
-        $byType = [];
+        $grouped = [];
 
         foreach ($rows as $row) {
-            $type = (int) $row->work_type_id;
+            $key = ((int) $row->work_type_id).'|'.self::rtoOf($row->registration_no);
 
-            if (count($byType[$type] ?? []) >= $limit) {
+            // Newest first out of the query, so the first few of each pair are
+            // the few that are wanted.
+            if (count($grouped[$key] ?? []) >= $limit) {
                 continue;
             }
 
-            $byType[$type][] = $row;
+            $grouped[$key][] = $row;
         }
 
         $out = [];
 
-        foreach ($byType as $type => $rates) {
-            $out[] = ['work_type_id' => $type, 'rates' => $rates];
+        foreach ($grouped as $key => $rates) {
+            [$typeId, $rto] = explode('|', $key, 2);
+
+            $out[] = [
+                'work_type_id' => (int) $typeId,
+                'rto' => $rto,
+                'rates' => $rates,
+            ];
         }
 
         return $out;
     }
-
     /**
      * The last few rates agreed for each work, at the office it was for.
      *

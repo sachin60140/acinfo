@@ -169,10 +169,19 @@ function onWorkTypeChange(work) {
 const customerRates = ref([]);
 
 const ratesFor = computed(() =>
-    Object.fromEntries(customerRates.value.map((one) => [one.work_type_id, one.rates]))
+    Object.fromEntries(customerRates.value.map((one) => [`${one.work_type_id}|${one.rto}`, one.rates]))
 );
 
-const pastRates = (work) => (work.work_type_id ? ratesFor.value[work.work_type_id] ?? [] : []);
+/*
+ * The first four characters of a registration number are the office the
+ * papers go through, and the RTO fee is passed on: the same work costs this
+ * customer one thing at BR01 and another at BR06. A price from the wrong
+ * office is worse than none — it reads as an answer.
+ */
+const rtoOf = (row) => (row.registration_no || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 4);
+
+const pastRates = (row, work) =>
+    (work.work_type_id && rtoOf(row) ? ratesFor.value[`${work.work_type_id}|${rtoOf(row)}`] ?? [] : []);
 
 // One open at a time, keyed by the row and the line it belongs to.
 const showingRates = ref(null);
@@ -402,13 +411,13 @@ watch(total, (value) => {
 
                                 <!-- What this customer paid for this work before. -->
                                 <button
-                                    v-if="pastRates(work).length"
+                                    v-if="pastRates(row, work).length"
                                     type="button"
                                     class="rcv-past__open"
                                     title="What this customer has paid for this work before"
                                     @click="toggleRates(index, wi)">
                                     <i class="bi bi-clock-history"></i>
-                                    last {{ money(pastRates(work)[0].amount) }}
+                                    last {{ money(pastRates(row, work)[0].amount) }} at {{ rtoOf(row) }}
                                 </button>
                                 </div>
 
@@ -426,9 +435,10 @@ watch(total, (value) => {
                             <!-- What this customer paid for this work before. -->
                             <div v-if="isShowingRates(index, wi)" class="rcv-past">
                                 <div class="rcv-past__head">
-                                    <strong>{{ pastRates(work)[0].work_type }}</strong> &mdash; the last
-                                    {{ pastRates(work).length }}
-                                    {{ pastRates(work).length === 1 ? 'time' : 'times' }} this customer was charged
+                                    <strong>{{ pastRates(row, work)[0].work_type }}</strong> at
+                                    <strong>{{ rtoOf(row) }}</strong> &mdash; the last
+                                    {{ pastRates(row, work).length }}
+                                    {{ pastRates(row, work).length === 1 ? 'time' : 'times' }} this customer was charged
                                 </div>
 
                                 <div class="ui-table-wrap">
@@ -443,7 +453,7 @@ watch(total, (value) => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <tr v-for="(past, i) in pastRates(work)" :key="i">
+                                            <tr v-for="(past, i) in pastRates(row, work)" :key="i">
                                                 <td data-label="Received">{{ past.received_date }}</td>
                                                 <td data-label="File No."><span class="ui-lead">{{ past.file_no }}</span></td>
                                                 <td data-label="Vehicle">{{ past.registration_no || '—' }}</td>

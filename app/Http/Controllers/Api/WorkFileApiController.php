@@ -38,6 +38,9 @@ class WorkFileApiController extends Controller
             'customer_id' => (int) $req->query('customer_id'),
             'works' => collect($rates)->map(fn ($one) => [
                 'work_type_id' => $one['work_type_id'],
+                // The office these were charged at: the first four characters
+                // of the registration, and the reason two of them differ.
+                'rto' => $one['rto'],
                 'rates' => collect($one['rates'])->map(fn ($rate) => [
                     'file_no' => $rate->file_no,
                     'received_date' => date('d-m-Y', strtotime($rate->received_date)),

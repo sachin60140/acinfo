@@ -288,9 +288,16 @@ describe('what this customer paid before', () => {
     const RATES = {
         works: [{
             work_type_id: 1,
+            rto: 'BR06',
             rates: [
                 { file_no: 'F-00007', received_date: '14-08-2026', registration_no: 'BR06CL5310', work_type: 'HPA', status: 'Approval Done', amount: 2500 },
                 { file_no: 'F-00004', received_date: '02-08-2026', registration_no: 'BR07BA1145', work_type: 'HPA', status: 'File Dispatch', amount: 2200 },
+            ],
+        }, {
+            work_type_id: 1,
+            rto: 'BR01',
+            rates: [
+                { file_no: 'F-00001', received_date: '01-08-2026', registration_no: 'BR01DD1234', work_type: 'HPA', status: 'Approval Done', amount: 9999 },
             ],
         }],
     };
@@ -310,11 +317,27 @@ describe('what this customer paid before', () => {
         global.fetch = (url) => {
             calls.push(url);
 
-            return Promise.resolve({ ok: true, json: () => Promise.resolve(payload) });
+            // The registration lookup and the rates lookup are different
+            // endpoints; answering both with the same body would have the
+            // vehicle history render whatever the rates returned.
+            const body = url.includes('customer-rates')
+                ? payload
+                : { registration_no: 'BR06AS1267', count: 0, files: [] };
+
+            return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
         };
 
         return calls;
     }
+
+    // A row has to say which office its papers go through before a price from
+    // one can be offered.
+    const typeRegistration = async (host, value) => {
+        const box = byName(host, 'rows[0][registration_no]');
+        box.value = value;
+        box.dispatchEvent(new window.Event('input'));
+        await nextTick();
+    };
 
     it('asks for the chosen customer, and nothing before one is chosen', async () => {
         const calls = stubFetch();
@@ -337,6 +360,8 @@ describe('what this customer paid before', () => {
         await chooseCustomer(7);
         expect(host.querySelectorAll('.rcv-past__open').length).toBe(0);
 
+        await typeRegistration(host, 'BR06AS1267');
+
         const type = byName(host, 'rows[0][works][0][work_type_id]');
         type.value = '1';
         type.dispatchEvent(new window.Event('change'));
@@ -351,6 +376,8 @@ describe('what this customer paid before', () => {
         const host = mount({ ratesUrl: '/admin/api/work-files/customer-rates' });
 
         await chooseCustomer(7);
+
+        await typeRegistration(host, 'BR06AS1267');
 
         const type = byName(host, 'rows[0][works][0][work_type_id]');
         type.value = '1';
@@ -385,6 +412,8 @@ describe('what this customer paid before', () => {
 
         await chooseCustomer(7);
 
+        await typeRegistration(host, 'BR06AS1267');
+
         const type = byName(host, 'rows[0][works][0][work_type_id]');
         type.value = '1';
         type.dispatchEvent(new window.Event('change'));
@@ -407,6 +436,8 @@ describe('what this customer paid before', () => {
 
         await chooseCustomer(7);
 
+        await typeRegistration(host, 'BR06AS1267');
+
         const type = byName(host, 'rows[0][works][0][work_type_id]');
         type.value = '1';
         type.dispatchEvent(new window.Event('change'));
@@ -415,5 +446,94 @@ describe('what this customer paid before', () => {
         expect(host.querySelectorAll('.rcv-past__open').length).toBe(0);
         // And the row still works.
         expect(byName(host, 'rows[0][works][0][amount]')).not.toBe(null);
+    });
+});
+
+/*
+ * A price belongs to an office as well as to a customer and a work.
+ *
+ * The RTO fee is passed on, so the same work costs this customer one thing at
+ * BR01 and another at BR06. A price from the wrong office is worse than none:
+ * it reads as an answer.
+ */
+describe('the office a price was charged at', () => {
+    const RATES = {
+        works: [
+            {
+                work_type_id: 1,
+                rto: 'BR06',
+                rates: [{ file_no: 'F-00012', received_date: '14-08-2026', registration_no: 'BR06DY2856', work_type: 'HPT+TR+HPA', status: 'Approval Done', amount: 5600 }],
+            },
+            {
+                work_type_id: 1,
+                rto: 'BR01',
+                rates: [{ file_no: 'F-00023', received_date: '23-08-2026', registration_no: 'BR01HB1967', work_type: 'HPT+TR+HPA', status: 'File Dispatch', amount: 11000 }],
+            },
+        ],
+    };
+
+    async function screenFor(registration) {
+        global.fetch = (url) => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve(
+                url.includes('customer-rates') ? RATES : { registration_no: registration, count: 0, files: [] }
+            ),
+        });
+
+        const host = mount({ ratesUrl: '/admin/api/work-files/customer-rates' });
+
+        document.dispatchEvent(new window.CustomEvent('receive-customer', { detail: 7 }));
+        await Promise.resolve();
+        await Promise.resolve();
+        await nextTick();
+
+        const box = byName(host, 'rows[0][registration_no]');
+        box.value = registration;
+        box.dispatchEvent(new window.Event('input'));
+
+        const type = byName(host, 'rows[0][works][0][work_type_id]');
+        type.value = '1';
+        type.dispatchEvent(new window.Event('change'));
+        await nextTick();
+
+        return host;
+    }
+
+    it('quotes the office the papers are actually going to', async () => {
+        const host = await screenFor('BR06AS1267');
+
+        expect(host.querySelector('.rcv-past__open').textContent).toContain('5,600.00');
+        expect(host.querySelector('.rcv-past__open').textContent).toContain('BR06');
+        expect(host.querySelector('.rcv-past__open').textContent).not.toContain('11,000');
+    });
+
+    it('quotes a different one for a different office', async () => {
+        const host = await screenFor('BR01ZZ9999');
+
+        expect(host.querySelector('.rcv-past__open').textContent).toContain('11,000.00');
+        expect(host.querySelector('.rcv-past__open').textContent).not.toContain('5,600');
+    });
+
+    it('shows only that office in the panel', async () => {
+        const host = await screenFor('BR06AS1267');
+
+        host.querySelector('.rcv-past__open').click();
+        await nextTick();
+
+        const panel = host.querySelector('.rcv-past');
+
+        expect(panel.textContent).toContain('BR06DY2856');
+        expect(panel.textContent).not.toContain('BR01HB1967');
+        expect(panel.querySelector('.rcv-past__head').textContent).toContain('BR06');
+    });
+
+    /*
+     * Until the registration says which office, there is nothing honest to
+     * offer — every office's price is a different answer.
+     */
+    it('offers nothing until the papers say where they are going', async () => {
+        const host = await screenFor('BR');
+
+        expect(host.querySelectorAll('.rcv-past__open').length).toBe(0);
     });
 });
