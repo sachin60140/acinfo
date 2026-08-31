@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\PartyLedgerModel;
 use App\Models\PartyModel;
 use App\Models\User;
+use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -574,6 +575,125 @@ class ReportTest extends TestCase
 
         $this->assertNotNull($rows[$cancelled->id]['margin'], 'cancelled is settled, not outstanding');
         $this->assertEquals(0, $rows[$cancelled->id]['margin']);
+    }
+
+    /**
+     * A folder for two works, one of them through the RTO.
+     */
+    private function partlyApproved(PartyModel $customer, PartyModel $vendor): WorkFileModel
+    {
+        $second = new WorkTypeModel;
+        $second->name = 'Report Work B '.uniqid();
+        $second->is_active = 1;
+        $second->save();
+
+        $file = new WorkFileModel;
+        $file->file_no = 'F-RPT-'.uniqid();
+        $file->received_date = '2026-05-10';
+        $file->registration_no = 'BR01RP'.random_int(1000, 9999);
+        $file->work_type_id = $this->workType->id;
+        $file->customer_id = $customer->id;
+        $file->customer_amount = 0;
+        $file->vendor_id = $vendor->id;
+        $file->vendor_date = '2026-05-11';
+        $file->status = 'in_office';
+        $file->save();
+
+        foreach ([[$this->workType, 2000, 1200], [$second, 3000, 1800]] as [$type, $charge, $cost]) {
+            $item = new WorkFileItemModel;
+            $item->work_file_id = $file->id;
+            $item->work_type_id = $type->id;
+            $item->customer_amount = $charge;
+            $item->vendor_amount = $cost;
+            $item->status = 'file_dispatch';
+            $item->save();
+        }
+
+        // The first work comes through; the second is still out.
+        $done = $file->items()->orderBy('id')->first();
+        $done->status = WorkFileModel::APPROVED;
+        $done->approved_on = '2026-05-20';
+        $done->approval_screenshot = 'uploads/approval/report.png';
+        $done->save();
+
+        $file->load('items');
+        $file->rollUp();
+        $file->save();
+        $file->syncLedger();
+
+        return $file->fresh()->load('items.workType');
+    }
+
+    /**
+     * Vendor-wise, the report says which works are through and which are not.
+     *
+     * It grouped by vendor and filtered by status already, so "approved,
+     * pending and in office, vendor-wise" was reachable — but on screen a file
+     * showed its works and one status covering all of them. Which way they
+     * disagree was in the export and nowhere else.
+     */
+    public function test_the_vendor_report_says_which_works_are_through(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->partlyApproved($this->customerA, $this->vendor);
+        [$done, $pending] = $file->items->all();
+
+        $this->assertSame(WorkFileModel::PARTLY_APPROVED, $file->status);
+
+        $row = collect($this->getJson(route('report.files', [
+            'party_type' => 'vendor',
+            'status' => 'open',
+        ]))->assertOk()->json('props.rows'))->firstWhere('id', $file->id);
+
+        $this->assertNotNull($row, 'a partly approved file is still work in hand');
+
+        $this->assertSame(
+            $done->workType->name.' approved · '.$pending->workType->name.' pending',
+            $row['works_note']
+        );
+
+        // Both works are named, and the vehicle is there to read it against.
+        $this->assertStringContainsString($pending->workType->name, $row['work_type']);
+        $this->assertSame($file->registration_no, $row['registration_no']);
+
+        // Banded under the vendor holding the papers.
+        $this->assertStringContainsString($this->vendor->name, $row['party_band']);
+
+        // And the export carries the same answer as columns.
+        $this->assertSame($done->workType->name, $row['works_done']);
+        $this->assertSame('20-05-2026', $row['works_approved_on']);
+        $this->assertSame($pending->workType->name, $row['works_pending']);
+    }
+
+    /**
+     * The three states the office asks for are one click each, and each keeps
+     * the side and the period it was asked from.
+     */
+    public function test_the_report_offers_the_three_states_it_is_asked_for(): void
+    {
+        $this->actingAs($this->admin());
+
+        $page = $this->get(route('report.files', ['party_type' => 'vendor', 'from' => '2026-01-01']))
+            ->assertOk();
+
+        foreach (['Approved', 'Still pending', 'In office', 'Everything'] as $label) {
+            $page->assertSee($label);
+        }
+
+        $html = $page->getContent();
+
+        foreach ([WorkFileModel::APPROVED, 'open', 'in_office'] as $state) {
+            $this->assertMatchesRegularExpression(
+                '/href="[^"]*status='.preg_quote($state, '/').'[^"]*"/',
+                $html,
+                "the report offers $state in one click"
+            );
+        }
+
+        // Choosing one keeps the side and the period already chosen.
+        $this->assertStringContainsString('party_type=vendor', $html);
+        $this->assertStringContainsString('from=2026-01-01', $html);
     }
 
 }

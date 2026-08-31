@@ -859,6 +859,7 @@
                     "work_type": "string",
                     "works_approved_on": "string",
                     "works_done": "string",
+                    "works_note": "null",
                     "works_pending": "string"
                 }
             },
@@ -915,6 +916,7 @@
                     "work_type": "string",
                     "works_approved_on": "string",
                     "works_done": "string",
+                    "works_note": "null",
                     "works_pending": "string"
                 }
             },

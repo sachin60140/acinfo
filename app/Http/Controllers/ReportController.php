@@ -179,6 +179,11 @@ class ReportController extends Controller
                      * spreadsheet can sort and filter. A status of "Partly
                      * Approved" says they disagree and never which way.
                      */
+                    // "HPA approved · HPT, TR pending", under the works it is
+                    // about. A status of Partly Approved says they disagree
+                    // and never which way.
+                    'works_note' => WorkFileModel::workNote($breakdown[$row->id] ?? []),
+
                     'works_done' => $split['done'],
                     'works_approved_on' => $split['approved_on'],
                     'works_pending' => $split['pending'],
@@ -226,7 +231,7 @@ class ReportController extends Controller
                 // Sorted on the ISO date carried alongside it, so the order is
                 // chronological rather than by day of the month.
                 ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_sort'],
-                ['key' => 'work_type', 'label' => 'Work Type'],
+                ['key' => 'work_type', 'label' => 'Work Type', 'note' => 'works_note'],
                 ['key' => 'description', 'label' => 'Details'],
                 ['key' => 'counterparty', 'label' => $counterpartyLabel],
                 ['key' => 'status', 'label' => 'Status', 'type' => 'badge'],
@@ -243,7 +248,31 @@ class ReportController extends Controller
             'rows' => $reportRows,
         ];
 
+        /*
+         * The three states anyone actually asks for — what is through, what is
+         * still being chased, and what has not left the office. They are all
+         * reachable from the status list beside them; these are the ones asked
+         * for often enough to be worth a click rather than three.
+         */
+        $carry = array_filter([
+            'party_type' => $partyType,
+            'party_id' => $partyId,
+            'from' => $from,
+            'to' => $to,
+        ]);
+
+        $views = [
+            '' => 'Everything',
+            WorkFileModel::APPROVED => 'Approved',
+            'open' => 'Still pending',
+            'in_office' => 'In office',
+        ];
+
         return Screen::make('admin.reports.files', 'vue-work-report', $props, [
+            'views' => $views,
+            'viewUrls' => collect($views)
+                ->map(fn ($label, $key) => route('report.files', $key === '' ? $carry : $carry + ['status' => $key]))
+                ->all(),
             // What an empty report means, and therefore what it should advise.
             'filtered' => (bool) ($partyId || $status || $from || $to),
             'partyType' => $partyType,

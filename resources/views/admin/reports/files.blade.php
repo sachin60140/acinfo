@@ -100,6 +100,16 @@
                     @endforeach
                 </div>
 
+                {{-- The three states anyone actually asks for. Everything else
+                     is still in the status list below. --}}
+                <div class="filter-row mb-3">
+                    <span class="filter-key">Show</span>
+                    @foreach ($views as $key => $label)
+                        <a href="{{ $viewUrls[$key] }}"
+                           class="chip {{ (string) $status === (string) $key ? 'active' : '' }}">{{ $label }}</a>
+                    @endforeach
+                </div>
+
                 <form method="GET" action="{{ route('report.files') }}" class="row g-2 align-items-end report-filter">
                     <input type="hidden" name="party_type" value="{{ $partyType }}">
 
