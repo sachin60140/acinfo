@@ -681,6 +681,7 @@
                 "entry_count:count",
                 "current_balance:balance",
                 "action:link:no-export:no-sort",
+                "statement_action:link:no-export:no-sort",
                 "inactive_note:text:hidden"
             ],
             "emptyText": "string",
@@ -717,6 +718,7 @@
                 "entry_count:count",
                 "current_balance:balance",
                 "action:link:no-export:no-sort",
+                "statement_action:link:no-export:no-sort",
                 "inactive_note:text:hidden"
             ],
             "emptyText": "string",
