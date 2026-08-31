@@ -1396,6 +1396,123 @@ class WorkFileItemTest extends TestCase
         $this->assertNotNull($row, 'it is waiting to go out');
         $this->assertSame('BR01ZZ0134', $row['registration_no']);
     }
+    /**
+     * The board can be narrowed to one vendor.
+     *
+     * Chasing work is usually chasing one vendor: you have them on the phone
+     * and want their files, not everybody's.
+     */
+    public function test_the_board_can_be_narrowed_to_one_vendor(): void
+    {
+        $this->actingAs($this->admin());
+
+        $mine = $this->twoWorkFile('BR01ZZ0135');
+        $theirs = $this->twoWorkFile('BR01ZZ0136');
+        $vendor = $this->vendor();
+
+        $this->post(route('workfile.assign'), [
+            'vendor_id' => $vendor->id,
+            'vendor_date' => now()->toDateString(),
+            'files' => [$mine->id],
+            'amounts' => [$mine->items->first()->id => '1200'],
+        ])->assertRedirect();
+
+        $listed = fn (array $query) => collect(
+            $this->getJson(route('workfile.status', $query))->assertOk()->json('props.files')
+        )->pluck('id')->all();
+
+        $his = $listed(['vendor' => $vendor->id]);
+
+        $this->assertContains($mine->id, $his);
+        $this->assertNotContains($theirs->id, $his, 'a file nobody was given is not his');
+
+        // And the work kept in hand is a filter of its own, which a blank could
+        // not tell apart from no filter at all.
+        $inHouse = $listed(['vendor' => WorkFileModel::IN_HOUSE]);
+
+        $this->assertContains($theirs->id, $inHouse);
+        $this->assertNotContains($mine->id, $inHouse);
+    }
+
+    /**
+     * And the chips count what the board would then show.
+     *
+     * A count taken without the filters that are on promises rows the board
+     * does not have — which is the mistake the status and work type counts
+     * already made once.
+     */
+    public function test_the_vendor_chips_count_what_the_board_shows(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0137');
+        $vendor = $this->vendor();
+
+        $this->post(route('workfile.assign'), [
+            'vendor_id' => $vendor->id,
+            'vendor_date' => now()->toDateString(),
+            'files' => [$file->id],
+            'amounts' => [$file->items->first()->id => '1200'],
+        ])->assertRedirect();
+
+        foreach (WorkFileModel::vendorCounts('all') as $party) {
+            $key = $party->id ?: WorkFileModel::IN_HOUSE;
+
+            $this->assertSame(
+                WorkFileModel::forStatusBoard('all', null, $key)->count(),
+                (int) $party->total,
+                $party->name.' is counted as many times as the board lists it'
+            );
+        }
+    }
+
+    /**
+     * The filters hold each other: choosing a vendor does not widen the status,
+     * and the counts are taken under whatever else is on.
+     */
+    public function test_the_filters_narrow_together(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->twoWorkFile('BR01ZZ0138');
+        $vendor = $this->vendor();
+
+        $this->post(route('workfile.assign'), [
+            'vendor_id' => $vendor->id,
+            'vendor_date' => now()->toDateString(),
+            'files' => [$file->id],
+            'amounts' => [$file->items->first()->id => '1200'],
+        ])->assertRedirect();
+
+        // Given out, so the file is dispatched and not in office.
+        $dispatched = collect($this->getJson(route('workfile.status', [
+            'status' => WorkFileModel::DISPATCHED,
+            'vendor' => $vendor->id,
+        ]))->assertOk()->json('props.files'))->pluck('id');
+
+        $this->assertContains($file->id, $dispatched->all());
+
+        $inOffice = collect($this->getJson(route('workfile.status', [
+            'status' => 'in_office',
+            'vendor' => $vendor->id,
+        ]))->assertOk()->json('props.files'))->pluck('id');
+
+        $this->assertNotContains($file->id, $inOffice->all(), 'the status still applies');
+
+        // And a work type the file does not hold excludes it, vendor or not.
+        $other = new WorkTypeModel;
+        $other->name = 'Unused Work '.uniqid();
+        $other->is_active = 1;
+        $other->save();
+
+        $none = collect($this->getJson(route('workfile.status', [
+            'status' => 'all',
+            'vendor' => $vendor->id,
+            'work_type' => $other->id,
+        ]))->assertOk()->json('props.files'))->pluck('id');
+
+        $this->assertNotContains($file->id, $none->all(), 'the work type still applies');
+    }
     private function vendor(): PartyModel
     {
         $vendor = new PartyModel;

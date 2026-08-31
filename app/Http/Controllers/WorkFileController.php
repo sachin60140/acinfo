@@ -1102,7 +1102,13 @@ class WorkFileController extends Controller
         }
 
         $workTypeId = $req->query('work_type');
-        $files = WorkFileModel::forStatusBoard($filter, $workTypeId);
+
+        /*
+         * Who is holding the papers. 'none' is a deliberate choice of the work
+         * kept in-house, which a blank could not tell apart from no filter.
+         */
+        $vendorId = $req->query('vendor');
+        $files = WorkFileModel::forStatusBoard($filter, $workTypeId, $vendorId);
 
         // Fetched for the whole board in one query rather than per row.
         $lastRemarks = WorkFileModel::latestRemarks($files->pluck('id')->all());
@@ -1116,7 +1122,7 @@ class WorkFileController extends Controller
         $props = [
             'action' => route('workfile.status'),
             'csrf' => csrf_token(),
-            'resetUrl' => route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId])),
+            'resetUrl' => route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId, 'vendor' => $vendorId])),
             // Only what a single job can be put into. Returning papers is agreed
             // for a folder and has its own screen; partly approved describes a
             // folder whose jobs disagree, and one job never disagrees with itself.
@@ -1186,8 +1192,11 @@ class WorkFileController extends Controller
             'filter' => $filter,
             'workTypeId' => $workTypeId ? (int) $workTypeId : null,
             'statuses' => $statuses,
-            'statusCounts' => WorkFileModel::statusCounts($workTypeId),
-            'workTypeCounts' => WorkFileModel::workTypeCounts($filter),
+            'statusCounts' => WorkFileModel::statusCounts($workTypeId, $vendorId),
+            'workTypeCounts' => WorkFileModel::workTypeCounts($filter, $vendorId),
+            'vendorCounts' => WorkFileModel::vendorCounts($filter, $workTypeId),
+            'vendorId' => $vendorId,
+            'inHouseKey' => WorkFileModel::IN_HOUSE,
             'fileCount' => $files->count(),
             'anyFiles' => WorkFileModel::exists(),
             // 'open' and 'all' are tabs rather than stored statuses, so the tab

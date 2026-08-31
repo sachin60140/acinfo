@@ -224,7 +224,7 @@
                             @php $count = $statusCounts[$key] ?? 0; @endphp
                             {{-- The work type carries across, so changing status
                                  never silently widens what you are looking at. --}}
-                            <a href="{{ route('workfile.status', array_filter(['status' => $key, 'work_type' => $workTypeId])) }}"
+                            <a href="{{ route('workfile.status', array_filter(['status' => $key, 'work_type' => $workTypeId, 'vendor' => $vendorId])) }}"
                                class="chip {{ $filter === $key ? 'active' : '' }} {{ $count === 0 ? 'empty' : '' }}">
                                 {{ $text }} <span class="n">{{ $count }}</span>
                             </a>
@@ -233,14 +233,33 @@
 
                     <div class="filter-row">
                         <span class="filter-key">Work Type</span>
-                        <a href="{{ route('workfile.status', array_filter(['status' => $filter])) }}"
+                        <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'vendor' => $vendorId])) }}"
                            class="chip {{ $workTypeId === null ? 'active' : '' }}">
                             All <span class="n">{{ $statusCounts[$filter] ?? 0 }}</span>
                         </a>
                         @forelse ($workTypeCounts as $type)
-                            <a href="{{ route('workfile.status', ['status' => $filter, 'work_type' => $type->id]) }}"
+                            <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'work_type' => $type->id, 'vendor' => $vendorId])) }}"
                                class="chip {{ $workTypeId === (int) $type->id ? 'active' : '' }}">
                                 {{ $type->name }} <span class="n">{{ $type->total }}</span>
+                            </a>
+                        @empty
+                            <span class="side-hint">Nothing under this status.</span>
+                        @endforelse
+                    </div>
+
+                    {{-- Chasing work is usually chasing one vendor: you have them
+                         on the phone and want their files, not everybody's. --}}
+                    <div class="filter-row">
+                        <span class="filter-key">Vendor</span>
+                        <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId])) }}"
+                           class="chip {{ $vendorId === null ? 'active' : '' }}">
+                            All <span class="n">{{ $statusCounts[$filter] ?? 0 }}</span>
+                        </a>
+                        @forelse ($vendorCounts as $party)
+                            @php $key = $party->id ? (string) $party->id : $inHouseKey; @endphp
+                            <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId, 'vendor' => $key])) }}"
+                               class="chip {{ (string) $vendorId === $key ? 'active' : '' }}">
+                                {{ $party->name }} <span class="n">{{ $party->total }}</span>
                             </a>
                         @empty
                             <span class="side-hint">Nothing under this status.</span>
@@ -250,7 +269,10 @@
 
                 @if (! $fileCount)
                     <div class="alert alert-info mb-0">
-                        @if ($workTypeId)
+                        @if ($vendorId)
+                            No files under this status for that vendor.
+                            <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId])) }}" class="alert-link">Show every vendor</a>.
+                        @elseif ($workTypeId)
                             No files under this status for that work type.
                             <a href="{{ route('workfile.status', ['status' => $filter]) }}" class="alert-link">Show all work types</a>.
                         @else

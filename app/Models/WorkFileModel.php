@@ -33,6 +33,9 @@ class WorkFileModel extends Model
 
     public const DISPATCHED = 'file_dispatch';
 
+    /** What the vendor filter calls work nobody was given. */
+    public const IN_HOUSE = 'none';
+
     public const STATUSES = [
         'in_office' => 'In Office',
         'paper_pendency' => 'Paper Pendency',
@@ -783,13 +786,14 @@ class WorkFileModel extends Model
      * 'open' is the default and means work still in hand — the reason to open
      * this screen at all. Anything else filters to that one status.
      */
-    public static function forStatusBoard(string $filter, $workTypeId = null)
+    public static function forStatusBoard(string $filter, $workTypeId = null, $vendorId = null)
     {
         // The jobs come with the file: the board moves each of them along on
         // its own, because approvals arrive one at a time.
         $query = self::query()->with('workType', 'customer', 'vendor', 'items.workType');
 
         self::applyStatusFilter($query, $filter);
+        self::applyVendorFilter($query, $vendorId);
 
         if ($workTypeId) {
             // Matched against the jobs, so a file is shown when any of its work
@@ -821,15 +825,73 @@ class WorkFileModel extends Model
     }
 
     /**
+     * Narrows to one vendor, or to the work kept in-house.
+     *
+     * 'none' rather than an empty string, because a missing parameter and a
+     * deliberate choice of "nobody" are different answers and a blank cannot
+     * tell them apart.
+     */
+    private static function applyVendorFilter($query, $vendorId): void
+    {
+        if ($vendorId === self::IN_HOUSE) {
+            $query->whereNull('work_file.vendor_id');
+
+            return;
+        }
+
+        if ($vendorId) {
+            $query->where('work_file.vendor_id', $vendorId);
+        }
+    }
+
+    /**
+     * Which vendors are holding work under the filters that are on, and how
+     * much each of them has.
+     *
+     * Files nobody was given are counted together as in-house: they are work in
+     * hand like any other, and leaving them out of the row would make the
+     * counts disagree with the board.
+     *
+     * @return \Illuminate\Support\Collection<int, object>
+     */
+    public static function vendorCounts(string $filter, $workTypeId = null)
+    {
+        $query = DB::table('work_file')
+            ->leftJoin('party as vendor', 'vendor.id', '=', 'work_file.vendor_id');
+
+        self::applyStatusFilter($query, $filter);
+
+        if ($workTypeId) {
+            $query->whereExists(fn ($q) => $q->select(DB::raw(1))
+                ->from('work_file_item')
+                ->whereColumn('work_file_item.work_file_id', 'work_file.id')
+                ->where('work_file_item.work_type_id', $workTypeId));
+        }
+
+        return $query
+            ->select(
+                DB::raw('COALESCE(vendor.id, 0) as id'),
+                DB::raw("COALESCE(vendor.name, 'In-house') as name"),
+                DB::raw('COUNT(DISTINCT work_file.id) as total')
+            )
+            // ONLY_FULL_GROUP_BY: the columns the names are derived from.
+            ->groupBy('vendor.id', 'vendor.name')
+            ->havingRaw('COUNT(DISTINCT work_file.id) > 0')
+            ->orderBy('name', 'asc')
+            ->get();
+    }
+    /**
      * How many files sit behind each status tab, counted within whatever work
      * type is currently selected — a count that ignored the other filter would
      * promise rows the tab then does not show.
      *
      * @return array<string, int>  keyed by tab: 'open', each status, 'all'
      */
-    public static function statusCounts($workTypeId = null): array
+    public static function statusCounts($workTypeId = null, $vendorId = null): array
     {
         $query = DB::table('work_file');
+
+        self::applyVendorFilter($query, $vendorId);
 
         if ($workTypeId) {
             /*
@@ -867,7 +929,7 @@ class WorkFileModel extends Model
      *
      * @return \Illuminate\Support\Collection<int, object>
      */
-    public static function workTypeCounts(string $filter)
+    public static function workTypeCounts(string $filter, $vendorId = null)
     {
         /*
          * Counted through the works, so a folder appears under every type it
@@ -880,6 +942,7 @@ class WorkFileModel extends Model
             ->join('work_type', 'work_type.id', '=', 'work_file_item.work_type_id');
 
         self::applyStatusFilter($query, $filter);
+        self::applyVendorFilter($query, $vendorId);
 
         return $query
             ->select('work_type.id', 'work_type.name', DB::raw('COUNT(DISTINCT work_file.id) as total'))

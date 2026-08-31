@@ -62,6 +62,54 @@ const rows = reactive(
     )
 );
 
+/*
+ * What is being looked for.
+ *
+ * Matched against everything on the row a person might have in their hand: the
+ * file number, the number plate, either party, the work, and the last thing
+ * anyone wrote about it.
+ */
+const search = ref('');
+
+const haystack = (row) => [
+    row.file.file_no,
+    row.file.registration_no,
+    row.file.customer,
+    row.file.vendor,
+    row.file.status_label,
+    row.file.last_remark,
+    row.work_type,
+].filter(Boolean).join(' ').toLowerCase();
+
+const terms = computed(() =>
+    search.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
+);
+
+// Every term has to appear somewhere on the row, so a second word narrows
+// rather than widens — "dabloo hpt" is that vendor's hypothecation work.
+const matches = (row) => {
+    if (! terms.value.length) {
+        return true;
+    }
+
+    const hay = haystack(row);
+
+    return terms.value.every((term) => hay.includes(term));
+};
+
+const shown = computed(() => rows.filter(matches));
+
+/*
+ * The heading belongs to the first row of a file that is actually on screen. A
+ * search that hides the first work of a folder would otherwise leave the rest
+ * of it with no heading at all.
+ */
+const headingFor = (row) => {
+    const first = shown.value.find((one) => one.file.id === row.file.id);
+
+    return first === row;
+};
+
 const changed = (row) => row.chosen !== row.status;
 const approving = (row) => row.chosen === props.approvedKey;
 const cancelling = (row) => row.chosen === props.cancelledKey;
@@ -93,6 +141,29 @@ const touched = computed(() =>
     rows.filter((row) => changed(row) || row.remark.trim() !== '' || row.screenshot)
 );
 
+const found = computed(() => {
+    if (! terms.value.length) {
+        return `${rows.length} ${rows.length === 1 ? 'work' : 'works'}.`;
+    }
+
+    const count = shown.value.length;
+
+    return count
+        ? `${count} of ${rows.length} ${rows.length === 1 ? 'work' : 'works'}.`
+        : 'Nothing here matches that.';
+});
+
+/*
+ * Changes the search is hiding.
+ *
+ * They are still on the form and will still be saved, which is the right
+ * behaviour and the surprising one — so it is said rather than left to be
+ * discovered in the success message.
+ */
+const hiddenChanges = computed(() =>
+    touched.value.filter((row) => ! matches(row)).length
+);
+
 const summary = computed(() => {
     if (blocked.value) {
         const reasons = rows.filter(needsReason).length;
@@ -122,6 +193,12 @@ const summary = computed(() => {
     if (voids) parts.push(`${voids} cancelled`);
     if (noted) parts.push(`${noted} ${noted === 1 ? 'remark' : 'remarks'} added`);
 
+    if (hiddenChanges.value) {
+        const many = hiddenChanges.value === 1 ? 'it is' : 'they are';
+
+        parts.push(`${hiddenChanges.value} not shown by the search — ${many} still saved`);
+    }
+
     return { tone: 'ready', text: parts.join(', ') + '.' };
 });
 
@@ -149,6 +226,20 @@ function onScreenshot(row, event) {
         </div>
 
         <template v-else>
+            <div class="board__search">
+                <label class="board__find">
+                    <i class="bi bi-search"></i>
+                    <input
+                        type="search"
+                        class="ui-input"
+                        v-model="search"
+                        placeholder="Find a file, a vehicle, a customer or a vendor"
+                        aria-label="Search this board">
+                </label>
+
+                <span class="ui-hint">{{ found }}</span>
+            </div>
+
             <div class="ui-table-wrap">
                 <table class="ui-table board">
                     <thead>
@@ -163,7 +254,7 @@ function onScreenshot(row, event) {
                         <template v-for="row in rows" :key="row.id">
                             <!-- The folder, above its jobs. Its status is derived
                                  from them, so it is stated and not offered. -->
-                            <tr v-if="row.first" class="board__file">
+                            <tr v-if="headingFor(row)" v-show="matches(row)" class="board__file">
                                 <td :colspan="4">
                                     <div class="board__file-line">
                                         <a :href="row.file.edit_url" class="board__no">{{ row.file.file_no }}</a>
@@ -185,6 +276,7 @@ function onScreenshot(row, event) {
                             </tr>
 
                             <tr
+                                v-show="matches(row)"
                                 :data-state="row.chosen"
                                 :class="{
                                     'is-changed': changed(row),
@@ -268,7 +360,7 @@ function onScreenshot(row, event) {
                                         v-model="row.remark"
                                         maxlength="255"
                                         :placeholder="needsReason(row) ? 'A reason is required' : 'Why, or what is pending'">
-                                    <div v-if="row.first && row.file.last_remark" class="ui-sub board__last">
+                                    <div v-if="headingFor(row) && row.file.last_remark" class="ui-sub board__last">
                                         <i class="bi bi-clock-history"></i> {{ row.file.last_remark }}
                                     </div>
                                 </td>
@@ -320,6 +412,37 @@ function onScreenshot(row, event) {
     padding-bottom: var(--s-3);
     padding-top: var(--s-3);
     vertical-align: top;
+}
+
+/* ---- Finding one file among many --------------------------------------- */
+
+.board__search {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-3);
+    margin-bottom: var(--s-3);
+}
+
+.board__find {
+    align-items: center;
+    display: flex;
+    flex: 1 1 20rem;
+    gap: var(--s-2);
+    max-width: 30rem;
+    position: relative;
+}
+
+.board__find i {
+    color: var(--n-400);
+    left: var(--s-3);
+    pointer-events: none;
+    position: absolute;
+}
+
+.board__find .ui-input {
+    padding-left: var(--s-8);
+    width: 100%;
 }
 
 /* ---- The folder heading ------------------------------------------------ */
