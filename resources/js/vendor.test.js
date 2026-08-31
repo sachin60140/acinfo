@@ -29,9 +29,13 @@ const FILES = [
 ];
 
 const RATE_HISTORY = [
-    { work_type_id: 2, rates: [
+    { work_type_id: 2, rto: 'BR06', rates: [
         { file_no: 'F-00007', vendor_date: '2026-08-14', registration_no: 'BR06CL5310', vendor: 'Dabloo Ji Muzaffarpur', amount: 1800, charged: 3000 },
         { file_no: 'F-00004', vendor_date: '2026-08-02', registration_no: 'BR07BA1145', vendor: 'Amit Ji Darbhanag', amount: 1600, charged: 2800 },
+    ] },
+    // The same work at a different office, which must not be offered here.
+    { work_type_id: 2, rto: 'BR01', rates: [
+        { file_no: 'F-00002', vendor_date: '2026-08-01', registration_no: 'BR01DD1234', vendor: 'Someone Else', amount: 9999, charged: 12000 },
     ] },
 ];
 
@@ -89,7 +93,7 @@ describe('what this work was paid before', () => {
 
         // HPA has no history, so it says that rather than showing nothing.
         expect(host.querySelectorAll('.give-past__none').length).toBe(1);
-        expect(host.querySelector('.give-past__none').textContent.trim()).toBe('no earlier rate');
+        expect(host.querySelector('.give-past__none').textContent).toContain('no earlier rate');
     });
 
     it('opens the last five, with the vendor and what was charged beside each', async () => {
@@ -140,5 +144,65 @@ describe('what this work was paid before', () => {
         const named = [...host.querySelectorAll('.give-past [name]')];
 
         expect(named).toEqual([]);
+    });
+});
+
+/*
+ * A rate belongs to an office as well as to a work.
+ *
+ * The first four characters of a registration number are the RTO the papers go
+ * through — BR06, BR01 — and what a transfer costs at one is not what it costs
+ * at another. A rate from the wrong office is worse than no rate at all: it
+ * reads as an answer.
+ */
+describe('the office a rate was paid at', () => {
+    it('offers only what was paid at this file\u2019s own office', async () => {
+        const host = mount();
+
+        // The file is BR06; the BR01 rate of 9,999 must not appear.
+        expect(openers(host)[0].textContent).toContain('1,800.00');
+        expect(openers(host)[0].textContent).not.toContain('9,999');
+
+        openers(host)[0].click();
+        await nextTick();
+
+        const text = visiblePanels(host)[0].textContent;
+
+        expect(text).toContain('BR06CL5310');
+        expect(text).not.toContain('BR01DD1234');
+        expect(text).not.toContain('Someone Else');
+    });
+
+    it('names the office, so a rate is never read as the wrong one', async () => {
+        const host = mount();
+
+        expect(openers(host)[0].textContent).toContain('BR06');
+
+        openers(host)[0].click();
+        await nextTick();
+
+        expect(visiblePanels(host)[0].querySelector('.give-past__head').textContent)
+            .toContain('BR06');
+    });
+
+    it('says which office it found nothing for', () => {
+        const host = mount();
+
+        // HPA at BR06 has never been given out.
+        expect(host.querySelector('.give-past__none').textContent.replace(/\s+/g, ' ').trim())
+            .toBe('no earlier rate at BR06');
+    });
+
+    /*
+     * A file with no registration number cannot say which office it is for, so
+     * nothing is offered as a comparison rather than something from anywhere.
+     */
+    it('offers nothing for a file that does not say where it is going', () => {
+        const host = mount({
+            files: [{ ...FILES[0], registration_no: '' }],
+        });
+
+        expect(openers(host).length).toBe(0);
+        expect(host.querySelectorAll('.give-past__none').length).toBe(2);
     });
 });

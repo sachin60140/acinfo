@@ -1135,27 +1135,48 @@ class WorkFileModel extends Model
     }
 
     /**
-     * The last few rates agreed for each of these works.
+     * The office a registration number belongs to.
+     *
+     * The first four characters: the state and the district code, BR06 or BR01,
+     * which is the RTO the papers go through. What a transfer costs at one
+     * office is not what it costs at another, so a rate only means something
+     * beside the office it was paid at.
+     */
+    public static function rtoOf(?string $registration): string
+    {
+        return substr(self::normaliseRegistration((string) $registration), 0, 4);
+    }
+
+    /**
+     * The last few rates agreed for each work, at the office it was for.
      *
      * Shown where a rate is being agreed, because that is where the question is
-     * asked: what did we pay for a transfer last time, and to whom. Every
-     * vendor's is included rather than only the one being chosen — comparing
-     * across them is half the reason to ask.
+     * asked: what did we pay for a transfer at BR06 last time, and to whom.
+     * Every vendor's is included rather than only the one being chosen —
+     * comparing across them is half the reason to ask.
      *
-     * One query per work type, deliberately. A handful of types are on the
-     * screen at a time, each lookup is a short indexed read, and the portable
-     * alternatives are a window function or reading every rate ever agreed and
-     * throwing most of it away.
+     * One query per pair, deliberately. A handful are on the screen at a time,
+     * each is a short indexed read, and the portable alternatives are a window
+     * function or reading every rate ever agreed and throwing most of it away.
      *
-     * @param  array<int>  $workTypeIds
-     * @return array<int, array<int, object>>  keyed by work type, newest first
+     * @param  array<int, array{0: int, 1: string}>  $pairs  work type id, RTO
+     * @return array<int, array{work_type_id: int, rto: string, rates: array}>
      */
-    public static function recentVendorRates(array $workTypeIds, int $limit = 5): array
+    public static function recentVendorRates(array $pairs, int $limit = 5): array
     {
         $out = [];
+        $seen = [];
 
-        foreach (array_unique($workTypeIds) as $typeId) {
-            $out[$typeId] = DB::table('work_file_item')
+        foreach ($pairs as [$typeId, $rto]) {
+            $key = $typeId.'|'.$rto;
+
+            if (! $typeId || isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+
+            $query = DB::table('work_file_item')
                 ->join('work_file', 'work_file.id', '=', 'work_file_item.work_file_id')
                 ->join('party as vendor', 'vendor.id', '=', 'work_file.vendor_id')
                 ->where('work_file_item.work_type_id', $typeId)
@@ -1163,24 +1184,38 @@ class WorkFileModel extends Model
                 // a cancelled file was owed for by nobody.
                 ->whereNotNull('work_file_item.vendor_amount')
                 ->where('work_file_item.vendor_amount', '>', 0)
-                ->where('work_file.status', '<>', self::CANCELLED)
-                ->orderByDesc('work_file.vendor_date')
-                ->orderByDesc('work_file.id')
-                ->limit($limit)
-                ->get([
-                    'work_file.file_no',
-                    'work_file.vendor_date',
-                    'work_file.registration_no',
-                    'vendor.name as vendor',
-                    'work_file_item.vendor_amount as amount',
-                    'work_file_item.customer_amount as charged',
-                ])
-                ->all();
+                ->where('work_file.status', '<>', self::CANCELLED);
+
+            /*
+             * The same office. A file with no registration number cannot say
+             * which office it was for, so it is not offered as a comparison for
+             * one that can.
+             */
+            if ($rto !== '') {
+                $query->whereRaw('LEFT(work_file.registration_no, 4) = ?', [$rto]);
+            }
+
+            $out[] = [
+                'work_type_id' => (int) $typeId,
+                'rto' => $rto,
+                'rates' => $query
+                    ->orderByDesc('work_file.vendor_date')
+                    ->orderByDesc('work_file.id')
+                    ->limit($limit)
+                    ->get([
+                        'work_file.file_no',
+                        'work_file.vendor_date',
+                        'work_file.registration_no',
+                        'vendor.name as vendor',
+                        'work_file_item.vendor_amount as amount',
+                        'work_file_item.customer_amount as charged',
+                    ])
+                    ->all(),
+            ];
         }
 
         return $out;
     }
-
     /**
      * Everything already booked against one vehicle.
      *

@@ -138,6 +138,7 @@
                             "vendor_date": "string"
                         }
                     },
+                    "rto": "string",
                     "work_type_id": "number"
                 }
             },

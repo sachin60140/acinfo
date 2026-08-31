@@ -648,12 +648,12 @@ class WorkFileController extends Controller
              * vendor is chosen, and a round trip at that moment is a pause in a
              * conversation.
              */
-            'rateHistory' => collect(WorkFileModel::recentVendorRates(
-                $files->flatMap(fn ($file) => $file->items->pluck('work_type_id'))->filter()->all()
-            ))->map(fn ($rates, $typeId) => [
-                'work_type_id' => (int) $typeId,
-                'rates' => $rates,
-            ])->values(),
+            'rateHistory' => WorkFileModel::recentVendorRates(
+                $files->flatMap(fn ($file) => $file->items->map(fn ($item) => [
+                    (int) $item->work_type_id,
+                    WorkFileModel::rtoOf($file->registration_no),
+                ]))->all()
+            ),
 
             'vendors' => $vendors->map(fn ($vendor) => [
                 'id' => (int) $vendor->id,

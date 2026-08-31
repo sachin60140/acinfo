@@ -65,13 +65,24 @@ const isPicked = (file) => picked.value.includes(file.id);
  * screen behind a filter. Every vendor's is here, not only the one being
  * chosen: comparing across them is half the reason to ask.
  */
-// Built once from the list the screen was sent: a map keyed on ids would be a
-// prop whose very shape changed with the data.
-const ratesByType = computed(() =>
-    Object.fromEntries(props.rateHistory.map((one) => [one.work_type_id, one.rates]))
+/*
+ * Built once from the list the screen was sent, keyed by the work and the
+ * office together — a map keyed on ids alone would be a prop whose very
+ * shape changed with the data.
+ */
+const ratesFor = computed(() =>
+    Object.fromEntries(props.rateHistory.map((one) => [`${one.work_type_id}|${one.rto}`, one.rates]))
 );
 
-const pastRates = (work) => ratesByType.value[work.work_type_id] ?? [];
+/*
+ * The first four characters of a registration number are the office the
+ * papers go through — BR06, BR01 — and what a transfer costs at one is not
+ * what it costs at another. A rate from the wrong office is worse than no
+ * rate: it reads as an answer.
+ */
+const rtoOf = (file) => (file.registration_no || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 4);
+
+const pastRates = (file, work) => ratesFor.value[`${work.work_type_id}|${rtoOf(file)}`] ?? [];
 
 // One open at a time, keyed by the work line it belongs to.
 const showingRates = ref(null);
@@ -356,15 +367,17 @@ onMounted(() => {
                                         <!-- What this work was paid before, at the
                                              moment its rate is being agreed. -->
                                         <button
-                                            v-if="pastRates(item).length"
+                                            v-if="pastRates(file, item).length"
                                             type="button"
                                             class="give-past__open"
                                             title="What this work has been paid before"
                                             @click="toggleRates(item)">
                                             <i class="bi bi-clock-history"></i>
-                                            last {{ money(pastRates(item)[0].amount) }}
+                                            last {{ money(pastRates(file, item)[0].amount) }} at {{ rtoOf(file) }}
                                         </button>
-                                        <span v-else class="give-past__none">no earlier rate</span>
+                                        <span v-else class="give-past__none">
+                                            no earlier rate<template v-if="rtoOf(file)"> at {{ rtoOf(file) }}</template>
+                                        </span>
                                     </div>
                                 </td>
                             </tr>
@@ -374,8 +387,10 @@ onMounted(() => {
                             <tr v-for="item in jobs(file)" :key="`past-${item.id}`" v-show="showingRates === item.id">
                                 <td :colspan="9" class="give-past">
                                     <div class="give-past__head">
-                                        <strong>{{ item.work_type }}</strong> &mdash; the last
-                                        {{ pastRates(item).length }} {{ pastRates(item).length === 1 ? 'rate' : 'rates' }} agreed
+                                        <strong>{{ item.work_type }}</strong> at
+                                        <strong>{{ rtoOf(file) }}</strong> &mdash; the last
+                                        {{ pastRates(file, item).length }}
+                                        {{ pastRates(file, item).length === 1 ? 'rate' : 'rates' }} agreed
                                     </div>
 
                                     <table class="give-past__table">
@@ -390,7 +405,7 @@ onMounted(() => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <tr v-for="(past, i) in pastRates(item)" :key="i">
+                                            <tr v-for="(past, i) in pastRates(file, item)" :key="i">
                                                 <td data-label="Given On">{{ past.vendor_date || '—' }}</td>
                                                 <td data-label="File No.">{{ past.file_no }}</td>
                                                 <td data-label="Vehicle">{{ past.registration_no || '—' }}</td>
