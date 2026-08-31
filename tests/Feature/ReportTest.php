@@ -9,6 +9,7 @@ use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
@@ -810,6 +811,86 @@ class ReportTest extends TestCase
                 "the $label cut keeps the period"
             );
         }
+    }
+
+    /**
+     * No grouped report selects a correlated subquery.
+     *
+     * The live server runs MariaDB and this machine runs MySQL, and they part
+     * company on exactly one thing here: a correlated subquery inside an
+     * aggregate under a GROUP BY. MySQL works out that it is valid; MariaDB
+     * refuses it with "work_file.id isn't in GROUP BY". So the profit report
+     * ran perfectly here and failed the moment it was deployed.
+     *
+     * The fix is structural — each file is worked out in a subquery with no
+     * grouping, and the grouping is done over that — and this is what holds it:
+     * the shape that broke cannot come back without failing here first, on a
+     * database that would otherwise accept it.
+     */
+    public function test_no_grouped_report_selects_a_correlated_subquery(): void
+    {
+        $seen = [];
+
+        DB::listen(function ($query) use (&$seen) {
+            $seen[] = $query->sql;
+        });
+
+        // Every grouped query the reports run.
+        WorkFileModel::vendorCounts('all');
+        WorkFileModel::workTypeCounts('all');
+        WorkFileModel::statusCounts();
+        WorkFileModel::summary();
+
+        foreach (array_keys(WorkFileModel::PROFIT_GROUPS) as $group) {
+            WorkFileModel::profitBy($group);
+        }
+
+        $grouped = 0;
+        $problems = [];
+
+        foreach ($seen as $sql) {
+            $lower = strtolower($sql);
+
+            if (! str_contains($lower, 'group by')) {
+                continue;
+            }
+
+            $grouped++;
+
+            // Everything before the first FROM is the select list, which is
+            // where MariaDB objects. A subquery in the WHERE is fine: it runs
+            // per row, before anything is grouped.
+            $selectList = substr($lower, 0, strpos($lower, ' from '));
+
+            if (str_contains($selectList, '(select ')) {
+                $problems[] = substr($sql, 0, 160).'…';
+            }
+        }
+
+        $this->assertGreaterThan(4, $grouped, 'the reports were actually run');
+
+        $this->assertSame(
+            [],
+            $problems,
+            "These group by while selecting a subquery, which MariaDB refuses:\n  ".implode("\n  ", $problems)
+        );
+    }
+
+    /**
+     * And every report runs at all — the cheapest check there is, and the one
+     * that catches a column renamed out from under a raw expression.
+     */
+    public function test_every_report_query_runs(): void
+    {
+        foreach (array_keys(WorkFileModel::PROFIT_GROUPS) as $group) {
+            $this->assertNotNull(WorkFileModel::profitBy($group), $group);
+            $this->assertNotNull(WorkFileModel::profitBy($group, '2026-01-01', '2026-12-31'), "$group over a period");
+        }
+
+        $this->assertNotNull(WorkFileModel::report('customer'));
+        $this->assertNotNull(WorkFileModel::report('vendor'));
+        $this->assertNotNull(WorkFileModel::listing());
+        $this->assertNotNull(WorkFileModel::summary());
     }
 
 }

@@ -766,8 +766,6 @@ class WorkFileModel extends Model
             return self::profitByWorkType($from, $to);
         }
 
-        $query = DB::table('work_file');
-
         [$key, $label, $order] = match ($group) {
             'year' => ["DATE_FORMAT(work_file.received_date, '%Y')", "DATE_FORMAT(work_file.received_date, '%Y')", 'group_key desc'],
             'vendor' => ['COALESCE(vendor.id, 0)', "COALESCE(vendor.name, 'In-house')", 'billed desc'],
@@ -775,29 +773,45 @@ class WorkFileModel extends Model
             default => ["DATE_FORMAT(work_file.received_date, '%Y-%m')", "DATE_FORMAT(work_file.received_date, '%b %Y')", 'group_key desc'],
         };
 
+        /*
+         * Every file worked out on its own, before anything is grouped.
+         *
+         * The outstanding test is a correlated subquery against this file, and
+         * inside an aggregate under a GROUP BY that is something MySQL allows
+         * and MariaDB — which is what the live server runs — refuses. Here
+         * there is no grouping for it to sit under, and the grouping below has
+         * nothing correlated left in it.
+         */
+        $each = DB::table('work_file')
+            ->selectRaw("$key as group_key")
+            ->selectRaw("$label as group_label")
+            ->selectRaw(self::EARNED.' as billed')
+            ->selectRaw(self::SPENT.' as cost')
+            ->selectRaw('CASE WHEN '.self::OUTSTANDING.' THEN 0 ELSE '.self::EARNED.' - ('.self::SPENT.') END as margin')
+            ->selectRaw('CASE WHEN '.self::OUTSTANDING.' THEN 1 ELSE 0 END as unpriced');
+
         if ($group === 'vendor') {
-            $query->leftJoin('party as vendor', 'vendor.id', '=', 'work_file.vendor_id');
+            $each->leftJoin('party as vendor', 'vendor.id', '=', 'work_file.vendor_id');
         }
 
         if ($group === 'customer') {
-            $query->join('party as customer', 'customer.id', '=', 'work_file.customer_id');
+            $each->join('party as customer', 'customer.id', '=', 'work_file.customer_id');
         }
 
-        self::betweenDates($query, $from, $to);
+        self::betweenDates($each, $from, $to);
 
-        return $query
-            ->selectRaw("$key as group_key")
-            ->selectRaw("$label as group_label")
+        return DB::query()
+            ->fromSub($each, 'each_file')
+            ->select('group_key', 'group_label')
             ->selectRaw('COUNT(*) as files')
-            ->selectRaw('COALESCE(SUM('.self::EARNED.'), 0) as billed')
-            ->selectRaw('COALESCE(SUM('.self::SPENT.'), 0) as cost')
-            ->selectRaw('COALESCE(SUM(CASE WHEN '.self::OUTSTANDING.' THEN 0 ELSE '.self::EARNED.' - ('.self::SPENT.') END), 0) as margin')
-            ->selectRaw('COALESCE(SUM(CASE WHEN '.self::OUTSTANDING.' THEN 1 ELSE 0 END), 0) as unpriced')
-            ->groupByRaw("$key, $label")
+            ->selectRaw('COALESCE(SUM(billed), 0) as billed')
+            ->selectRaw('COALESCE(SUM(cost), 0) as cost')
+            ->selectRaw('COALESCE(SUM(margin), 0) as margin')
+            ->selectRaw('COALESCE(SUM(unpriced), 0) as unpriced')
+            ->groupBy('group_key', 'group_label')
             ->orderByRaw($order)
             ->get();
     }
-
     /**
      * The same question asked of the works rather than the folders.
      *
