@@ -24,6 +24,109 @@ use Illuminate\Validation\Rule;
  */
 class ReportController extends Controller
 {
+    /**
+     * What the work earned, cut whichever way is being asked.
+     *
+     * By month and by year for the shape of the business over time; by work
+     * type for which service is worth doing; by vendor and by customer for who
+     * the money comes from and goes to.
+     *
+     * Every figure comes from WorkFileModel, from the same expressions the
+     * dashboard and the files list read, so this cannot disagree with either
+     * about the same file. Files still waiting on a price are counted and kept
+     * out of the margin: a difference between a figure and a blank is not a
+     * margin, and each row says how many it left out.
+     */
+    public function profit(Request $req)
+    {
+        $req->validate([
+            'group' => ['nullable', Rule::in(array_keys(WorkFileModel::PROFIT_GROUPS))],
+            'from' => 'nullable|date_format:Y-m-d',
+            'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
+        ]);
+
+        $group = $req->query('group', 'month');
+        $from = $req->query('from');
+        $to = $req->query('to');
+
+        $rows = WorkFileModel::profitBy($group, $from, $to);
+
+        $totals = [
+            'files' => (int) $rows->sum('files'),
+            'billed' => (float) $rows->sum('billed'),
+            'cost' => (float) $rows->sum('cost'),
+            'margin' => (float) $rows->sum('margin'),
+            'unpriced' => (int) $rows->sum('unpriced'),
+        ];
+
+        $periodText = ($from || $to)
+            ? ($from ? date('d-m-Y', strtotime($from)) : 'Beginning').' to '.($to ? date('d-m-Y', strtotime($to)) : date('d-m-Y'))
+            : 'All dates';
+
+        $label = WorkFileModel::PROFIT_GROUPS[$group];
+
+        /*
+         * A percentage is only honest where every file in the row has both
+         * figures. Where one does not, the margin covers fewer files than the
+         * billed beside it, and a ratio of the two would be a number nobody
+         * could act on.
+         */
+        $rows = $rows->map(fn ($row) => [
+            'id' => (string) $row->group_key,
+            'label' => $row->group_label,
+            'files' => (int) $row->files,
+            'billed' => (float) $row->billed,
+            'cost' => (float) $row->cost,
+            'margin' => (int) $row->unpriced ? null : (float) $row->margin,
+            'rate' => ((int) $row->unpriced || (float) $row->billed <= 0)
+                ? null
+                : round((float) $row->margin / (float) $row->billed * 100, 1).'%',
+            'unpriced' => (int) $row->unpriced ? (int) $row->unpriced.' awaiting a price' : null,
+        ])->values();
+
+        $props = [
+            'title' => $label.'-wise Profit — '.$periodText,
+            'perPage' => 100,
+            'emptyText' => ($from || $to)
+                ? 'No work in this period. Try widening the dates.'
+                : 'No work has been booked yet.',
+            'totals' => ['files' => 'sum', 'billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
+            'columns' => [
+                ['key' => 'label', 'label' => $label],
+                ['key' => 'files', 'label' => $group === 'work_type' ? 'Works' : 'Files', 'type' => 'count'],
+                ['key' => 'billed', 'label' => 'Billed', 'type' => 'money', 'class' => 'dr'],
+                ['key' => 'cost', 'label' => 'Cost', 'type' => 'money', 'class' => 'cr'],
+                // A margin has a side: earned reads Dr, lost reads Cr, and
+                // neither needs a minus sign to be read correctly.
+                ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold',
+                    'sub' => 'unpriced'],
+                ['key' => 'rate', 'label' => 'Margin %', 'sortable' => false],
+            ],
+            'rows' => $rows,
+        ];
+
+        return Screen::make('admin.reports.profit', 'vue-profit-report', $props, [
+            'group' => $group,
+            'groups' => WorkFileModel::PROFIT_GROUPS,
+            'groupLabel' => $label,
+            'from' => $from,
+            'to' => $to,
+            'periodText' => $periodText,
+            'totals' => $totals,
+            'maxDate' => now()->toDateString(),
+            'base' => route('report.profit'),
+
+            // Each cut keeps the period already chosen.
+            'groupUrls' => collect(WorkFileModel::PROFIT_GROUPS)
+                ->map(fn ($text, $key) => route('report.profit', array_filter([
+                    'group' => $key,
+                    'from' => $from,
+                    'to' => $to,
+                ])))
+                ->all(),
+        ])->toResponse($req);
+    }
+
     public function files(Request $req)
     {
         $req->validate([

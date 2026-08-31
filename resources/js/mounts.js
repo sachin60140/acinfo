@@ -66,6 +66,7 @@ export const components = {
     'vue-party-statement': DataGrid,
     'vue-files-list': DataGrid,
     'vue-work-report': DataGrid,
+    'vue-profit-report': DataGrid,
     'vue-client-list': DataGrid,
     'vue-client-statement': DataGrid,
 

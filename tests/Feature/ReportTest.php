@@ -696,4 +696,120 @@ class ReportTest extends TestCase
         $this->assertStringContainsString('from=2026-01-01', $html);
     }
 
+    /**
+     * The profit report answers from the same expressions the dashboard reads,
+     * so the two cannot disagree about the same file. That is not a nicety:
+     * each page doing its own subtraction is exactly how a margin came to be
+     * stated three different ways.
+     */
+    public function test_profit_by_month_agrees_with_the_dashboard(): void
+    {
+        $this->file($this->customerA, 5000, $this->vendor, 3000);
+
+        $month = WorkFileModel::profitBy('month', '2026-05-01', '2026-05-31')
+            ->firstWhere('group_key', '2026-05');
+
+        $this->assertNotNull($month, 'May is in the report');
+
+        // The file() helper dates everything 10-05-2026.
+        $this->assertEquals(5000, $month->billed);
+        $this->assertEquals(3000, $month->cost);
+        $this->assertEquals(2000, $month->margin);
+        $this->assertSame(0, (int) $month->unpriced);
+    }
+
+    /**
+     * A cancelled file charged nobody and cost nobody, and a returned one
+     * earned only the part that was not given back.
+     */
+    public function test_profit_counts_what_a_file_actually_earned(): void
+    {
+        $before = WorkFileModel::profitBy('year', '2026-01-01', '2026-12-31')->firstWhere('group_key', '2026');
+
+        $this->file($this->customerA, 5000, $this->vendor, 3000, WorkFileModel::CANCELLED);
+
+        $after = WorkFileModel::profitBy('year', '2026-01-01', '2026-12-31')->firstWhere('group_key', '2026');
+
+        $this->assertEquals(
+            $before?->billed ?? 0,
+            $after->billed,
+            'a cancelled file adds nothing to what was billed'
+        );
+
+        // And one given back earns the part that was kept.
+        $returned = $this->file($this->customerA, 5000, null, null, WorkFileModel::RETURNED);
+        $returned->returned_amount = 2000;
+        $returned->save();
+
+        $kept = WorkFileModel::profitBy('year', '2026-01-01', '2026-12-31')->firstWhere('group_key', '2026');
+
+        $this->assertEquals(($after->billed ?? 0) + 3000, $kept->billed, 'charged 5,000, refunded 2,000');
+    }
+
+    /**
+     * A file whose price is not agreed has no margin yet, and the row says how
+     * many it left out rather than quietly covering fewer files than the figure
+     * beside it.
+     */
+    public function test_profit_leaves_out_what_it_cannot_know_and_says_so(): void
+    {
+        $this->actingAs($this->admin());
+
+        // Out with a vendor at no agreed rate.
+        $this->file($this->customerA, 5000, $this->vendor, null, WorkFileModel::DISPATCHED);
+
+        $year = WorkFileModel::profitBy('year', '2026-01-01', '2026-12-31')->firstWhere('group_key', '2026');
+
+        $this->assertSame(1, (int) $year->unpriced);
+
+        $row = collect($this->getJson(route('report.profit', [
+            'group' => 'year',
+            'from' => '2026-01-01',
+            'to' => '2026-12-31',
+        ]))->assertOk()->json('props.rows'))->firstWhere('id', '2026');
+
+        $this->assertNull($row['margin'], 'a cost nobody has agreed is not a cost of nothing');
+        $this->assertNull($row['rate'], 'and a ratio of the two would be a number nobody could act on');
+        $this->assertSame('1 awaiting a price', $row['unpriced']);
+    }
+
+    /**
+     * What per-work pricing bought: "HPT + TR + HPA" could never say what a
+     * transfer earned, because the folder carried one figure for all three.
+     */
+    public function test_profit_by_work_type_reads_the_works(): void
+    {
+        $file = $this->partlyApproved($this->customerA, $this->vendor);
+        [$first, $second] = $file->items->all();
+
+        $rows = WorkFileModel::profitBy('work_type', '2026-01-01', '2026-12-31')->keyBy('group_key');
+
+        // Charged 2,000 costing 1,200, and 3,000 costing 1,800.
+        $this->assertEquals(2000, $rows[$first->work_type_id]->billed);
+        $this->assertEquals(800, $rows[$first->work_type_id]->margin);
+
+        $this->assertEquals(3000, $rows[$second->work_type_id]->billed);
+        $this->assertEquals(1200, $rows[$second->work_type_id]->margin);
+    }
+
+    /**
+     * Every cut is offered, and each keeps the period already chosen.
+     */
+    public function test_the_profit_report_offers_every_cut(): void
+    {
+        $this->actingAs($this->admin());
+
+        $page = $this->get(route('report.profit', ['from' => '2026-01-01']))->assertOk();
+
+        foreach (WorkFileModel::PROFIT_GROUPS as $key => $label) {
+            $page->assertSee($label);
+
+            $this->assertMatchesRegularExpression(
+                '/href="[^"]*group='.preg_quote($key, '/').'[^"]*from=2026-01-01/',
+                $page->getContent(),
+                "the $label cut keeps the period"
+            );
+        }
+    }
+
 }

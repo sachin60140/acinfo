@@ -845,8 +845,8 @@ class WorkFileController extends Controller
                     ->whereNotNull('vendor_id')
                     ->whereNull('vendor_returned_on')
                     // Same condition the screen was built with, so a stale page
-                    // cannot act on a file that has since finished.
-                    ->whereIn('status', WorkFileModel::OPEN_STATUSES)
+                    // cannot act on a file that has since finished with these papers.
+                    ->whereNotIn('status', [WorkFileModel::CANCELLED, WorkFileModel::RETURNED])
                     ->with('vendor')
                     ->get();
 
@@ -861,15 +861,27 @@ class WorkFileController extends Controller
                     $file->vendor_returned_amount = self::partialOrNull($amount, $file->vendor_amount);
 
                     /*
-                     * Back on our desk — but only if it was still in play.
-                     * Forcing In Office unconditionally rewrote the status of a
-                     * file that had already been returned to its customer, and
-                     * syncLedger then withdrew that customer's refund and
-                     * silently re-charged them the full amount.
+                     * Back on our desk — the work that was still out, at least.
+                     * Work already through the RTO stays approved: the papers
+                     * moving does not undo what was done to them.
+                     *
+                     * The works move, not just the folder. Moving the folder
+                     * alone left it saying In Office while every work on it
+                     * still said File Dispatch, and the next roll-up read the
+                     * works and flipped it back to claiming it was with the
+                     * vendor.
+                     *
+                     * Nothing is forced on a file already returned to its
+                     * customer or cancelled: doing that once rewrote such a
+                     * file's status, and syncLedger withdrew the customer's
+                     * refund and silently re-charged them in full.
                      */
-                    if (in_array($file->status, WorkFileModel::OPEN_STATUSES, true)) {
-                        $file->status = WorkFileModel::IN_OFFICE;
-                    }
+                    $file->items()
+                        ->whereIn('status', WorkFileModel::OPEN_STATUSES)
+                        ->update(['status' => WorkFileModel::IN_OFFICE]);
+
+                    $file->load('items');
+                    $file->rollUp();
                     $file->save();
                     $file->syncLedger();
 

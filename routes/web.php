@@ -91,6 +91,9 @@ Route::group(['middleware' => 'admin'], function () {
     // Read-only reporting.
     Route::get('admin/reports/files', [ReportController::class, 'files'])->name('report.files');
 
+    // What the work earned, cut by month, year, work type, vendor or customer.
+    Route::get('admin/reports/profit', [ReportController::class, 'profit'])->name('report.profit');
+
     /*
      * JSON for the browser-side screens. Inside the admin group on purpose: a
      * vehicle's history and prices are not public just because they are JSON.

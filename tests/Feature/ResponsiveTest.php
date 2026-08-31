@@ -369,6 +369,7 @@ class ResponsiveTest extends TestCase
             $file ? 'admin/file/edit/'.$file->id : null,
             'admin/work-types',
             'admin/reports/files',
+            'admin/reports/profit',
             'admin/view-clients',
             'admin/add-clients',
             'admin/payment',

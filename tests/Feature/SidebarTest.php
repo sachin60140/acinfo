@@ -82,6 +82,7 @@ class SidebarTest extends TestCase
             'approved files' => ['admin/files/approved', 'Approved Files'],
             'all files' => ['admin/files', 'All Work Files'],
             'work types' => ['admin/work-types', 'Work Types'],
+            'profit report' => ['admin/reports/profit', 'Profit Report'],
             'work report' => ['admin/reports/files', 'Work Report'],
         ];
     }

@@ -632,10 +632,18 @@ class WorkFileModel extends Model
             ->with('workType', 'customer', 'vendor', 'items.workType')
             ->whereNotNull('vendor_id')
             ->whereNull('vendor_returned_on')
-            // Only work still in play. A file that has been returned to its
-            // customer, approved or cancelled is finished, and taking it "back"
-            // from a vendor would drag it into a state it has already left.
-            ->whereIn('status', self::OPEN_STATUSES)
+            /*
+             * Everything the vendor is still holding, whatever state the work
+             * is in. An approved file is the one that comes back — they got the
+             * approval and are handing the papers over — and it used to be the
+             * single status this would not offer.
+             *
+             * Cancelled is out: the file charges nobody and is owed for by
+             * nobody, so there is no booking to reverse. So is a file already
+             * returned to its customer — the papers passed through this desk on
+             * their way there, so they came back from the vendor first.
+             */
+            ->whereNotIn('status', [self::CANCELLED, self::RETURNED])
             ->orderBy('vendor_date', 'asc')
             ->orderBy('id', 'asc')
             ->get();
@@ -683,6 +691,168 @@ class WorkFileModel extends Model
     }
 
     /**
+     * What a file earned, as SQL.
+     *
+     * The arms mirror netCustomer(): a file that charged nobody must not
+     * inflate anything, and a returned one earned the part that was not given
+     * back. LEAST() mirrors returnedPortion()'s cap — a refund can never exceed
+     * what was charged, however the row got that way.
+     */
+    public const EARNED = "CASE
+        WHEN work_file.status = 'cancelled' THEN 0
+        WHEN work_file.status = 'paper_returned'
+            THEN work_file.customer_amount
+                 - LEAST(COALESCE(work_file.returned_amount, work_file.customer_amount), work_file.customer_amount)
+        ELSE work_file.customer_amount END";
+
+    /** And what it cost, mirroring netVendor() the same way. */
+    public const SPENT = "CASE
+        WHEN work_file.status = 'cancelled' THEN 0
+        WHEN work_file.vendor_returned_on IS NOT NULL
+            THEN COALESCE(work_file.vendor_amount, 0)
+                 - LEAST(COALESCE(work_file.vendor_returned_amount, COALESCE(work_file.vendor_amount, 0)),
+                         COALESCE(work_file.vendor_amount, 0))
+        ELSE COALESCE(work_file.vendor_amount, 0) END";
+
+    /**
+     * Whether a file's margin can be known yet, as SQL.
+     *
+     * Mirrors awaitingPrice(): settled files are not outstanding, and a folder
+     * is asked about along with every live work on it, because a folder half
+     * priced totals more than zero and reads as settled.
+     */
+    public const OUTSTANDING = "(work_file.status NOT IN ('cancelled', 'paper_returned') AND (
+        work_file.customer_amount IS NULL OR work_file.customer_amount <= 0
+        OR EXISTS (SELECT 1 FROM work_file_item
+            WHERE work_file_item.work_file_id = work_file.id
+              AND work_file_item.status <> 'cancelled'
+              AND (work_file_item.customer_amount IS NULL OR work_file_item.customer_amount <= 0))
+        OR (work_file.vendor_id IS NOT NULL AND (
+            work_file.vendor_amount IS NULL OR work_file.vendor_amount <= 0
+            OR EXISTS (SELECT 1 FROM work_file_item
+                WHERE work_file_item.work_file_id = work_file.id
+                  AND work_file_item.status <> 'cancelled'
+                  AND (work_file_item.vendor_amount IS NULL OR work_file_item.vendor_amount <= 0))))))";
+
+    /**
+     * The ways the profit report can be cut, and what each row is called.
+     */
+    public const PROFIT_GROUPS = [
+        'month' => 'Month',
+        'year' => 'Year',
+        'work_type' => 'Work type',
+        'vendor' => 'Vendor',
+        'customer' => 'Customer',
+    ];
+
+    /**
+     * What was billed, what it cost and what is left, grouped whichever way is
+     * being asked.
+     *
+     * Every figure answers from the expressions above, so this cannot disagree
+     * with the dashboard or the files list about the same file — which is what
+     * happened twice when each page did its own subtraction.
+     *
+     * Files still waiting on a price are counted but kept out of the margin: a
+     * difference between a figure and a blank is not a margin. Each row says
+     * how many it left out, so a total is never read as covering more than it
+     * does.
+     *
+     * @return \Illuminate\Support\Collection<int, object>
+     */
+    public static function profitBy(string $group, ?string $from = null, ?string $to = null)
+    {
+        if ($group === 'work_type') {
+            return self::profitByWorkType($from, $to);
+        }
+
+        $query = DB::table('work_file');
+
+        [$key, $label, $order] = match ($group) {
+            'year' => ["DATE_FORMAT(work_file.received_date, '%Y')", "DATE_FORMAT(work_file.received_date, '%Y')", 'group_key desc'],
+            'vendor' => ['COALESCE(vendor.id, 0)', "COALESCE(vendor.name, 'In-house')", 'billed desc'],
+            'customer' => ['customer.id', 'customer.name', 'billed desc'],
+            default => ["DATE_FORMAT(work_file.received_date, '%Y-%m')", "DATE_FORMAT(work_file.received_date, '%b %Y')", 'group_key desc'],
+        };
+
+        if ($group === 'vendor') {
+            $query->leftJoin('party as vendor', 'vendor.id', '=', 'work_file.vendor_id');
+        }
+
+        if ($group === 'customer') {
+            $query->join('party as customer', 'customer.id', '=', 'work_file.customer_id');
+        }
+
+        self::betweenDates($query, $from, $to);
+
+        return $query
+            ->selectRaw("$key as group_key")
+            ->selectRaw("$label as group_label")
+            ->selectRaw('COUNT(*) as files')
+            ->selectRaw('COALESCE(SUM('.self::EARNED.'), 0) as billed')
+            ->selectRaw('COALESCE(SUM('.self::SPENT.'), 0) as cost')
+            ->selectRaw('COALESCE(SUM(CASE WHEN '.self::OUTSTANDING.' THEN 0 ELSE '.self::EARNED.' - ('.self::SPENT.') END), 0) as margin')
+            ->selectRaw('COALESCE(SUM(CASE WHEN '.self::OUTSTANDING.' THEN 1 ELSE 0 END), 0) as unpriced')
+            ->groupByRaw("$key, $label")
+            ->orderByRaw($order)
+            ->get();
+    }
+
+    /**
+     * The same question asked of the works rather than the folders.
+     *
+     * This is what per-work pricing bought: "HPT + TR + HPA" could never say
+     * what a transfer earned, because the folder carried one figure for all
+     * three. Now each work carries its own.
+     *
+     * Cancelled work is out — it charges nobody. So is a cancelled or returned
+     * file: a refund is agreed for the folder, and splitting it across the
+     * works on it would be inventing a precision nobody recorded.
+     *
+     * @return \Illuminate\Support\Collection<int, object>
+     */
+    private static function profitByWorkType(?string $from, ?string $to)
+    {
+        $query = DB::table('work_file_item')
+            ->join('work_file', 'work_file.id', '=', 'work_file_item.work_file_id')
+            ->join('work_type', 'work_type.id', '=', 'work_file_item.work_type_id')
+            ->where('work_file_item.status', '<>', self::CANCELLED)
+            ->whereNotIn('work_file.status', [self::CANCELLED, self::RETURNED]);
+
+        self::betweenDates($query, $from, $to);
+
+        // A work waits on a price the same way a file does, on either side.
+        $outstanding = "(work_file_item.customer_amount IS NULL OR work_file_item.customer_amount <= 0
+            OR (work_file.vendor_id IS NOT NULL
+                AND (work_file_item.vendor_amount IS NULL OR work_file_item.vendor_amount <= 0)))";
+
+        return $query
+            ->selectRaw('work_type.id as group_key')
+            ->selectRaw('work_type.name as group_label')
+            ->selectRaw('COUNT(*) as files')
+            ->selectRaw('COALESCE(SUM(work_file_item.customer_amount), 0) as billed')
+            ->selectRaw('COALESCE(SUM(COALESCE(work_file_item.vendor_amount, 0)), 0) as cost')
+            ->selectRaw("COALESCE(SUM(CASE WHEN $outstanding THEN 0
+                ELSE work_file_item.customer_amount - COALESCE(work_file_item.vendor_amount, 0) END), 0) as margin")
+            ->selectRaw("COALESCE(SUM(CASE WHEN $outstanding THEN 1 ELSE 0 END), 0) as unpriced")
+            ->groupBy('work_type.id', 'work_type.name')
+            ->orderByRaw('billed desc')
+            ->get();
+    }
+
+    /** The period a report covers, by the day the papers came in. */
+    private static function betweenDates($query, ?string $from, ?string $to): void
+    {
+        if ($from) {
+            $query->whereDate('work_file.received_date', '>=', $from);
+        }
+
+        if ($to) {
+            $query->whereDate('work_file.received_date', '<=', $to);
+        }
+    }
+
+    /**
      * Headline figures for the dashboard.
      *
      * Cancelled files are excluded from the money throughout — they post nothing
@@ -697,22 +867,8 @@ class WorkFileModel extends Model
             ->whereIn('status', self::OPEN_STATUSES)
             ->count();
 
-        // The CASE arms mirror netCustomer()/netVendor(); a file that charged
-        // nobody must not inflate the month's takings from the dashboard.
-        // LEAST() mirrors returnedPortion()'s cap: a refund can never exceed what
-        // was charged, however the row got that way.
-        $earned = "CASE
-            WHEN status = '".self::CANCELLED."' THEN 0
-            WHEN status = '".self::RETURNED."'
-                THEN customer_amount - LEAST(COALESCE(returned_amount, customer_amount), customer_amount)
-            ELSE customer_amount END";
-
-        $spent = "CASE
-            WHEN status = '".self::CANCELLED."' THEN 0
-            WHEN vendor_returned_on IS NOT NULL
-                THEN COALESCE(vendor_amount, 0)
-                     - LEAST(COALESCE(vendor_returned_amount, COALESCE(vendor_amount, 0)), COALESCE(vendor_amount, 0))
-            ELSE COALESCE(vendor_amount, 0) END";
+        $earned = self::EARNED;
+        $spent = self::SPENT;
 
         /*
          * A file whose price is still to be agreed has no margin yet, so it is

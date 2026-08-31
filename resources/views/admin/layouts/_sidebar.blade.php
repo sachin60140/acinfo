@@ -143,6 +143,13 @@
     <li class="nav-heading">Reports</li>
 
     <li class="nav-item">
+      <a class="{{ $navClass($req->routeIs('report.profit')) }}" href="{{ route('report.profit') }}">
+        <i class="bi bi-graph-up-arrow"></i>
+        <span>Profit Report</span>
+      </a>
+    </li>
+
+    <li class="nav-item">
       <a class="{{ $navClass($req->routeIs('report.files')) }}" href="{{ route('report.files') }}">
         <i class="bi bi-file-earmark-bar-graph"></i>
         <span>Work Report</span>
