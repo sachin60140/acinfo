@@ -639,6 +639,22 @@ class WorkFileController extends Controller
             'remark' => (string) old('remark'),
             'pickedFiles' => array_map('intval', (array) old('files', [])),
             'oldAmounts' => (object) (array) old('amounts', []),
+            /*
+             * What each of these works has been paid before.
+             *
+             * A rate is agreed at a counter with the vendor waiting, and the
+             * question is always what we paid last time. Sent with the screen
+             * rather than fetched when asked: the answer is the same whichever
+             * vendor is chosen, and a round trip at that moment is a pause in a
+             * conversation.
+             */
+            'rateHistory' => collect(WorkFileModel::recentVendorRates(
+                $files->flatMap(fn ($file) => $file->items->pluck('work_type_id'))->filter()->all()
+            ))->map(fn ($rates, $typeId) => [
+                'work_type_id' => (int) $typeId,
+                'rates' => $rates,
+            ])->values(),
+
             'vendors' => $vendors->map(fn ($vendor) => [
                 'id' => (int) $vendor->id,
                 'name' => $vendor->name,
@@ -662,6 +678,7 @@ class WorkFileController extends Controller
                  */
                 'items' => $file->items->map(fn ($item) => [
                     'id' => (int) $item->id,
+                    'work_type_id' => (int) $item->work_type_id,
                     'work_type' => $item->workType?->name,
                     'customer_amount' => (float) $item->customer_amount,
                     // What this kind of work usually costs to have done, so

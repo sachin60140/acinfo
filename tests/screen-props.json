@@ -116,7 +116,8 @@
                             "customer_amount": "number",
                             "id": "number",
                             "vendor_rate": "null",
-                            "work_type": "string"
+                            "work_type": "string",
+                            "work_type_id": "number"
                         }
                     },
                     "received_date": "string",
@@ -125,6 +126,21 @@
             },
             "oldAmounts": "[]",
             "pickedFiles": "[]",
+            "rateHistory": {
+                "list_of": {
+                    "rates": {
+                        "list_of": {
+                            "amount": "string",
+                            "charged": "string",
+                            "file_no": "string",
+                            "registration_no": "string",
+                            "vendor": "string",
+                            "vendor_date": "string"
+                        }
+                    },
+                    "work_type_id": "number"
+                }
+            },
             "remark": "string",
             "vendorDate": "string",
             "vendorDateDisplay": "string",

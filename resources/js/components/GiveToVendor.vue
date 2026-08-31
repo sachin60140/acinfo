@@ -31,6 +31,8 @@ const props = defineProps({
     vendorDateDisplay: { type: String, default: '' },
     remark: { type: String, default: '' },
     pickedFiles: { type: Array, default: () => [] },
+    // The last few rates agreed for each work, keyed by work type.
+    rateHistory: { type: Array, default: () => [] },
     oldAmounts: { type: Object, default: () => ({}) },
 });
 
@@ -54,6 +56,29 @@ const amounts = reactive(
 );
 
 const isPicked = (file) => picked.value.includes(file.id);
+
+/*
+ * What this work has been paid before.
+ *
+ * The question at the counter is always the same — what did we pay for a
+ * transfer last time, and to whom — and the answer used to be on another
+ * screen behind a filter. Every vendor's is here, not only the one being
+ * chosen: comparing across them is half the reason to ask.
+ */
+// Built once from the list the screen was sent: a map keyed on ids would be a
+// prop whose very shape changed with the data.
+const ratesByType = computed(() =>
+    Object.fromEntries(props.rateHistory.map((one) => [one.work_type_id, one.rates]))
+);
+
+const pastRates = (work) => ratesByType.value[work.work_type_id] ?? [];
+
+// One open at a time, keyed by the work line it belongs to.
+const showingRates = ref(null);
+
+function toggleRates(work) {
+    showingRates.value = showingRates.value === work.id ? null : work.id;
+}
 
 const jobs = (file) => file.items ?? [];
 
@@ -270,7 +295,8 @@ onMounted(() => {
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="file in files" :key="file.id" :class="{ 'is-picked': isPicked(file) }">
+                            <template v-for="file in files" :key="file.id">
+                            <tr :class="{ 'is-picked': isPicked(file) }">
                                 <td data-label="Give out" class="give-pick">
                                     <input
                                         type="checkbox"
@@ -326,9 +352,59 @@ onMounted(() => {
                                             v-model="amounts[item.id]"
                                             :disabled="!isPicked(file)"
                                             placeholder="0.00">
+
+                                        <!-- What this work was paid before, at the
+                                             moment its rate is being agreed. -->
+                                        <button
+                                            v-if="pastRates(item).length"
+                                            type="button"
+                                            class="give-past__open"
+                                            title="What this work has been paid before"
+                                            @click="toggleRates(item)">
+                                            <i class="bi bi-clock-history"></i>
+                                            last {{ money(pastRates(item)[0].amount) }}
+                                        </button>
+                                        <span v-else class="give-past__none">no earlier rate</span>
                                     </div>
                                 </td>
                             </tr>
+
+                            <!-- The five most recent, on a row of their own: a
+                                 table of eight columns cannot hold them. -->
+                            <tr v-for="item in jobs(file)" :key="`past-${item.id}`" v-show="showingRates === item.id">
+                                <td :colspan="9" class="give-past">
+                                    <div class="give-past__head">
+                                        <strong>{{ item.work_type }}</strong> &mdash; the last
+                                        {{ pastRates(item).length }} {{ pastRates(item).length === 1 ? 'rate' : 'rates' }} agreed
+                                    </div>
+
+                                    <table class="give-past__table">
+                                        <thead>
+                                            <tr>
+                                                <th>Given On</th>
+                                                <th>File No.</th>
+                                                <th>Vehicle</th>
+                                                <th>Vendor</th>
+                                                <th class="num">Charged</th>
+                                                <th class="num">Paid</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="(past, i) in pastRates(item)" :key="i">
+                                                <td data-label="Given On">{{ past.vendor_date || '—' }}</td>
+                                                <td data-label="File No.">{{ past.file_no }}</td>
+                                                <td data-label="Vehicle">{{ past.registration_no || '—' }}</td>
+                                                <td data-label="Vendor">{{ past.vendor }}</td>
+                                                <td data-label="Charged" class="num">{{ money(past.charged) }}</td>
+                                                <td data-label="Paid" class="num">
+                                                    <span class="ui-money ui-money--cr">{{ money(past.amount) }}</span>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </td>
+                            </tr>
+                            </template>
                         </tbody>
                     </table>
                 </div>
@@ -403,6 +479,81 @@ onMounted(() => {
     height: 1.1rem;
     margin: 0;
     width: 1.1rem;
+}
+
+/* What this work was paid before: a quiet line under the box where its rate is
+   being typed, and a panel when it is asked for. */
+.give-past__open {
+    background: none;
+    border: 0;
+    color: var(--brand-600);
+    cursor: pointer;
+    display: block;
+    font-size: var(--t-xs);
+    margin-top: var(--s-1);
+    padding: 0;
+    text-align: right;
+    white-space: nowrap;
+    width: 100%;
+}
+
+.give-past__open:hover {
+    text-decoration: underline;
+}
+
+.give-past__open:focus-visible {
+    border-radius: var(--r-sm);
+    outline: 2px solid var(--brand-500);
+    outline-offset: 2px;
+}
+
+.give-past__none {
+    color: var(--n-400);
+    display: block;
+    font-size: var(--t-xs);
+    margin-top: var(--s-1);
+    text-align: right;
+}
+
+.give-past {
+    background: var(--n-050);
+    border-left: 3px solid var(--brand-500);
+}
+
+.give-past__head {
+    color: var(--n-600);
+    font-size: var(--t-sm);
+    margin-bottom: var(--s-2);
+}
+
+.give-past__table {
+    font-size: var(--t-xs);
+    width: 100%;
+}
+
+.give-past__table th {
+    color: var(--n-500);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: var(--s-1) var(--s-2);
+    text-align: left;
+    text-transform: uppercase;
+}
+
+.give-past__table td {
+    border-top: 1px solid var(--n-200);
+    padding: var(--s-1) var(--s-2);
+}
+
+.give-past__table .num {
+    text-align: right;
+}
+
+@media (pointer: coarse) {
+    .give-past__open {
+        min-height: var(--tap);
+    }
 }
 
 /* One line per job. The same rule in all three stacked columns is what keeps

@@ -1135,6 +1135,53 @@ class WorkFileModel extends Model
     }
 
     /**
+     * The last few rates agreed for each of these works.
+     *
+     * Shown where a rate is being agreed, because that is where the question is
+     * asked: what did we pay for a transfer last time, and to whom. Every
+     * vendor's is included rather than only the one being chosen — comparing
+     * across them is half the reason to ask.
+     *
+     * One query per work type, deliberately. A handful of types are on the
+     * screen at a time, each lookup is a short indexed read, and the portable
+     * alternatives are a window function or reading every rate ever agreed and
+     * throwing most of it away.
+     *
+     * @param  array<int>  $workTypeIds
+     * @return array<int, array<int, object>>  keyed by work type, newest first
+     */
+    public static function recentVendorRates(array $workTypeIds, int $limit = 5): array
+    {
+        $out = [];
+
+        foreach (array_unique($workTypeIds) as $typeId) {
+            $out[$typeId] = DB::table('work_file_item')
+                ->join('work_file', 'work_file.id', '=', 'work_file_item.work_file_id')
+                ->join('party as vendor', 'vendor.id', '=', 'work_file.vendor_id')
+                ->where('work_file_item.work_type_id', $typeId)
+                // A rate that was never agreed is not a rate that was paid, and
+                // a cancelled file was owed for by nobody.
+                ->whereNotNull('work_file_item.vendor_amount')
+                ->where('work_file_item.vendor_amount', '>', 0)
+                ->where('work_file.status', '<>', self::CANCELLED)
+                ->orderByDesc('work_file.vendor_date')
+                ->orderByDesc('work_file.id')
+                ->limit($limit)
+                ->get([
+                    'work_file.file_no',
+                    'work_file.vendor_date',
+                    'work_file.registration_no',
+                    'vendor.name as vendor',
+                    'work_file_item.vendor_amount as amount',
+                    'work_file_item.customer_amount as charged',
+                ])
+                ->all();
+        }
+
+        return $out;
+    }
+
+    /**
      * Everything already booked against one vehicle.
      *
      * This is the verification the receive screen needs: before charging for a
