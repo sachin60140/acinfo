@@ -72,10 +72,22 @@
 
     var openPicker = null;
 
+    /*
+     * The box the open calendar belongs to, held as the element itself.
+     *
+     * By id it could not tell one box from the next one to carry that id,
+     * and most of these screens are drawn by Vue: a re-render replaces the
+     * box with a new element of the same name. The calendar left over from
+     * the old one matched, open() took it for this one's and returned, and
+     * the box stopped opening anything at all.
+     */
+    var openField = null;
+
     function closeOpen() {
         if (openPicker) {
             openPicker.remove();
             openPicker = null;
+            openField = null;
         }
     }
 
@@ -157,7 +169,10 @@
         field.addEventListener('blur', sync);
 
         function open() {
-            if (openPicker && openPicker.dataset.owner === field.id) {
+            // Already showing for this very box. Anything else — a calendar
+            // for another box, or one whose box has since been replaced — is
+            // closed and reopened below.
+            if (openPicker && openField === field && openPicker.isConnected) {
                 return;
             }
 
@@ -264,6 +279,7 @@
             ) + 'px';
 
             openPicker = popup;
+            openField = field;
 
             popup.addEventListener('mousedown', function (event) {
                 // Keep focus on the input so blur does not close the popup mid-click.
@@ -316,6 +332,25 @@
         field.addEventListener('focus', open);
         field.addEventListener('click', open);
 
+        /*
+         * The calendar icon beside the box.
+         *
+         * It is a picture of a calendar, so it is the first thing anyone
+         * clicks — and it is a sibling span, so the click landed on nothing
+         * and the box never learned it was wanted. Focusing it opens the
+         * calendar the same way the box does.
+         */
+        var group = field.closest('.input-group');
+
+        if (group) {
+            group.addEventListener('click', function (event) {
+                if (! event.target.closest('.js-datefield')) {
+                    field.focus();
+                    open();
+                }
+            });
+        }
+
         field.addEventListener('keydown', function (event) {
             if (event.key === 'Escape') {
                 closeOpen();
@@ -331,12 +366,38 @@
     }
 
     document.addEventListener('click', function (event) {
-        if (openPicker && !event.target.closest('.dp-popup') && !event.target.classList.contains('js-datefield')) {
-            closeOpen();
+        if (! openPicker || event.target.closest('.dp-popup')) {
+            return;
         }
+
+        /*
+         * A click on the box, or on the icon beside it, is what opened this —
+         * not a click away from it. Counting the icon as elsewhere closed the
+         * calendar in the same breath as opening it, so pressing it appeared
+         * to do nothing at all.
+         */
+        if (event.target.closest('.js-datefield')) {
+            return;
+        }
+
+        var group = event.target.closest('.input-group');
+
+        if (group && group.querySelector('.js-datefield')) {
+            return;
+        }
+
+        closeOpen();
     });
 
     function bindAll() {
+        /*
+         * A calendar standing over markup that has just been replaced is
+         * pointing at nothing. It goes before the new boxes are bound.
+         */
+        if (openField && ! openField.isConnected) {
+            closeOpen();
+        }
+
         document.querySelectorAll('.js-datefield').forEach(build);
     }
 

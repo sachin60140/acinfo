@@ -1,5 +1,11 @@
 /* Calendar popup for .js-datefield inputs. See assets/js/datepicker.js. */
 
+/* The icon beside a date box opens its calendar, so it reads as a control
+   rather than as decoration. */
+.input-group:has(.js-datefield) .input-group-text {
+    cursor: pointer;
+}
+
 .dp-popup {
     position: absolute;
     z-index: 1080;
