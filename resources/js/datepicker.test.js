@@ -246,3 +246,84 @@ describe('the calendar icon beside the box', () => {
         expect(popup()).not.toBe(null);
     });
 });
+
+/*
+ * Using the calendar the way a mouse uses it.
+ *
+ * A browser sends mousedown before click, and the popup cancels that mousedown
+ * so the box does not lose focus and close the calendar underneath the finger.
+ * Cancelling it on the whole popup takes the month and year selects with it: a
+ * select opens its list on mousedown, and a cancelled mousedown opens nothing.
+ */
+describe('the controls inside the calendar', () => {
+    function opened() {
+        const { visible, hidden } = field();
+
+        rebind();
+        visible.dispatchEvent(new window.Event('focus'));
+
+        return { visible, hidden, dp: popup() };
+    }
+
+    // What a real click is: down, up, then click.
+    function press(el) {
+        const down = new window.MouseEvent('mousedown', { bubbles: true, cancelable: true });
+        el.dispatchEvent(down);
+        el.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }));
+        el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+        return down;
+    }
+
+    it('picks a day when one is pressed', () => {
+        const { hidden, dp } = opened();
+
+        const day = [...dp.querySelectorAll('.dp-day')].find((b) => b.dataset.iso.endsWith('-12'));
+
+        press(day);
+
+        expect(hidden.value, 'the day pressed reaches the server field').toMatch(/^\d{4}-\d{2}-12$/);
+    });
+
+    it('lets the month select be opened', () => {
+        const { dp } = opened();
+
+        const month = dp.querySelector('.dp-month');
+        const down = press(month);
+
+        expect(
+            down.defaultPrevented,
+            'a cancelled mousedown stops a select opening its list at all'
+        ).toBe(false);
+    });
+
+    it('lets the year select be opened', () => {
+        const { dp } = opened();
+
+        const down = press(dp.querySelector('.dp-year'));
+
+        expect(down.defaultPrevented).toBe(false);
+    });
+
+    it('moves to another month when one is chosen', () => {
+        const { dp } = opened();
+
+        const month = dp.querySelector('.dp-month');
+        month.value = '0';
+        month.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(popup().querySelector('.dp-month').value, 'the calendar redraws on January').toBe('0');
+    });
+
+    it('steps a month with the arrows', () => {
+        const { dp } = opened();
+
+        const before = Number(dp.querySelector('.dp-month').value);
+
+        press(dp.querySelector('.dp-nav[data-step="1"]'));
+
+        const after = Number(popup().querySelector('.dp-month').value);
+
+        expect(after, 'the next month is shown').toBe((before + 1) % 12);
+    });
+});

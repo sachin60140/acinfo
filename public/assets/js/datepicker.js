@@ -282,7 +282,17 @@
             openField = field;
 
             popup.addEventListener('mousedown', function (event) {
-                // Keep focus on the input so blur does not close the popup mid-click.
+                /*
+                 * Keep focus on the input so blur does not close the popup
+                 * mid-click — but not over a control of its own. A select
+                 * opens its list on mousedown, and a cancelled mousedown
+                 * opens nothing: the month and year could be seen, and never
+                 * changed.
+                 */
+                if (event.target.closest('select, input, textarea')) {
+                    return;
+                }
+
                 event.preventDefault();
             });
 
@@ -366,7 +376,18 @@
     }
 
     document.addEventListener('click', function (event) {
-        if (! openPicker || event.target.closest('.dp-popup')) {
+        if (! openPicker) {
+            return;
+        }
+
+        /*
+         * A target that has left the document was part of what this calendar
+         * just redrew, and closest() cannot walk up from it to find the
+         * popup it was in. Read as a click somewhere else, it closed the
+         * calendar — so the month arrows dismissed it instead of stepping a
+         * month, which is what they redraw to do.
+         */
+        if (! event.target.isConnected || event.target.closest('.dp-popup')) {
             return;
         }
 
