@@ -1311,6 +1311,153 @@ class CustomerPortalTest extends TestCase
             ->assertDontSee('History');
     }
 
+    // ------------------------------------------- the latest update, in the list
+
+    private function listRow(PartyModel $customer, string $registration): array
+    {
+        return collect($this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
+            ->firstWhere('registration_no', $registration);
+    }
+
+    public function test_the_list_says_the_last_thing_written_about_a_file(): void
+    {
+        $customer = $this->party('customer', '9000001101');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009101', 'registration_no' => 'BR06LAST1']);
+
+        $this->log($file->id, null, 'in_office', 'Papers received');
+        $this->log($file->id, 'in_office', 'under_verification', 'With the RTO for verification');
+
+        $row = $this->listRow($customer, 'BR06LAST1');
+
+        $this->assertSame('With the RTO for verification', $row['latest_remark'], 'the newest, not the first');
+    }
+
+    /**
+     * The date belongs to the file, not to the remark.
+     *
+     * A file that moved this morning without anybody typing anything still
+     * moved this morning. Dating the row by the older note would tell the
+     * customer nothing had happened since.
+     */
+    public function test_the_date_follows_the_last_movement_not_the_last_remark(): void
+    {
+        $customer = $this->party('customer', '9000001102');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009102', 'registration_no' => 'BR06DATE1']);
+
+        \Illuminate\Support\Facades\DB::table('work_file_status_log')->insert([
+            [
+                'work_file_id' => $file->id, 'work_file_item_id' => null,
+                'from_status' => null, 'to_status' => 'in_office',
+                'remark' => 'An older note', 'user_id' => 1,
+                'created_at' => '2026-01-10 09:00:00', 'updated_at' => '2026-01-10 09:00:00',
+            ],
+            [
+                // Moved later, with nothing written.
+                'work_file_id' => $file->id, 'work_file_item_id' => null,
+                'from_status' => 'in_office', 'to_status' => 'under_verification',
+                'remark' => null, 'user_id' => 1,
+                'created_at' => '2026-02-20 09:00:00', 'updated_at' => '2026-02-20 09:00:00',
+            ],
+        ]);
+
+        $row = $this->listRow($customer, 'BR06DATE1');
+
+        $this->assertSame('An older note', $row['latest_remark'], 'the last remark there was');
+        $this->assertSame('Updated 20-02-2026', $row['updated_on'], 'but the day it actually last moved');
+    }
+
+    public function test_a_file_never_moved_falls_back_to_its_own_remark(): void
+    {
+        $customer = $this->party('customer', '9000001103');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009103', 'registration_no' => 'BR06FBCK1']);
+
+        $file->remarks = 'Original RC pending from you';
+        $file->save();
+
+        $row = $this->listRow($customer, 'BR06FBCK1');
+
+        // No history at all, so the folder's own typed note is the latest
+        // thing anybody said about it.
+        $this->assertSame('Original RC pending from you', $row['latest_remark']);
+        $this->assertNull($row['updated_on'], 'and it has not moved, so no date claims it has');
+    }
+
+    public function test_a_file_with_nothing_written_says_nothing(): void
+    {
+        $customer = $this->party('customer', '9000001104');
+        $this->fileWithVendor($customer, ['vendor_mobile' => '9000009104', 'registration_no' => 'BR06NONE1']);
+
+        $row = $this->listRow($customer, 'BR06NONE1');
+
+        $this->assertNull($row['latest_remark']);
+    }
+
+    /**
+     * The same trimming as the history, in the place it is easiest to forget.
+     *
+     * This column is built by a different method from the timeline, so it needs
+     * its own proof that the vendor does not travel with the remark.
+     */
+    public function test_the_latest_update_never_names_the_vendor(): void
+    {
+        $customer = $this->party('customer', '9000001105');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009105', 'registration_no' => 'BR06VEND1']);
+
+        $this->log($file->id, null, 'in_office', 'Papers received');
+        $this->log($file->id, 'in_office', 'file_dispatch', 'Sent by hand — Given to Dabloo Ji Muzaffarpur');
+
+        $row = $this->listRow($customer, 'BR06VEND1');
+
+        $this->assertSame('Sent by hand', $row['latest_remark']);
+
+        $body = $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.files'))->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('Dabloo Ji', $body);
+        $this->assertStringNotContainsString('Given to', $body);
+    }
+
+    /**
+     * An entry whose only content was the generated clause is not "the last
+     * thing anybody said" — nobody said it.
+     */
+    public function test_a_generated_only_entry_does_not_become_the_latest_remark(): void
+    {
+        $customer = $this->party('customer', '9000001106');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009106', 'registration_no' => 'BR06GENR1']);
+
+        $this->log($file->id, null, 'in_office', 'Papers received');
+        $this->log($file->id, 'in_office', 'file_dispatch', 'Given to Dabloo Ji Muzaffarpur');
+
+        $row = $this->listRow($customer, 'BR06GENR1');
+
+        $this->assertSame('Papers received', $row['latest_remark'], 'the last thing a person actually wrote');
+    }
+
+    public function test_the_latest_update_is_ordered_by_when_the_file_moved(): void
+    {
+        $customer = $this->party('customer', '9000001107');
+
+        $columns = collect($this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.files'))->assertOk()->json('props.columns'));
+
+        $column = $columns->firstWhere('key', 'latest_remark');
+
+        $this->assertNotNull($column, 'the column exists');
+        // Sorting a column of sentences alphabetically answers nothing; "when
+        // did this last move" is the question worth ordering by.
+        $this->assertSame('updated_raw', $column['sortBy']);
+
+        // And it sits straight after the status, which is where it was asked for.
+        $keys = $columns->pluck('key')->values()->all();
+
+        $this->assertSame(
+            array_search('status', $keys, true) + 1,
+            array_search('latest_remark', $keys, true)
+        );
+    }
+
     // --------------------------------------------------------- the front door
 
     public function test_the_site_root_leads_to_the_customer_portal(): void

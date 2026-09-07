@@ -224,6 +224,9 @@ class CustomerPortalController extends Controller
         // Every folder's works, for the whole page, in one query.
         $breakdown = WorkFileModel::workBreakdown($files->pluck('id')->all());
 
+        // And the last thing said about each, in one more.
+        $updates = WorkFileModel::latestCustomerUpdates($files->pluck('id')->all());
+
         $rows = [];
         $counts = ['open' => 0, 'approved' => 0, 'returned' => 0, 'cancelled' => 0];
 
@@ -276,6 +279,23 @@ class CustomerPortalController extends Controller
                 'description' => $file->description,
                 'remarks' => $file->remarks ?: null,
 
+                /*
+                 * The last thing anybody said about this file, and when it last
+                 * moved. The remark falls back to the folder's own typed note
+                 * for a file whose history has nothing in it — which is every
+                 * file that has only been received.
+                 *
+                 * The date is the file's, not the remark's: a file that moved
+                 * this morning with nothing typed still moved this morning, and
+                 * dating it by an older note would say it had not.
+                 */
+                'latest_remark' => $updates[$file->id]['remark'] ?? ($file->remarks ?: null),
+                'updated_on' => isset($updates[$file->id]['updated_on'])
+                    ? 'Updated '.date('d-m-Y', strtotime($updates[$file->id]['updated_on']))
+                    : null,
+                // Sorted on rather than shown, for the reason 'received' is.
+                'updated_raw' => $updates[$file->id]['updated_on'] ?? $file->received_date,
+
                 'status' => WorkFileModel::customerStatus($file->status),
                 /*
                  * A tone, not the status. The grid puts this key straight into
@@ -315,11 +335,26 @@ class CustomerPortalController extends Controller
                     'key' => 'status',
                     'label' => 'Status',
                     'type' => 'badge',
-                    // The office's note sits above the works line, because it
-                    // is the thing somebody chose to write and the other is
-                    // derived. Both are quiet, and both are often absent.
-                    'note' => 'remarks',
+                    // How a split folder is split, under the badge that says it
+                    // is split. Quiet, and absent whenever the works agree.
                     'sub' => 'works_note',
+                ],
+
+                /*
+                 * The last thing said about the file, with the day it last
+                 * moved beneath it. Straight after the status, because the
+                 * status says where a file is and this says what happened.
+                 *
+                 * Sorted on the raw date rather than on the remark: "when did
+                 * this last move" is the question worth ordering by, and
+                 * ordering a column of sentences alphabetically answers none.
+                 */
+                [
+                    'key' => 'latest_remark',
+                    'label' => 'Latest Update',
+                    'width' => '14rem',
+                    'sub' => 'updated_on',
+                    'sortBy' => 'updated_raw',
                 ],
                 ['key' => 'approved_on', 'label' => 'Approved On'],
                 ['key' => 'charged', 'label' => 'Amount', 'type' => 'money'],
@@ -327,6 +362,7 @@ class CustomerPortalController extends Controller
                 // Carried for searching and for the export only.
                 ['key' => 'description', 'label' => 'Description', 'hidden' => true],
                 ['key' => 'remarks', 'label' => 'Remarks', 'hidden' => true],
+                ['key' => 'updated_raw', 'label' => 'Updated On', 'hidden' => true],
             ],
             'rows' => $rows,
             'totals' => ['charged' => 'sum'],

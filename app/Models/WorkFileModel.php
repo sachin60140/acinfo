@@ -1561,6 +1561,55 @@ class WorkFileModel extends Model
     }
 
     /**
+     * The last thing said about each file, and the last time anything happened.
+     *
+     * Two separate questions answered from one pass, because they have
+     * different answers: a file moved this morning with nothing typed has a
+     * remark from last week and was updated today. Showing the older date
+     * beside the older remark would say the file has not moved since.
+     *
+     * One query for the whole page. Read in order and overwritten, so what
+     * survives per file is the newest of each.
+     *
+     * @param  array<int, int>  $fileIds
+     * @return array<int, array{remark: ?string, remark_on: ?string, updated_on: ?string}>
+     */
+    public static function latestCustomerUpdates(array $fileIds): array
+    {
+        if (! $fileIds) {
+            return [];
+        }
+
+        $rows = DB::table('work_file_status_log')
+            ->whereIn('work_file_id', $fileIds)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->select('work_file_id', 'remark', 'created_at')
+            ->get();
+
+        $out = [];
+
+        foreach ($rows as $row) {
+            $out[$row->work_file_id] ??= ['remark' => null, 'remark_on' => null, 'updated_on' => null];
+
+            // Anything at all counts as the file having moved.
+            $out[$row->work_file_id]['updated_on'] = $row->created_at;
+
+            // The office's own additions are trimmed first, so an entry whose
+            // only content was "Given to <vendor>" does not count as the last
+            // thing anybody said.
+            $remark = self::customerRemark($row->remark);
+
+            if ($remark !== null) {
+                $out[$row->work_file_id]['remark'] = $remark;
+                $out[$row->work_file_id]['remark_on'] = $row->created_at;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * The works on one file, and only what their customer may see.
      *
      * Written out for the same reason as forCustomer above: work_file_item
