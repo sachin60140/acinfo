@@ -270,6 +270,229 @@ class CustomerPortalTest extends TestCase
         $this->get(route('customer.dashboard'))->assertNotFound();
     }
 
+    // --------------------------------------------------------- the statement
+
+    private function entry(int $partyId, string $date, string $side, float $amount, string $particular = 'Test entry', ?int $workFileId = null): void
+    {
+        $entry = new \App\Models\PartyLedgerModel;
+        $entry->party_id = $partyId;
+        $entry->txn_date = $date;
+        $entry->entry_type = $side;
+        $entry->amount = $amount;
+        $entry->particular = $particular;
+        $entry->work_file_id = $workFileId;
+        $entry->file_role = $workFileId ? 'customer' : null;
+        $entry->ref_no = $workFileId ? 'F-TEST' : null;
+        $entry->save();
+    }
+
+    /**
+     * A bare work file, so a ledger entry can be tied to one.
+     *
+     * Deliberately not built through the receive screen: these tests are about
+     * the portal, and all they need from a file is that work_file_id points at
+     * a row which exists.
+     */
+    private function fileFor(PartyModel $customer): \App\Models\WorkFileModel
+    {
+        $file = new \App\Models\WorkFileModel;
+        $file->file_no = 'F-'.substr((string) microtime(true), -6);
+        $file->received_date = '2026-01-05';
+        $file->work_type_id = \App\Models\WorkTypeModel::query()->value('id');
+        $file->customer_id = $customer->id;
+        $file->customer_amount = 4000;
+        $file->status = 'in_office';
+        $file->save();
+
+        return $file;
+    }
+
+    /**
+     * The whole security model of this portal in one test.
+     *
+     * There is nothing else keeping one customer out of another's ledger: the
+     * statement route carries no id, and the party is the session's. If that
+     * ever stops being true, this is what says so.
+     */
+    public function test_the_statement_is_the_signed_in_customer_and_nobody_else(): void
+    {
+        $mine = $this->party('customer', '9000000501');
+        $theirs = $this->party('customer', '9000000502');
+
+        $this->entry($mine->id, '2026-01-10', 'debit', 5000, 'My own work');
+        $this->entry($theirs->id, '2026-01-11', 'debit', 9999, 'Somebody else entirely');
+
+        $body = $this->withSession(['customer_id' => $mine->id])
+            ->get(route('customer.statement'))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertStringContainsString('My own work', $body);
+        $this->assertStringNotContainsString('Somebody else entirely', $body);
+        $this->assertStringNotContainsString('9,999', $body);
+    }
+
+    /**
+     * The first thing anybody would try.
+     *
+     * The route carries no id, so there is nothing to tamper with — but "there
+     * is nothing to tamper with" is a property of today's code, and the way it
+     * stops being true is somebody adding a filter that reads the query string.
+     * Asking for another customer's id has to keep returning your own account
+     * rather than theirs.
+     */
+    public function test_asking_for_another_customers_id_still_returns_your_own(): void
+    {
+        $mine = $this->party('customer', '9000000510');
+        $theirs = $this->party('customer', '9000000511');
+
+        $this->entry($mine->id, '2026-01-10', 'debit', 1234, 'My own work');
+        $this->entry($theirs->id, '2026-01-11', 'debit', 8765, 'Somebody else entirely');
+
+        foreach (['id', 'party_id', 'customer_id'] as $name) {
+            $body = $this->withSession(['customer_id' => $mine->id])
+                ->get(route('customer.statement', [$name => $theirs->id]))
+                ->assertOk()
+                ->getContent();
+
+            $this->assertStringContainsString('My own work', $body, "?$name returned the wrong account");
+            $this->assertStringNotContainsString('Somebody else entirely', $body, "?$name leaked another customer");
+        }
+    }
+
+    /**
+     * The figures are the office's figures.
+     *
+     * A portal that computes its own totals is a portal that will one day
+     * disagree with the statement the office prints, and the customer will be
+     * holding the one that is wrong.
+     */
+    public function test_the_statement_agrees_with_the_one_the_office_prints(): void
+    {
+        $customer = $this->party('customer', '9000000503');
+
+        $this->entry($customer->id, '2026-01-05', 'debit', 12000);
+        $this->entry($customer->id, '2026-02-05', 'credit', 4500);
+        $this->entry($customer->id, '2026-03-05', 'debit', 800);
+
+        $office = $this->actingAs($this->admin())
+            ->getJson(route('party.statement', $customer->id))
+            ->assertOk()
+            ->json('page');
+
+        $portal = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.statement'))
+            ->assertOk()
+            ->json('page');
+
+        foreach (['opening', 'debits', 'credits', 'closing', 'entryCount'] as $figure) {
+            $this->assertSame($office[$figure], $portal[$figure], "$figure disagrees with the office");
+        }
+    }
+
+    public function test_the_balance_is_said_in_words_and_never_with_a_minus_sign(): void
+    {
+        $owing = $this->party('customer', '9000000504');
+        $inCredit = $this->party('customer', '9000000505');
+
+        $this->entry($owing->id, '2026-01-05', 'debit', 7500);
+        $this->entry($inCredit->id, '2026-01-05', 'credit', 2500);
+
+        $owed = $this->withSession(['customer_id' => $owing->id])
+            ->get(route('customer.dashboard'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('You owe', $owed);
+        $this->assertStringContainsString('7,500.00', $owed);
+
+        $held = $this->withSession(['customer_id' => $inCredit->id])
+            ->get(route('customer.dashboard'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('In your credit', $held);
+        $this->assertStringContainsString('2,500.00', $held);
+        $this->assertStringNotContainsString('-2,500.00', $held, 'a balance never carries a minus sign');
+    }
+
+    public function test_a_settled_account_takes_neither_side(): void
+    {
+        $customer = $this->party('customer', '9000000506');
+
+        $this->entry($customer->id, '2026-01-05', 'debit', 3000);
+        $this->entry($customer->id, '2026-01-06', 'credit', 3000);
+
+        $body = $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.dashboard'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('Account settled', $body);
+        $this->assertStringNotContainsString('You owe', $body);
+    }
+
+    public function test_the_statement_narrows_to_a_period(): void
+    {
+        $customer = $this->party('customer', '9000000507');
+
+        $this->entry($customer->id, '2026-01-10', 'debit', 1000, 'January work');
+        $this->entry($customer->id, '2026-06-10', 'debit', 2000, 'June work');
+
+        $body = $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.statement', ['from' => '2026-06-01', 'to' => '2026-06-30']))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertStringContainsString('June work', $body);
+        $this->assertStringNotContainsString('January work', $body);
+    }
+
+    public function test_a_backwards_period_is_refused(): void
+    {
+        $customer = $this->party('customer', '9000000508');
+
+        $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.statement', ['from' => '2026-06-30', 'to' => '2026-06-01']))
+            ->assertSessionHasErrors('to');
+    }
+
+    /**
+     * What the office statement carries that this one must not.
+     *
+     * Its Ref No. column links into the file editor — a screen showing which
+     * vendor holds the papers and what they are being paid. The margin is the
+     * difference between that and what the customer was charged.
+     */
+    public function test_the_statement_offers_no_way_into_the_office(): void
+    {
+        $customer = $this->party('customer', '9000000509');
+
+        // Tied to a file, which is what gives the office statement something to
+        // link to. An entry typed straight into the ledger has no reference at
+        // all, so a fixture without a file would leave the link untested.
+        $file = $this->fileFor($customer);
+        $this->entry($customer->id, '2026-01-05', 'debit', 4000, 'Work on a file', $file->id);
+
+        $this->assertStringNotContainsString(
+            'admin/',
+            $this->withSession(['customer_id' => $customer->id])
+                ->get(route('customer.statement'))->assertOk()->getContent(),
+            'no link into the office'
+        );
+
+        /*
+         * The word is checked against the data, not the page. The template's
+         * stylesheets live under assets/vendor/, so a page-wide search for
+         * "vendor" matches Bootstrap and says nothing about what leaked — it
+         * fails whatever the code does, which is worse than not testing it.
+         */
+        $payload = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.statement'))
+            ->assertOk()
+            ->json();
+
+        $this->assertStringNotContainsString(
+            'vendor',
+            strtolower(json_encode($payload)),
+            'nothing about a vendor reaches the customer'
+        );
+    }
+
     // ------------------------------------------------------ issuing a password
 
     public function test_the_office_can_give_a_customer_a_login(): void

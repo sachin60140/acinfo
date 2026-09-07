@@ -73,6 +73,9 @@ export const components = {
     // The two screens a client sees rather than the office.
     'vue-user-statement': DataGrid,
     'vue-user-dashboard': UserDashboard,
+
+    // And what a customer sees of their own account.
+    'vue-customer-statement': DataGrid,
 };
 
 /*

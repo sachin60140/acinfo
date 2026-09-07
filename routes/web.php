@@ -135,4 +135,8 @@ Route::post('customer/logout', [CustomerPortalController::class, 'logout'])->nam
 
 Route::group(['middleware' => 'customerAuth'], function () {
     Route::get('customer/dashboard', [CustomerPortalController::class, 'dashboard'])->name('customer.dashboard');
+
+    // No {id}. The party is whoever is signed in, and a statement that took one
+    // from the URL would be a statement anybody could ask for.
+    Route::get('customer/statement', [CustomerPortalController::class, 'statement'])->name('customer.statement');
 });

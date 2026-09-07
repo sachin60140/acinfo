@@ -47,13 +47,9 @@
         color: #128c7e;
     }
 
-    .dr {
-        color: #198754;
-    }
-
-    .cr {
-        color: #dc3545;
-    }
+    /* .dr and .cr moved to resources/css/app.css, which every screen gets.
+       Here they were reachable only by the pages that include this partial,
+       and the customer portal prints the same summary without it. */
 
     .side-hint {
         color: #64748b;

@@ -18,10 +18,17 @@
       </a>
     </li>
 
+    <li class="nav-item">
+      <a class="{{ $navClass($req->routeIs('customer.statement')) }}" href="{{ route('customer.statement') }}">
+        <i class="bi bi-journal-text"></i>
+        <span>My Statement</span>
+      </a>
+    </li>
+
     {{--
-      My Files and Statement land here in the phases after this one. The menu
-      carries only what exists: an item that leads nowhere reads as a broken
-      portal rather than an unfinished one.
+      My Files lands here in the phase after this one. The menu carries only
+      what exists: an item that leads nowhere reads as a broken portal rather
+      than an unfinished one.
     --}}
 
   </ul>

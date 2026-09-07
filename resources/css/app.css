@@ -375,6 +375,18 @@
 .ui-money--cr { color: var(--cr-700); }
 .ui-money--nil { color: var(--n-400); }
 
+/*
+ * The two sides, as bare classes.
+ *
+ * Written into the Blade of every statement summary rather than applied by the
+ * grid, so they have to be reachable from any screen that prints a balance.
+ * They lived in the party pages' own style partial, which meant a screen
+ * outside admin/party — the customer portal, now — got the markup and none of
+ * the colour, and showed a Dr and a Cr in identical black.
+ */
+.dr { color: var(--dr-600); }
+.cr { color: var(--cr-600); }
+
 .ui-money--void {
     color: var(--n-400);
     text-decoration: line-through;
