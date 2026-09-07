@@ -77,6 +77,7 @@ export const components = {
     // And what a customer sees of their own account.
     'vue-customer-statement': DataGrid,
     'vue-customer-files': DataGrid,
+    'vue-customer-file': DataGrid,
 };
 
 /*

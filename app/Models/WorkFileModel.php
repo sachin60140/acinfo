@@ -1465,6 +1465,54 @@ class WorkFileModel extends Model
             ->orderByDesc('work_file.id');
     }
 
+    /**
+     * The works on one file, and only what their customer may see.
+     *
+     * Written out for the same reason as forCustomer above: work_file_item
+     * carries vendor_amount beside customer_amount, and the two together are
+     * the margin on that work. This is the narrower of the two lists — the
+     * office's own breakdown query fetches more and is used by office screens.
+     */
+    public static function customerWorks(int $fileId)
+    {
+        return DB::table('work_file_item')
+            ->join('work_type', 'work_type.id', '=', 'work_file_item.work_type_id')
+            ->where('work_file_item.work_file_id', $fileId)
+            ->orderBy('work_file_item.id')
+            ->select(
+                'work_file_item.id',
+                'work_file_item.status',
+                'work_file_item.approved_on',
+                'work_file_item.customer_amount',
+                'work_file_item.approval_screenshot',
+                'work_type.name as work_type'
+            )
+            ->get();
+    }
+
+    /**
+     * Whether a stored path is one of ours, before anything is read from disk.
+     *
+     * These paths come from our own rows, so this is not guarding against a
+     * hostile value today. It guards against the day something else writes that
+     * column: a path assembled from an upload name and handed to a file reader
+     * is how a portal that serves a customer's own screenshot starts serving
+     * whatever else the account can reach.
+     */
+    public static function isStoredUpload(?string $path): bool
+    {
+        if (! is_string($path) || $path === '') {
+            return false;
+        }
+
+        if (str_contains($path, '..') || str_contains($path, "\0")) {
+            return false;
+        }
+
+        return str_starts_with($path, self::UPLOAD_DIR.'/')
+            && is_file(public_path($path));
+    }
+
     public static function workBreakdown(array $fileIds): array
     {
         if (! $fileIds) {

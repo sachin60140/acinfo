@@ -263,6 +263,10 @@ class CustomerPortalController extends Controller
 
             $rows[] = [
                 'file_no' => $file->file_no,
+                // Followed in this tab, not a new one: the detail is read
+                // instead of the list, and a second tab loses the search and
+                // the place in it the reader was working in.
+                'view_url' => route('customer.file', $file->id),
                 'registration_no' => $file->registration_no ?: '—',
                 'received' => date('d-m-Y', strtotime($file->received_date)),
                 // Sorted on rather than shown: dd-mm-yyyy compared as text
@@ -302,7 +306,7 @@ class CustomerPortalController extends Controller
             'title' => $customer->name.' — My Files',
             'perPage' => 25,
             'columns' => [
-                ['key' => 'file_no', 'label' => 'File No.'],
+                ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'view_url'],
                 ['key' => 'registration_no', 'label' => 'Vehicle', 'sub' => 'description'],
                 ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_raw'],
                 ['key' => 'work_type', 'label' => 'Work'],
@@ -322,6 +326,142 @@ class CustomerPortalController extends Controller
             'customerName' => $customer->name,
             'fileCount' => count($rows),
         ] + $counts)->toResponse($req);
+    }
+
+    /**
+     * One file, resolved through the customer's own scope.
+     *
+     * Never findOrFail($id) followed by a check: the ownership filter is part of
+     * the query, so a file belonging to somebody else is not found rather than
+     * found and then refused. Those look the same from outside and are not the
+     * same thing to write — the second is one early return away from being no
+     * check at all.
+     */
+    private function ownFile(int $id): object
+    {
+        $file = WorkFileModel::forCustomer((int) session(self::KEY))
+            ->where('work_file.id', $id)
+            ->first();
+
+        abort_if($file === null, 404);
+
+        return $file;
+    }
+
+    /**
+     * One file in full, with its approval as evidence.
+     *
+     * The screenshot is the most valuable thing this portal hands over. It is
+     * what the customer currently rings the office for, and what somebody then
+     * has to find and send on WhatsApp.
+     */
+    public function file(Request $req, int $id)
+    {
+        $customer = $this->customer();
+        $file = $this->ownFile($id);
+
+        $works = WorkFileModel::customerWorks($file->id);
+
+        $rows = [];
+
+        foreach ($works as $work) {
+            $rows[] = [
+                'work_type' => $work->work_type,
+                'status' => WorkFileModel::customerStatus($work->status),
+                'status_key' => WorkFileModel::customerTone($work->status),
+                'approved_on' => $work->approved_on ? date('d-m-Y', strtotime($work->approved_on)) : null,
+                'charged' => (float) $work->customer_amount,
+
+                // The evidence, behind a route that checks whose file it is.
+                // A statement that an approval exists is not an approval.
+                'screenshot' => WorkFileModel::isStoredUpload($work->approval_screenshot)
+                    ? 'View approval'
+                    : null,
+                'screenshot_url' => WorkFileModel::isStoredUpload($work->approval_screenshot)
+                    ? route('customer.file.approval', ['id' => $file->id, 'item' => $work->id])
+                    : null,
+            ];
+        }
+
+        $props = [
+            'title' => 'File '.$file->file_no.($file->registration_no ? ' — '.$file->registration_no : ''),
+            'columns' => [
+                ['key' => 'work_type', 'label' => 'Work'],
+                [
+                    'key' => 'status',
+                    'label' => 'Status',
+                    'type' => 'badge',
+                    'sub' => 'screenshot',
+                    'subLinkTo' => 'screenshot_url',
+                    // A document, so it opens over the page rather than
+                    // replacing it — checking an approval is a glance.
+                    'subPreview' => true,
+                ],
+                ['key' => 'approved_on', 'label' => 'Approved On'],
+                ['key' => 'charged', 'label' => 'Amount', 'type' => 'money'],
+            ],
+            'rows' => $rows,
+            'sortable' => false,
+            'totals' => ['charged' => 'sum'],
+            'emptyText' => 'No work recorded on this file yet.',
+        ];
+
+        // The folder's own approval, for a file received before works were
+        // priced one by one and whose evidence therefore sits on the folder.
+        $fileScreenshot = WorkFileModel::isStoredUpload($file->approval_screenshot)
+            ? route('customer.file.approval', ['id' => $file->id])
+            : null;
+
+        return Screen::make('customer.file', 'vue-customer-file', $props, [
+            'customerName' => $customer->name,
+            'fileNo' => $file->file_no,
+            'registrationNo' => $file->registration_no,
+            'description' => $file->description,
+            'received' => date('d-m-Y', strtotime($file->received_date)),
+            'status' => WorkFileModel::customerStatus($file->status),
+            'statusTone' => WorkFileModel::customerTone($file->status),
+            'charged' => WorkFileModel::netCustomer($file->status, $file->customer_amount, $file->returned_amount),
+            'returnedOn' => $file->returned_on ? date('d-m-Y', strtotime($file->returned_on)) : null,
+            'fileScreenshot' => $fileScreenshot,
+            'workCount' => count($rows),
+            'filesUrl' => route('customer.files'),
+        ])->toResponse($req);
+    }
+
+    /**
+     * The approval image, served only to the customer whose file it is.
+     *
+     * Read through here rather than linked at its path under public/. Those
+     * files are web-served with no authentication at all, and a portal handing
+     * customers those URLs turns an unguessable name into a link that is
+     * forwarded, saved and shared forever. Behind this route the ownership is
+     * checked on every read.
+     */
+    public function approval(Request $req, int $id, ?int $item = null)
+    {
+        $file = $this->ownFile($id);
+
+        if ($item === null) {
+            $path = $file->approval_screenshot;
+        } else {
+            // Scoped to the file that was already proved to be this customer's,
+            // so an item id from another file resolves to nothing.
+            $path = WorkFileModel::customerWorks($file->id)
+                ->firstWhere('id', $item)
+                ?->approval_screenshot;
+        }
+
+        abort_unless(WorkFileModel::isStoredUpload($path), 404);
+
+        /*
+         * Inline, and never cached by anything in between: this is one
+         * customer's document behind a session, and a shared cache holding it
+         * would serve it to the next person through the same proxy.
+         */
+        return response()->file(public_path($path), [
+            'Cache-Control' => 'private, no-store',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
     }
 
     /**

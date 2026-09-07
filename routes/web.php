@@ -141,4 +141,21 @@ Route::group(['middleware' => 'customerAuth'], function () {
     Route::get('customer/statement', [CustomerPortalController::class, 'statement'])->name('customer.statement');
 
     Route::get('customer/files', [CustomerPortalController::class, 'files'])->name('customer.files');
+
+    /*
+     * One file, and its approval image. Both take an id, and both resolve it
+     * through the signed-in customer's own scope — a file belonging to somebody
+     * else is not found rather than found and then refused.
+     *
+     * The approval is served by the application rather than linked at its path
+     * under public/, where it would have no authentication at all.
+     */
+    Route::get('customer/file/{id}', [CustomerPortalController::class, 'file'])
+        ->whereNumber('id')
+        ->name('customer.file');
+
+    Route::get('customer/file/{id}/approval/{item?}', [CustomerPortalController::class, 'approval'])
+        ->whereNumber('id')
+        ->whereNumber('item')
+        ->name('customer.file.approval');
 });

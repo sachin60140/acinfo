@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\PartyModel;
 use App\Models\User;
+use App\Models\WorkFileModel;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
@@ -749,6 +750,318 @@ class CustomerPortalTest extends TestCase
             $this->withSession(['customer_id' => $customer->id])
                 ->get(route('customer.files'))->assertOk()->getContent()
         );
+    }
+
+    // -------------------------------------------------------- one file, in full
+
+    /**
+     * A real image on disk, and the row that points at it.
+     *
+     * Written into the same directory the office uploads to, under a name these
+     * tests own, and removed afterwards. Serving evidence cannot be tested
+     * against evidence that does not exist.
+     */
+    private function withApproval(\App\Models\WorkFileModel $file, ?int $itemId = null): string
+    {
+        $directory = public_path(\App\Models\WorkFileModel::UPLOAD_DIR);
+
+        if (! is_dir($directory)) {
+            mkdir($directory, 0755, true);
+        }
+
+        $name = 'phpunit-'.uniqid().'.png';
+        // The shortest valid PNG: a 1x1 transparent pixel.
+        file_put_contents($directory.'/'.$name, base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk'
+            .'YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+        ));
+
+        $stored = \App\Models\WorkFileModel::UPLOAD_DIR.'/'.$name;
+        $this->uploads[] = $directory.'/'.$name;
+
+        if ($itemId === null) {
+            $file->approval_screenshot = $stored;
+            $file->save();
+        } else {
+            \App\Models\WorkFileItemModel::where('id', $itemId)->update(['approval_screenshot' => $stored]);
+        }
+
+        return $stored;
+    }
+
+    /** Files written to public/ by a test, which no transaction rolls back. */
+    private array $uploads = [];
+
+    protected function tearDown(): void
+    {
+        foreach ($this->uploads as $path) {
+            if (is_file($path)) {
+                unlink($path);
+            }
+        }
+
+        $this->uploads = [];
+
+        parent::tearDown();
+    }
+
+    public function test_a_customer_can_open_their_own_file(): void
+    {
+        $customer = $this->party('customer', '9000000801');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009801', 'registration_no' => 'BR06OPEN1']);
+
+        $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.file', $file->id))
+            ->assertOk()
+            ->assertSee('BR06OPEN1')
+            ->assertSee($file->file_no);
+    }
+
+    /**
+     * The one an attacker would try, and the one a bored customer would try
+     * too: their own file id, plus one.
+     */
+    public function test_another_customers_file_is_not_found(): void
+    {
+        $mine = $this->party('customer', '9000000802');
+        $theirs = $this->party('customer', '9000000803');
+
+        $file = $this->fileWithVendor($theirs, ['vendor_mobile' => '9000009802', 'registration_no' => 'BR06THRS1']);
+
+        $this->withSession(['customer_id' => $mine->id])
+            ->get(route('customer.file', $file->id))
+            ->assertNotFound();
+    }
+
+    public function test_a_file_cannot_be_opened_without_signing_in(): void
+    {
+        $customer = $this->party('customer', '9000000804');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009803']);
+
+        $this->get(route('customer.file', $file->id))
+            ->assertRedirect(route('customer.login'));
+    }
+
+    public function test_the_file_page_says_nothing_about_a_vendor(): void
+    {
+        $customer = $this->party('customer', '9000000805');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009804']);
+
+        $payload = json_encode($this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.file', $file->id))->assertOk()->json());
+
+        $this->assertStringNotContainsString('vendor', strtolower($payload));
+        $this->assertStringNotContainsString('Dabloo Ji', $payload);
+        $this->assertStringNotContainsString('5250', $payload);
+        $this->assertStringContainsString('9000', $payload, 'what they were charged is theirs');
+    }
+
+    public function test_each_work_carries_its_own_status_and_approval_date(): void
+    {
+        $customer = $this->party('customer', '9000000806');
+        $file = $this->fileWithVendor($customer, [
+            'vendor_mobile' => '9000009805',
+            'status' => 'partly_approved',
+        ]);
+
+        $done = new \App\Models\WorkFileItemModel;
+        $done->work_file_id = $file->id;
+        $done->work_type_id = $file->work_type_id;
+        $done->customer_amount = 3000;
+        $done->status = 'approval_done';
+        $done->approved_on = '2026-03-09';
+        $done->save();
+
+        $rows = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.file', $file->id))->assertOk()->json('props.rows');
+
+        $this->assertCount(2, $rows);
+
+        $approved = collect($rows)->firstWhere('approved_on', '09-03-2026');
+
+        $this->assertNotNull($approved, 'the approved work names the day it came through');
+        $this->assertSame('Approved', $approved['status']);
+
+        // And the one still in hand is not called approved.
+        $this->assertSame(
+            1,
+            collect($rows)->where('status', 'Approved')->count(),
+            'only the work that is through says so'
+        );
+    }
+
+    // ------------------------------------------------------- the approval image
+
+    public function test_a_customer_can_see_the_approval_on_their_own_work(): void
+    {
+        $customer = $this->party('customer', '9000000807');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009806', 'status' => 'approval_done']);
+
+        $item = \App\Models\WorkFileItemModel::where('work_file_id', $file->id)->first();
+        $this->withApproval($file, $item->id);
+
+        $response = $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.file.approval', ['id' => $file->id, 'item' => $item->id]))
+            ->assertOk();
+
+        $this->assertSame('image/png', $response->headers->get('content-type'));
+        // One customer's document behind a session. A shared cache holding it
+        // would hand it to the next person through the same proxy.
+        $this->assertStringContainsString('no-store', (string) $response->headers->get('cache-control'));
+    }
+
+    /**
+     * The reason this route exists at all.
+     *
+     * These images sit under public/ and are web-served with no authentication.
+     * Linking them directly would turn an unguessable filename into a URL that
+     * is forwarded, saved and shared for good; behind the route, the ownership
+     * is checked on every read.
+     */
+    public function test_another_customers_approval_is_not_served(): void
+    {
+        $mine = $this->party('customer', '9000000808');
+        $theirs = $this->party('customer', '9000000809');
+
+        $file = $this->fileWithVendor($theirs, ['vendor_mobile' => '9000009807', 'status' => 'approval_done']);
+        $item = \App\Models\WorkFileItemModel::where('work_file_id', $file->id)->first();
+        $this->withApproval($file, $item->id);
+
+        $this->withSession(['customer_id' => $mine->id])
+            ->get(route('customer.file.approval', ['id' => $file->id, 'item' => $item->id]))
+            ->assertNotFound();
+
+        /*
+         * And to nobody at all without a session. Flushed first: the test
+         * client keeps the session between requests within one test, so
+         * without this the "signed out" request is still signed in as $mine and
+         * the 404 above would be all this proved.
+         */
+        $this->flushSession();
+
+        $this->get(route('customer.file.approval', ['id' => $file->id, 'item' => $item->id]))
+            ->assertRedirect(route('customer.login'));
+    }
+
+    /**
+     * An item id from a file that is not this one must not resolve, or the file
+     * check is decoration and the item id is the real address.
+     */
+    public function test_an_item_from_another_file_is_not_served(): void
+    {
+        $mine = $this->party('customer', '9000000810');
+        $theirs = $this->party('customer', '9000000811');
+
+        $ours = $this->fileWithVendor($mine, ['vendor_mobile' => '9000009808']);
+
+        $other = $this->fileWithVendor($theirs, ['vendor_mobile' => '9000009809', 'status' => 'approval_done']);
+        $otherItem = \App\Models\WorkFileItemModel::where('work_file_id', $other->id)->first();
+        $this->withApproval($other, $otherItem->id);
+
+        // Our file, their item.
+        $this->withSession(['customer_id' => $mine->id])
+            ->get(route('customer.file.approval', ['id' => $ours->id, 'item' => $otherItem->id]))
+            ->assertNotFound();
+    }
+
+    /**
+     * The link has to be the route, not the file.
+     *
+     * Everything else here guards the route; this guards that the route is what
+     * the customer is actually given. A link straight to /uploads/approvals/…
+     * would be served by the web server with no session, no ownership check and
+     * no expiry, and would keep working for whoever it was forwarded to.
+     */
+    public function test_the_approval_is_linked_through_the_application(): void
+    {
+        $customer = $this->party('customer', '9000000814');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009812', 'status' => 'approval_done']);
+
+        $item = \App\Models\WorkFileItemModel::where('work_file_id', $file->id)->first();
+        $stored = $this->withApproval($file, $item->id);
+
+        $body = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.file', $file->id))->assertOk();
+
+        $this->assertSame(
+            route('customer.file.approval', ['id' => $file->id, 'item' => $item->id]),
+            $body->json('props.rows.0.screenshot_url'),
+            'the approval is offered through the route'
+        );
+
+        /*
+         * The stored path itself never appears, in any form. Encoded with
+         * unescaped slashes because json_encode writes "\/" by default, and a
+         * needle containing "/" would then miss a payload that does carry it.
+         */
+        $payload = json_encode($body->json(), JSON_UNESCAPED_SLASHES);
+
+        $this->assertStringNotContainsString($stored, $payload);
+        $this->assertStringNotContainsString(WorkFileModel::UPLOAD_DIR, $payload);
+    }
+
+    public function test_a_work_with_no_approval_offers_no_link(): void
+    {
+        $customer = $this->party('customer', '9000000812');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009810']);
+
+        $rows = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.file', $file->id))->assertOk()->json('props.rows');
+
+        $this->assertNull($rows[0]['screenshot_url']);
+        $this->assertNull($rows[0]['screenshot']);
+
+        // And asking for it anyway gets nothing.
+        $item = \App\Models\WorkFileItemModel::where('work_file_id', $file->id)->first();
+
+        $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.file.approval', ['id' => $file->id, 'item' => $item->id]))
+            ->assertNotFound();
+    }
+
+    /**
+     * A path that is not one of ours is never read from disk.
+     *
+     * These values come from our own rows today, so this is not guarding a
+     * hostile input — it guards the day something else writes that column.
+     */
+    public function test_a_path_outside_the_upload_directory_is_refused(): void
+    {
+        $this->assertFalse(WorkFileModel::isStoredUpload('../../.env'));
+        $this->assertFalse(WorkFileModel::isStoredUpload('.env'));
+
+        /*
+         * The one that actually escapes.
+         *
+         * Three levels up from public/uploads/approvals is the project root,
+         * where .env really is — so this path passes the prefix check and
+         * is_file() finds a file. Two levels only reaches public/, where
+         * nothing is, which is why the shallower version proved nothing and
+         * let the "no .." rule look redundant when it was planted broken.
+         */
+        $escape = 'uploads/approvals/../../../.env';
+
+        $this->assertTrue(
+            is_file(public_path($escape)),
+            'this test is only meaningful while that path resolves to a real file'
+        );
+        $this->assertFalse(WorkFileModel::isStoredUpload($escape));
+        $this->assertFalse(WorkFileModel::isStoredUpload(null));
+        $this->assertFalse(WorkFileModel::isStoredUpload(''));
+        // And one that does not exist, however well-named.
+        $this->assertFalse(WorkFileModel::isStoredUpload('uploads/approvals/not-here.png'));
+    }
+
+    public function test_the_files_list_leads_to_the_file(): void
+    {
+        $customer = $this->party('customer', '9000000813');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009811']);
+
+        $row = collect($this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
+            ->firstWhere('file_no', $file->file_no);
+
+        $this->assertSame(route('customer.file', $file->id), $row['view_url']);
     }
 
     /**
