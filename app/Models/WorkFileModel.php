@@ -1454,6 +1454,14 @@ class WorkFileModel extends Model
                 'work_file.received_date',
                 'work_file.registration_no',
                 'work_file.description',
+                /*
+                 * The office's own note on the folder, shown to the customer at
+                 * their request. It is free text somebody types, so it is only
+                 * as safe as what gets typed — which is why the status log's
+                 * remark is deliberately not here beside it: that one is
+                 * generated, and it generates "Given to <vendor>".
+                 */
+                'work_file.remarks',
                 'work_file.status',
                 'work_file.customer_amount',
                 'work_file.returned_amount',

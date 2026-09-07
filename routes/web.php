@@ -10,8 +10,16 @@ use App\Http\Controllers\WorkFileController;
 use App\Http\Controllers\WorkTypeController;
 use Illuminate\Support\Facades\Route;
 
+/*
+ * The front door is the customer portal.
+ *
+ * It was the client portal at /user, which still works and is still where the
+ * client logins go — only what a bare acinfo.in lands on has changed. Customers
+ * are the larger audience and the ones being sent here, so they get the address
+ * that is easy to say over a phone.
+ */
 Route::get('/', function () {
-    return redirect('/user');
+    return redirect('/customer');
 });
 
 Route::get('/admin', [AuthController::class, 'login']);

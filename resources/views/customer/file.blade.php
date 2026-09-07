@@ -25,6 +25,49 @@
             font-weight: 600;
             color: #2f3d4a;
         }
+
+        .file-remark {
+            background: #fbfcfe;
+            border: 1px solid #e5e9f2;
+            border-left: 3px solid #4154f1;
+            border-radius: 4px;
+            padding: 0.6rem 0.85rem;
+        }
+
+        .file-remark .label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: #6c757d;
+            display: block;
+            margin-bottom: 0.15rem;
+        }
+
+        /* Ctrl+P on this page should produce something worth keeping beside the
+           papers: the file, its works and the approval dates. The navigation,
+           the grid's controls and the buttons are screen furniture. */
+        @media print {
+            #header,
+            #sidebar,
+            #footer,
+            .breadcrumb,
+            .back-to-top,
+            .btn,
+            .grid__bar,
+            .grid__pages {
+                display: none !important;
+            }
+
+            #main {
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+
+            .card {
+                border: 0 !important;
+                box-shadow: none !important;
+            }
+        }
     </style>
 @endsection
 
@@ -79,6 +122,13 @@
                                 </div>
                             @endif
                         </div>
+
+                        @if ($remarks)
+                            <div class="file-remark mb-3">
+                                <span class="label">Remarks</span>
+                                {{ $remarks }}
+                            </div>
+                        @endif
 
                         @if ($fileScreenshot)
                             {{-- A file received before works were priced one by one

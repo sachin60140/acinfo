@@ -274,6 +274,7 @@ class CustomerPortalController extends Controller
                 'received_raw' => $file->received_date,
                 'work_type' => $names ? implode(', ', $names) : ($file->work_type ?? '—'),
                 'description' => $file->description,
+                'remarks' => $file->remarks ?: null,
 
                 'status' => WorkFileModel::customerStatus($file->status),
                 /*
@@ -310,12 +311,22 @@ class CustomerPortalController extends Controller
                 ['key' => 'registration_no', 'label' => 'Vehicle', 'sub' => 'description'],
                 ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_raw'],
                 ['key' => 'work_type', 'label' => 'Work'],
-                ['key' => 'status', 'label' => 'Status', 'type' => 'badge', 'sub' => 'works_note'],
+                [
+                    'key' => 'status',
+                    'label' => 'Status',
+                    'type' => 'badge',
+                    // The office's note sits above the works line, because it
+                    // is the thing somebody chose to write and the other is
+                    // derived. Both are quiet, and both are often absent.
+                    'note' => 'remarks',
+                    'sub' => 'works_note',
+                ],
                 ['key' => 'approved_on', 'label' => 'Approved On'],
                 ['key' => 'charged', 'label' => 'Amount', 'type' => 'money'],
 
                 // Carried for searching and for the export only.
                 ['key' => 'description', 'label' => 'Description', 'hidden' => true],
+                ['key' => 'remarks', 'label' => 'Remarks', 'hidden' => true],
             ],
             'rows' => $rows,
             'totals' => ['charged' => 'sum'],
@@ -417,6 +428,13 @@ class CustomerPortalController extends Controller
             'fileNo' => $file->file_no,
             'registrationNo' => $file->registration_no,
             'description' => $file->description,
+            /*
+             * Shown at the office's own request. Note that this is the folder's
+             * typed remark and not the status log's: that one is written by the
+             * application when work moves, and what it writes is "Given to
+             * <vendor name>".
+             */
+            'remarks' => $file->remarks ?: null,
             'received' => date('d-m-Y', strtotime($file->received_date)),
             'status' => WorkFileModel::customerStatus($file->status),
             'statusTone' => WorkFileModel::customerTone($file->status),

@@ -1064,6 +1064,104 @@ class CustomerPortalTest extends TestCase
         $this->assertSame(route('customer.file', $file->id), $row['view_url']);
     }
 
+    // ------------------------------------------------------------- remarks
+
+    public function test_the_office_remark_is_shown_on_the_file(): void
+    {
+        $customer = $this->party('customer', '9000000901');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009901']);
+
+        $file->remarks = 'Original RC to be collected from you';
+        $file->save();
+
+        $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.file', $file->id))
+            ->assertOk()
+            ->assertSee('Original RC to be collected from you');
+    }
+
+    public function test_the_office_remark_is_shown_in_the_list(): void
+    {
+        $customer = $this->party('customer', '9000000902');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009902', 'registration_no' => 'BR06REMK1']);
+
+        $file->remarks = 'Awaiting your signature';
+        $file->save();
+
+        $row = collect($this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
+            ->firstWhere('registration_no', 'BR06REMK1');
+
+        $this->assertSame('Awaiting your signature', $row['remarks']);
+    }
+
+    public function test_a_file_with_no_remark_carries_none(): void
+    {
+        $customer = $this->party('customer', '9000000903');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009903', 'registration_no' => 'BR06NOREM']);
+
+        $row = collect($this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
+            ->firstWhere('registration_no', 'BR06NOREM');
+
+        // Null rather than an empty string, so the grid draws no quiet line at
+        // all instead of an empty one.
+        $this->assertNull($row['remarks']);
+    }
+
+    /**
+     * The remark the customer must never see.
+     *
+     * work_file_status_log carries a remark too, and the application writes it
+     * itself when work moves: the words it writes are "Given to " followed by
+     * the vendor's name. Showing the folder's typed remark and that one look
+     * like the same feature and are not — this pins which one was chosen.
+     */
+    public function test_the_status_logs_own_remark_is_not_shown(): void
+    {
+        $customer = $this->party('customer', '9000000904');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009904']);
+
+        $file->remarks = 'Safe to show';
+        $file->save();
+
+        \Illuminate\Support\Facades\DB::table('work_file_status_log')->insert([
+            'work_file_id' => $file->id,
+            'from_status' => 'in_office',
+            'to_status' => 'file_dispatch',
+            'remark' => 'Given to Dabloo Ji Muzaffarpur',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        foreach (['customer.files', 'customer.file'] as $route) {
+            $body = $this->withSession(['customer_id' => $customer->id])
+                ->get($route === 'customer.file' ? route($route, $file->id) : route($route))
+                ->assertOk()
+                ->getContent();
+
+            $this->assertStringContainsString('Safe to show', $body, "$route drops the office remark");
+            $this->assertStringNotContainsString('Given to', $body, "$route leaks the status log");
+            $this->assertStringNotContainsString('Dabloo Ji', $body, "$route names the vendor");
+        }
+    }
+
+    // --------------------------------------------------------- the front door
+
+    public function test_the_site_root_leads_to_the_customer_portal(): void
+    {
+        $this->get('/')->assertRedirect('/customer');
+    }
+
+    /**
+     * The client portal did not move, it only stopped being what a bare domain
+     * lands on. Five clients have a login there and it has to keep working.
+     */
+    public function test_the_client_portal_is_still_where_it_was(): void
+    {
+        $this->get('/user')->assertOk();
+    }
+
     /**
      * The seam between Blade and Vue, for the two portal screens.
      *
