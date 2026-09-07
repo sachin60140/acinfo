@@ -1146,6 +1146,171 @@ class CustomerPortalTest extends TestCase
         }
     }
 
+    // ------------------------------------------------------------ the history
+
+    private function log(int $fileId, ?string $from, string $to, ?string $remark, ?int $itemId = null): void
+    {
+        \Illuminate\Support\Facades\DB::table('work_file_status_log')->insert([
+            'work_file_id' => $fileId,
+            'work_file_item_id' => $itemId,
+            'from_status' => $from,
+            'to_status' => $to,
+            'remark' => $remark,
+            'user_id' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    public function test_the_file_shows_everything_that_has_happened_to_it(): void
+    {
+        $customer = $this->party('customer', '9000001001');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009001']);
+
+        $this->log($file->id, null, 'in_office', 'Received from customer');
+        $this->log($file->id, 'in_office', 'file_dispatch', null);
+        $this->log($file->id, 'file_dispatch', 'under_verification', 'Sent for verification');
+
+        $timeline = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.file', $file->id))->assertOk()->json('page.timeline');
+
+        $this->assertCount(3, $timeline, 'every entry is shown, not a filtered few');
+
+        // Oldest first, so it reads as the story of the file.
+        $this->assertSame('In our office', $timeline[0]['to']);
+        $this->assertSame('Submitted at the RTO', $timeline[1]['to']);
+        $this->assertSame('Under verification', $timeline[2]['to']);
+
+        $this->assertSame('Sent for verification', $timeline[2]['remark']);
+        $this->assertNull($timeline[1]['remark'], 'an entry with no remark carries none');
+    }
+
+    public function test_the_history_says_which_work_an_entry_was_about(): void
+    {
+        $customer = $this->party('customer', '9000001002');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009002']);
+
+        $item = \App\Models\WorkFileItemModel::where('work_file_id', $file->id)->first();
+
+        $this->log($file->id, 'file_dispatch', 'approval_done', 'Online Done', $item->id);
+
+        $entry = collect($this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.file', $file->id))->assertOk()->json('page.timeline'))
+            ->firstWhere('remark', 'Online Done');
+
+        $this->assertNotNull($entry);
+        $this->assertSame('HPA', $entry['work_type'], 'a folder of several says which work moved');
+    }
+
+    public function test_the_history_never_names_the_vendor(): void
+    {
+        $customer = $this->party('customer', '9000001003');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009003']);
+
+        // Exactly what the assign and vendor-return screens write.
+        $this->log($file->id, 'in_office', 'file_dispatch', 'Sent by hand — Given to Dabloo Ji Muzaffarpur');
+        $this->log($file->id, 'file_dispatch', 'in_office', 'Papers returned by Dabloo Ji Muzaffarpur');
+
+        $body = $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.file', $file->id))->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('Dabloo Ji', $body);
+        $this->assertStringNotContainsString('Given to', $body);
+        $this->assertStringNotContainsString('Papers returned by', $body);
+
+        // What the office actually typed survives the trimming.
+        $this->assertStringContainsString('Sent by hand', $body);
+    }
+
+    /**
+     * The wording is matched, so the wording has to be the real one.
+     *
+     * This drives an actual assignment through the office controller rather
+     * than writing what I believe that screen stores. If somebody changes how
+     * the remark is composed, the pattern that trims it stops matching and this
+     * fails — which a test carrying its own copy of the string never would.
+     */
+    public function test_a_real_assignment_leaves_no_vendor_in_the_history(): void
+    {
+        $customer = $this->party('customer', '9000001004');
+
+        /*
+         * A file nobody has been given yet: assign() takes only files with a
+         * null vendor_id, so the fixture that arrives holding one is refused
+         * and writes no log entry at all.
+         */
+        $file = $this->fileFor($customer);
+        $file->registration_no = 'BR06REAL1';
+        $file->save();
+
+        $vendor = $this->party('vendor', '9000009004', ['password' => null]);
+        $vendor->name = 'Dabloo Ji Muzaffarpur';
+        $vendor->save();
+
+        \Illuminate\Support\Facades\Auth::loginUsingId($this->admin()->id);
+
+        app(\App\Http\Controllers\WorkFileController::class)->assign(
+            \Illuminate\Http\Request::create('/admin/file/assign', 'POST', [
+                'vendor_id' => $vendor->id,
+                'vendor_date' => '2026-04-02',
+                'files' => [$file->id],
+                'amounts' => [$file->id => '3500'],
+                'remark' => 'Sent by hand',
+            ])
+        );
+
+        $written = \Illuminate\Support\Facades\DB::table('work_file_status_log')
+            ->where('work_file_id', $file->id)
+            ->orderByDesc('id')
+            ->value('remark');
+
+        // The office really did store the vendor's name in that field.
+        $this->assertStringContainsString($vendor->name, (string) $written);
+
+        $timeline = WorkFileModel::customerTimeline($file->id);
+        $shown = implode(' | ', array_map(fn ($e) => (string) $e['remark'], $timeline));
+
+        $this->assertStringNotContainsString($vendor->name, $shown, 'and the portal takes it out');
+        $this->assertStringContainsString('Sent by hand', $shown, 'while keeping what was typed');
+    }
+
+    public function test_a_remark_that_is_only_the_generated_clause_becomes_nothing(): void
+    {
+        // Nothing was typed, so there is nothing left once the clause goes —
+        // and an empty line under a status reads as a missing remark.
+        $this->assertNull(WorkFileModel::customerRemark('Given to Dabloo Ji Muzaffarpur'));
+        $this->assertNull(WorkFileModel::customerRemark('Papers returned by Someone Else'));
+        $this->assertNull(WorkFileModel::customerRemark('   '));
+        $this->assertNull(WorkFileModel::customerRemark(null));
+
+        // And an ordinary remark is untouched.
+        $this->assertSame('Online Done', WorkFileModel::customerRemark('Online Done'));
+    }
+
+    public function test_the_history_is_the_signed_in_customers_only(): void
+    {
+        $mine = $this->party('customer', '9000001005');
+        $theirs = $this->party('customer', '9000001006');
+
+        $file = $this->fileWithVendor($theirs, ['vendor_mobile' => '9000009005']);
+        $this->log($file->id, 'in_office', 'under_verification', 'Their private note');
+
+        $this->withSession(['customer_id' => $mine->id])
+            ->get(route('customer.file', $file->id))
+            ->assertNotFound();
+    }
+
+    public function test_a_file_with_no_history_shows_no_history_section(): void
+    {
+        $customer = $this->party('customer', '9000001007');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009006']);
+
+        $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.file', $file->id))
+            ->assertOk()
+            ->assertDontSee('History');
+    }
+
     // --------------------------------------------------------- the front door
 
     public function test_the_site_root_leads_to_the_customer_portal(): void

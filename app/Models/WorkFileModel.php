@@ -1474,6 +1474,93 @@ class WorkFileModel extends Model
     }
 
     /**
+     * What is left of a remark once the office's own additions are removed.
+     *
+     * The remark column holds two things at once. The status board stores
+     * exactly what somebody typed; the assign and vendor-return screens take
+     * what somebody typed and append a clause of their own — "Given to <vendor>"
+     * and "Papers returned by <vendor>" — into the same field. So a remark
+     * cannot be shown to a customer as it stands, and cannot be trusted on the
+     * strength of where it came from either.
+     *
+     * The generated clause runs to the end of the string, so removing it from
+     * the first of those two words onwards takes the vendor's name with it and
+     * keeps whatever the office actually wrote. The em dash the screens join
+     * with goes too, along with the hyphen some keyboards produce instead.
+     *
+     * Matched against our own wording, which is why WorkFileTest drives a real
+     * assignment through the controller rather than trusting this pattern to
+     * still describe what that screen writes.
+     */
+    public static function customerRemark(?string $remark): ?string
+    {
+        if (! is_string($remark) || trim($remark) === '') {
+            return null;
+        }
+
+        $clean = preg_replace(
+            '/\s*[-–—]?\s*(Given to|Papers returned by)\b.*$/us',
+            '',
+            $remark
+        );
+
+        $clean = trim((string) $clean, " \t\n\r\0\x0B-–—");
+
+        return $clean === '' ? null : $clean;
+    }
+
+    /**
+     * Everything that has happened to a file, as its customer may read it.
+     *
+     * Every movement is included — the question is "where has my file been",
+     * and an entry left out to be safe is the entry somebody rings about. What
+     * is filtered is not the entry but the wording: the status is said in the
+     * customer's vocabulary and the remark goes through customerRemark above.
+     */
+    public static function customerTimeline(int $fileId): array
+    {
+        $rows = DB::table('work_file_status_log')
+            ->leftJoin('work_file_item', 'work_file_item.id', '=', 'work_file_status_log.work_file_item_id')
+            ->leftJoin('work_type', 'work_type.id', '=', 'work_file_item.work_type_id')
+            ->where('work_file_status_log.work_file_id', $fileId)
+            ->orderBy('work_file_status_log.created_at')
+            ->orderBy('work_file_status_log.id')
+            ->select(
+                'work_file_status_log.id',
+                'work_file_status_log.from_status',
+                'work_file_status_log.to_status',
+                'work_file_status_log.remark',
+                'work_file_status_log.created_at',
+                // Which work it was about, on a folder holding several. The
+                // user who made the change is not selected: who in the office
+                // touched a file is the office's business.
+                'work_type.name as work_type'
+            )
+            ->get();
+
+        $out = [];
+
+        foreach ($rows as $row) {
+            $out[] = [
+                'id' => (int) $row->id,
+                'date' => date('d-m-Y', strtotime($row->created_at)),
+                'time' => date('h:i A', strtotime($row->created_at)),
+                'from' => $row->from_status ? self::customerStatus($row->from_status) : null,
+                'to' => self::customerStatus($row->to_status),
+                'tone' => self::customerTone($row->to_status),
+                // Null when the entry is a note that did not move anything, so
+                // the line can read as a note rather than as a move to where it
+                // already was.
+                'moved' => $row->from_status !== null && $row->from_status !== $row->to_status,
+                'work_type' => $row->work_type,
+                'remark' => self::customerRemark($row->remark),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
      * The works on one file, and only what their customer may see.
      *
      * Written out for the same reason as forCustomer above: work_file_item

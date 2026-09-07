@@ -442,6 +442,8 @@ class CustomerPortalController extends Controller
             'returnedOn' => $file->returned_on ? date('d-m-Y', strtotime($file->returned_on)) : null,
             'fileScreenshot' => $fileScreenshot,
             'workCount' => count($rows),
+            // Everything that has happened to this file, oldest first.
+            'timeline' => WorkFileModel::customerTimeline($file->id),
             'filesUrl' => route('customer.files'),
         ])->toResponse($req);
     }
