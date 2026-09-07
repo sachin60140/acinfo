@@ -216,9 +216,12 @@ function onKey(event) {
                     {{ reveal ? 'Hide' : 'Show' }}
                 </button>
             </div>
+            <!-- One type, and it is the bound one. Carrying a static
+                 type="password" as well left the box hidden whatever Show
+                 said: the two are the same attribute, the fixed one won, and
+                 the toggle changed nothing but its own label. -->
             <input
                 id="password"
-                type="password"
                 name="password"
                 class="ui-input"
                 :class="{ 'ui-input--invalid': errors.password || tooLong }"
@@ -245,7 +248,6 @@ function onKey(event) {
             <input
                 id="password_confirmation"
                 ref="confirmBox"
-                type="password"
                 name="password_confirmation"
                 class="ui-input"
                 :class="{ 'ui-input--invalid': agreement.tone === 'error' }"
