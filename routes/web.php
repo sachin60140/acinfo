@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\WorkFileApiController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\CustomerPortalController;
 use App\Http\Controllers\PartyController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\UserController;
@@ -53,6 +54,10 @@ Route::group(['middleware' => 'admin'], function () {
     Route::match(['get', 'post'], 'admin/party/edit/{id}', [PartyController::class, 'edit'])->name('party.edit');
 
     Route::get('admin/party/statement/{id}', [PartyController::class, 'statement'])->name('party.statement');
+
+    // Issuing a customer their portal login. Customers only; the controller
+    // refuses a vendor id outright.
+    Route::match(['get', 'post'], 'admin/party/password/{id}', [PartyController::class, 'password'])->name('party.password');
 });
 
 /*
@@ -111,4 +116,23 @@ Route::post('user/logout', [UserController::class, 'logout'])->name('userlogout'
 Route::group(['middleware' => 'userAuth'], function () {
     Route::get('user/dashboard', [UserController::class, 'userdashboard'])->name('userdashboard');
     Route::get('user/client/statement', [UserController::class, 'userstatement'])->name('userstatement');
+});
+
+/*
+ * The customer portal.
+ *
+ * A separate area from /user on purpose. That one signs in against the client
+ * table and keeps its id in session('userid'); this one signs in against party
+ * and keeps its id in session('customer_id'). The two must not share a key —
+ * client #5 and customer #5 are different people with different ledgers, and a
+ * page that resolves the wrong one shows somebody else's money.
+ */
+Route::get('/customer', [CustomerPortalController::class, 'login'])->name('customer.login');
+Route::post('customer-login', [CustomerPortalController::class, 'authenticate'])
+    ->middleware('throttle:10,1')
+    ->name('customer.authenticate');
+Route::post('customer/logout', [CustomerPortalController::class, 'logout'])->name('customer.logout');
+
+Route::group(['middleware' => 'customerAuth'], function () {
+    Route::get('customer/dashboard', [CustomerPortalController::class, 'dashboard'])->name('customer.dashboard');
 });

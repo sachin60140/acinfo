@@ -10,6 +10,15 @@ class PartyModel extends Model
 {
     public $table = 'party';
 
+    /**
+     * Kept out of anything this model is serialised into.
+     *
+     * Screens hand their data to the browser as JSON, and a model that ever
+     * reaches one of those payloads whole would carry the hash with it. Nothing
+     * does that today; this makes it not matter if something starts to.
+     */
+    protected $hidden = ['password'];
+
     use HasFactory;
 
     /**
@@ -45,9 +54,19 @@ class PartyModel extends Model
                 'party.address',
                 'party.is_active',
                 DB::raw(PartyLedgerModel::BALANCE_SQL.' as current_balance'),
-                DB::raw('COUNT(party_ledger.id) as entry_count')
+                DB::raw('COUNT(party_ledger.id) as entry_count'),
+                // Whether a portal login exists, as a flag rather than the hash
+                // itself — the list has no use for the hash and it should not
+                // travel to a screen just because it sits on the same row.
+                DB::raw("(party.password is not null and party.password <> '') as has_login")
             )
-            ->groupBy('party.id', 'party.name', 'party.mobile', 'party.whatsapp', 'party.address', 'party.is_active')
+            /*
+             * party.password is grouped rather than left to functional
+             * dependency on the primary key: MySQL 8 works that out, MariaDB is
+             * less willing, and production is MariaDB. Grouping by it changes
+             * nothing — party.id is already here and is unique.
+             */
+            ->groupBy('party.id', 'party.name', 'party.mobile', 'party.whatsapp', 'party.address', 'party.is_active', 'party.password')
             ->orderBy('party.name', 'asc')
             ->get();
     }
@@ -116,5 +135,36 @@ class PartyModel extends Model
             ->groupBy('party.id', 'party.name', 'party.mobile', 'party.is_active')
             ->orderBy('party.name', 'asc')
             ->get();
+    }
+
+    /**
+     * The one party a mobile number may sign in as, or null.
+     *
+     * Three conditions, all of them here rather than spread across the
+     * controller: it is a customer, it is still active, and it has been given a
+     * password. A vendor with a password set by accident, or a customer
+     * deactivated after they stopped trading, must not get in — and the place
+     * to be sure of that is the query, not a sequence of ifs that a later edit
+     * can reorder.
+     *
+     * The password itself is not checked here. That is the caller's job, and it
+     * has to happen against a hash even when no party matched, or how long the
+     * response takes says whether the number is one of ours.
+     */
+    public static function findForLogin(string $mobile): ?self
+    {
+        return self::query()
+            ->where('party_type', 'customer')
+            ->where('is_active', 1)
+            ->where('mobile', $mobile)
+            ->whereNotNull('password')
+            ->where('password', '!=', '')
+            ->first();
+    }
+
+    /** Whether a login has been issued for this party at all. */
+    public function hasLogin(): bool
+    {
+        return filled($this->password);
     }
 }

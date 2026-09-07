@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\AdminMiddleware;
+use App\Http\Middleware\CustomerAuthMiddleware;
 use App\Http\Middleware\UserAuthMiddleware;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -16,6 +17,11 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'admin' => AdminMiddleware::class,
             'userAuth' => UserAuthMiddleware::class,
+
+            // The customer portal. Its own gate on its own session key — see
+            // the note in CustomerAuthMiddleware for why it is not userAuth
+            // with a party id put into it.
+            'customerAuth' => CustomerAuthMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

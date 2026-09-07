@@ -8,6 +8,7 @@ use App\Support\Screen;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 
 /**
@@ -54,7 +55,10 @@ class PartyController extends Controller
             }
         }
 
-        $rows = $parties->map(function ($party) {
+        // Only customers can sign in, so only their list offers the action.
+        $hasPortal = $type === 'customer';
+
+        $rows = $parties->map(function ($party) use ($hasPortal) {
             // Blank means "no separate WhatsApp number", so the link falls back
             // to the mobile — which is the same number in most cases.
             $wa = $party->whatsapp ?: $party->mobile;
@@ -77,6 +81,15 @@ class PartyController extends Controller
                 // The second action the old cell carried; it reuses the URL the
                 // name already links to.
                 'statement_action' => 'Statement',
+
+                /*
+                 * The portal login. The word changes with the state so the
+                 * column answers "can this customer sign in?" at a glance,
+                 * which is the question the office actually has — an unchanging
+                 * "Password" on every row answers nothing.
+                 */
+                'login_action' => $hasPortal ? ($party->has_login ? 'Change' : 'Set') : null,
+                'login_url' => $hasPortal ? route('party.password', $party->id) : null,
             ];
         })->values();
 
@@ -136,6 +149,21 @@ class PartyController extends Controller
                     'exportable' => false,
                 ],
 
+                /*
+                 * The portal login, on the customer list only. Kept out of the
+                 * exports and the search text for the same reason as the two
+                 * actions above it: a column of the word "Set" is not data.
+                 */
+                ...($hasPortal ? [[
+                    'key' => 'login_action',
+                    'label' => 'Login',
+                    'type' => 'link',
+                    'linkTo' => 'login_url',
+                    'sortable' => false,
+                    'searchable' => false,
+                    'exportable' => false,
+                ]] : []),
+
                 // Carried for searching only: "inactive" finds the deactivated
                 // parties, whose marker is otherwise a quiet line under the name.
                 ['key' => 'inactive_note', 'label' => 'Status', 'hidden' => true],
@@ -152,6 +180,55 @@ class PartyController extends Controller
             'totalDr' => $totalDr,
             'totalCr' => $totalCr,
             'partyCount' => $rows->count(),
+        ])->toResponse($req);
+    }
+
+    /**
+     * Give a customer a login, or replace the one they have.
+     *
+     * The office issues these; there is no self-registration and no reset link,
+     * because you know all five of your customers by name and a reset link is a
+     * second way in to build and defend.
+     *
+     * Customers only. A vendor with a password could not sign in anyway —
+     * PartyModel::findForLogin refuses them — but a screen offering to set one
+     * says otherwise, and a guard that only exists in the query is a guard one
+     * refactor from being the only thing anybody remembers.
+     */
+    public function password(Request $req, $id)
+    {
+        $party = PartyModel::findOrFail($id);
+
+        abort_if($party->party_type !== 'customer', 404);
+
+        if ($req->isMethod('POST')) {
+            $req->validate([
+                'password' => 'required|min:8|max:255|confirmed',
+            ]);
+
+            $party->password = Hash::make($req->password);
+            $party->save();
+
+            return redirect()->route('party.index', 'customer')
+                ->with('success', 'Login password set for "'.$party->name.'".');
+        }
+
+        $props = [
+            'action' => route('party.password', $party->id),
+            'csrf' => csrf_token(),
+            'cancelUrl' => route('party.index', 'customer'),
+            // The component was written for clients and names its props that
+            // way. Reused rather than copied: the screen is the same screen.
+            'clientName' => $party->name,
+            'clientMobile' => (string) $party->mobile,
+            // Whether this replaces a working login or creates the first one.
+            // The hash itself never leaves the server.
+            'hasPassword' => $party->hasLogin(),
+            'errors' => (object) array_map(fn ($messages) => $messages[0], session('errors') ? session('errors')->messages() : []),
+        ];
+
+        return Screen::make('admin.party.password', 'vue-client-password', $props, [
+            'partyName' => $party->name,
         ])->toResponse($req);
     }
 
