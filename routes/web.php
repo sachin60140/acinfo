@@ -37,6 +37,12 @@ Route::group(['middleware' => 'admin'], function () {
 
     Route::match(['get', 'post'], 'admin/client/password/{id}', [AuthController::class, 'clientpassword'])->name('clientpassword');
 
+    // The signed-in admin changing their own. No {id}: this is never about
+    // somebody else's account, and one taken from the URL would be.
+    Route::match(['get', 'post'], 'admin/password', [AuthController::class, 'password'])
+        ->middleware('throttle:10,1')
+        ->name('adminpassword');
+
     Route::match(['get', 'post'], 'admin/receipt', [AuthController::class, 'paymentreceipt'])->name('receipt');
 
     Route::match(['get', 'post'], 'admin/payment', [AuthController::class, 'payment'])->name('payment');
@@ -149,6 +155,12 @@ Route::group(['middleware' => 'customerAuth'], function () {
     Route::get('customer/statement', [CustomerPortalController::class, 'statement'])->name('customer.statement');
 
     Route::get('customer/files', [CustomerPortalController::class, 'files'])->name('customer.files');
+
+    // Their own, and only their own. Throttled because the current-password
+    // check on it is a password check like any other.
+    Route::match(['get', 'post'], 'customer/password', [CustomerPortalController::class, 'password'])
+        ->middleware('throttle:10,1')
+        ->name('customer.password');
 
     /*
      * One file, and its approval image. Both take an id, and both resolve it

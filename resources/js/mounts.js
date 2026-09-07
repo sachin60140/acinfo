@@ -54,6 +54,13 @@ export const components = {
     // Clients: the record, the login it can be given, and money received.
     'vue-client-form': ClientForm,
     'vue-client-password': ClientPassword,
+
+    /*
+     * The same form, asking for the current password first, wherever somebody
+     * is changing their own rather than setting another party's.
+     */
+    'vue-admin-password': ClientPassword,
+    'vue-customer-password': ClientPassword,
     'vue-payment-form': PaymentForm,
     'vue-payment-receipt': PaymentReceipt,
 

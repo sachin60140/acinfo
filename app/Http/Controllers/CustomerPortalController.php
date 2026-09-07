@@ -521,6 +521,68 @@ class CustomerPortalController extends Controller
     }
 
     /**
+     * A customer changing their own password.
+     *
+     * The current one is asked for even though the session already proves who
+     * this is. A session is not a person: an unattended signed-in phone is how
+     * an account is taken over without anybody ever guessing a password, and
+     * the current password is the one thing the person holding the phone does
+     * not have.
+     */
+    public function password(Request $req)
+    {
+        $customer = $this->customer();
+
+        if ($req->isMethod('POST')) {
+            $req->validate([
+                'current_password' => 'required|string',
+                'password' => 'required|min:8|max:255|confirmed|different:current_password',
+            ], [
+                'password.different' => 'The new password must be different from the current one.',
+            ]);
+
+            if (! Hash::check((string) $req->post('current_password'), (string) $customer->password)) {
+                return back()->withErrors([
+                    'current_password' => 'That is not your current password.',
+                ]);
+            }
+
+            $customer->timestamps = false;
+            $customer->password = Hash::make($req->post('password'));
+            $customer->save();
+
+            /*
+             * A new session id for the person who just proved themselves. Any
+             * session someone else had on this account keeps its own id, so
+             * this does not turn them out — which is why the message below does
+             * not claim it did.
+             */
+            $req->session()->regenerate();
+
+            return redirect()->route('customer.dashboard')
+                ->with('success', 'Your password has been changed. Use it the next time you sign in.');
+        }
+
+        $props = [
+            'action' => route('customer.password'),
+            'csrf' => csrf_token(),
+            'cancelUrl' => route('customer.dashboard'),
+            // The component's props are named for the screen it was written
+            // for. Reused rather than copied: it is the same form.
+            'clientName' => $customer->name,
+            'clientMobile' => (string) $customer->mobile,
+            'hasPassword' => true,
+            'requireCurrent' => true,
+            'intro' => 'You will use the new password the next time you sign in. Nobody at our office can see it.',
+            'errors' => (object) array_map(fn ($messages) => $messages[0], session('errors') ? session('errors')->messages() : []),
+        ];
+
+        return Screen::make('customer.password', 'vue-customer-password', $props, [
+            'customerName' => $customer->name,
+        ])->toResponse($req);
+    }
+
+    /**
      * The customer's own account statement.
      *
      * The same query the office statement runs, for the party in the session and

@@ -24,6 +24,21 @@ const props = defineProps({
     clientMobile: { type: String, default: '' },
     hasPassword: { type: Boolean, default: false },
     errors: { type: Object, default: () => ({}) },
+
+    /*
+     * Somebody changing their own password rather than the office setting
+     * another party's. Two things differ, and both are opt-in so the screens
+     * that were here first render exactly as they did.
+     *
+     * The current password is asked for because the person at the keyboard is
+     * not necessarily the account holder — an unattended signed-in screen is
+     * how an account is taken without anybody's password ever being guessed.
+     */
+    requireCurrent: { type: Boolean, default: false },
+
+    // Replaces the note above the boxes, which otherwise talks about a client
+    // in the third person to the very person it is about.
+    intro: { type: String, default: '' },
 });
 
 /*
@@ -35,9 +50,22 @@ const MIN = 8;
 const MAX = 255;
 
 const form = reactive({
+    current_password: '',
     password: '',
     password_confirmation: '',
 });
+
+/*
+ * A new password that is the old one is a form somebody filled in and a
+ * password that did not change. The server checks this too; here it is caught
+ * while both boxes still have something in them to correct.
+ */
+const unchanged = computed(
+    () => props.requireCurrent
+        && form.current_password !== ''
+        && form.password !== ''
+        && form.current_password === form.password
+);
 
 const reveal = ref(false);
 
@@ -139,13 +167,39 @@ function onKey(event) {
         <!-- What saving actually does, said before the boxes rather than after:
              one of these two is a client locked out of a working login. -->
         <div class="ui-note" :class="hasPassword ? 'ui-note--warn' : 'ui-note--info'">
-            <template v-if="hasPassword">
+            <template v-if="intro">{{ intro }}</template>
+            <template v-else-if="hasPassword">
                 This replaces the password the client is signing in with now.
             </template>
             <template v-else>
                 The client signs in with the mobile number above and this password, and cannot
                 sign in until one is set.
             </template>
+        </div>
+
+        <!-- Asked first, because it is the question that decides whether the
+             rest of the form is allowed to do anything. -->
+        <div v-if="requireCurrent" class="ui-field">
+            <label class="ui-label" for="current_password">
+                Current Password <span class="ui-label__req">*</span>
+            </label>
+            <input
+                id="current_password"
+                type="password"
+                name="current_password"
+                class="ui-input"
+                :class="{ 'ui-input--invalid': errors.current_password }"
+                v-model="form.current_password"
+                required
+                autocomplete="current-password"
+                autocapitalize="off"
+                spellcheck="false"
+                @keydown="onKey"
+                @keyup="onKey"
+                @blur="capsLock = false">
+            <div v-if="errors.current_password" class="ui-hint ui-hint--error">
+                {{ errors.current_password }}
+            </div>
         </div>
 
         <div class="ui-field">
@@ -214,6 +268,10 @@ function onKey(event) {
             <div v-if="errors.password_confirmation" class="ui-hint ui-hint--error">
                 {{ errors.password_confirmation }}
             </div>
+        </div>
+
+        <div v-if="unchanged" class="ui-note ui-note--warn">
+            That is the password you are already using. Choose a different one.
         </div>
 
         <div v-if="capsLock" class="ui-note ui-note--warn cp-caps">

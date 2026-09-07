@@ -40,7 +40,13 @@
               <hr class="dropdown-divider">
             </li>
 
-            
+            <li>
+              <a class="dropdown-item d-flex align-items-center" href="{{ route('adminpassword') }}">
+                <i class="bi bi-key"></i>
+                <span>Change Password</span>
+              </a>
+            </li>
+
             <li>
               <hr class="dropdown-divider">
             </li>

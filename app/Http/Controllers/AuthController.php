@@ -335,6 +335,68 @@ class AuthController extends Controller
             ->get();
     }
 
+    /**
+     * An admin changing their own password.
+     *
+     * The current one is required even though the session already says who this
+     * is. A session proves the browser, not the person: an office machine left
+     * signed in is the likeliest way this account changes hands, and the
+     * current password is the one thing whoever sat down does not have.
+     */
+    public function password(Request $req)
+    {
+        $user = Auth::user();
+
+        if ($req->isMethod('POST')) {
+            $req->validate([
+                'current_password' => 'required|string',
+                'password' => 'required|min:8|max:255|confirmed|different:current_password',
+            ], [
+                'password.different' => 'The new password must be different from the current one.',
+            ]);
+
+            if (! Hash::check((string) $req->post('current_password'), (string) $user->password)) {
+                return back()->withErrors([
+                    'current_password' => 'That is not your current password.',
+                ]);
+            }
+
+            /*
+             * Hashed here as well as by the model's own 'hashed' cast, which
+             * recognises an already-hashed value and leaves it alone. Belt and
+             * braces on the one field where storing the plain text would be
+             * silent and permanent: the cast is a line in a config array that a
+             * future edit could drop without anything looking wrong.
+             */
+            $user->password = Hash::make($req->post('password'));
+            $user->save();
+
+            // A new session id for the person who just proved themselves.
+            $req->session()->regenerate();
+
+            return redirect('admin/dashboard')
+                ->with('success', 'Your password has been changed. Use it the next time you sign in.');
+        }
+
+        $props = [
+            'action' => route('adminpassword'),
+            'csrf' => csrf_token(),
+            'cancelUrl' => url('admin/dashboard'),
+            // The component's props are named for the screen it was written
+            // for. Reused rather than copied: it is the same form.
+            'clientName' => $user->name,
+            'clientMobile' => $user->email,
+            'hasPassword' => true,
+            'requireCurrent' => true,
+            'intro' => 'You will use the new password the next time you sign in to the admin area.',
+            'errors' => (object) array_map(fn ($messages) => $messages[0], session('errors') ? session('errors')->messages() : []),
+        ];
+
+        return Screen::make('admin.password', 'vue-admin-password', $props, [
+            'userName' => $user->name,
+        ])->toResponse($req);
+    }
+
     public function clientpassword(Request $req, $id)
     {
         $client = ClientModel::findOrFail($id);

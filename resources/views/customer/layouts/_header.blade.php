@@ -28,6 +28,17 @@
           </li>
 
           <li>
+            <a class="dropdown-item d-flex align-items-center" href="{{ route('customer.password') }}">
+              <i class="bi bi-key"></i>
+              <span>Change Password</span>
+            </a>
+          </li>
+
+          <li>
+            <hr class="dropdown-divider">
+          </li>
+
+          <li>
             <form action="{{ route('customer.logout') }}" method="POST">
               @csrf
               <button type="submit" class="dropdown-item d-flex align-items-center">

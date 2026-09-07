@@ -1458,6 +1458,177 @@ class CustomerPortalTest extends TestCase
         );
     }
 
+    // ---------------------------------------------------- changing a password
+
+    private function changePassword(array $payload)
+    {
+        return $this->post(route('customer.password'), $payload);
+    }
+
+    public function test_a_customer_can_change_their_own_password(): void
+    {
+        $customer = $this->party('customer', '9000001201');
+
+        $this->signIn('9000001201', self::PASSWORD)
+            ->assertRedirect(route('customer.dashboard'));
+
+        $this->changePassword([
+            'current_password' => self::PASSWORD,
+            'password' => 'a-brand-new-one',
+            'password_confirmation' => 'a-brand-new-one',
+        ])->assertRedirect(route('customer.dashboard'));
+
+        $this->assertTrue(Hash::check('a-brand-new-one', $customer->fresh()->password));
+
+        // And the new one works while the old one does not.
+        $this->post(route('customer.logout'));
+
+        $this->signIn('9000001201', self::PASSWORD)
+            ->assertSessionHas('error');
+
+        $this->signIn('9000001201', 'a-brand-new-one')
+            ->assertRedirect(route('customer.dashboard'));
+    }
+
+    /**
+     * The session says which browser, not which person.
+     *
+     * An unattended signed-in phone is how an account changes hands without
+     * anybody guessing a password, and the current password is the one thing
+     * whoever picked it up does not have.
+     */
+    public function test_the_current_password_is_required_to_change_it(): void
+    {
+        $customer = $this->party('customer', '9000001202');
+
+        $this->withSession(['customer_id' => $customer->id])
+            ->changePassword([
+                'current_password' => 'not-the-right-one',
+                'password' => 'a-brand-new-one',
+                'password_confirmation' => 'a-brand-new-one',
+            ])
+            ->assertSessionHasErrors('current_password');
+
+        $this->assertTrue(
+            Hash::check(self::PASSWORD, $customer->fresh()->password),
+            'the password is unchanged'
+        );
+    }
+
+    public function test_the_new_password_has_to_be_confirmed(): void
+    {
+        $customer = $this->party('customer', '9000001203');
+
+        $this->withSession(['customer_id' => $customer->id])
+            ->changePassword([
+                'current_password' => self::PASSWORD,
+                'password' => 'a-brand-new-one',
+                'password_confirmation' => 'a-brand-new-typo',
+            ])
+            ->assertSessionHasErrors('password');
+
+        $this->assertTrue(Hash::check(self::PASSWORD, $customer->fresh()->password));
+    }
+
+    public function test_a_short_password_is_refused(): void
+    {
+        $customer = $this->party('customer', '9000001204');
+
+        $this->withSession(['customer_id' => $customer->id])
+            ->changePassword([
+                'current_password' => self::PASSWORD,
+                'password' => 'short',
+                'password_confirmation' => 'short',
+            ])
+            ->assertSessionHasErrors('password');
+
+        $this->assertTrue(Hash::check(self::PASSWORD, $customer->fresh()->password));
+    }
+
+    /** A form filled in and a password that did not change. */
+    public function test_the_new_password_must_differ_from_the_old_one(): void
+    {
+        $customer = $this->party('customer', '9000001205');
+
+        $this->withSession(['customer_id' => $customer->id])
+            ->changePassword([
+                'current_password' => self::PASSWORD,
+                'password' => self::PASSWORD,
+                'password_confirmation' => self::PASSWORD,
+            ])
+            ->assertSessionHasErrors('password');
+    }
+
+    public function test_nobody_signed_out_can_change_a_password(): void
+    {
+        $this->party('customer', '9000001206');
+
+        $this->changePassword([
+            'current_password' => self::PASSWORD,
+            'password' => 'a-brand-new-one',
+            'password_confirmation' => 'a-brand-new-one',
+        ])->assertRedirect(route('customer.login'));
+    }
+
+    /**
+     * One customer's form must not reach another's account. There is no id on
+     * the route, so this is really asking that none is ever read from the body.
+     */
+    public function test_changing_a_password_never_touches_another_account(): void
+    {
+        $mine = $this->party('customer', '9000001207');
+        $theirs = $this->party('customer', '9000001208');
+
+        $this->withSession(['customer_id' => $mine->id])
+            ->changePassword([
+                'id' => $theirs->id,
+                'customer_id' => $theirs->id,
+                'current_password' => self::PASSWORD,
+                'password' => 'a-brand-new-one',
+                'password_confirmation' => 'a-brand-new-one',
+            ])
+            ->assertRedirect(route('customer.dashboard'));
+
+        $this->assertTrue(Hash::check('a-brand-new-one', $mine->fresh()->password), 'mine changed');
+        $this->assertTrue(Hash::check(self::PASSWORD, $theirs->fresh()->password), 'theirs did not');
+    }
+
+    public function test_changing_a_password_is_not_an_edit_to_the_record(): void
+    {
+        $customer = $this->party('customer', '9000001209');
+        $customer->forceFill(['updated_at' => now()->subDay()])->saveQuietly();
+
+        $before = $customer->fresh()->updated_at;
+
+        $this->withSession(['customer_id' => $customer->id])
+            ->changePassword([
+                'current_password' => self::PASSWORD,
+                'password' => 'a-brand-new-one',
+                'password_confirmation' => 'a-brand-new-one',
+            ]);
+
+        $this->assertEquals($before, $customer->fresh()->updated_at);
+    }
+
+    public function test_the_change_password_screen_asks_for_the_current_one(): void
+    {
+        $customer = $this->party('customer', '9000001210');
+
+        $body = $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.password'))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertStringContainsString('data-vue="vue-customer-password"', $body);
+
+        $props = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.password'))->assertOk()->json('props');
+
+        $this->assertTrue($props['requireCurrent'], 'the form asks for the current password');
+        // The hash never leaves the server, on this screen least of all.
+        $this->assertStringNotContainsString('$2y$', json_encode($props));
+    }
+
     // --------------------------------------------------------- the front door
 
     public function test_the_site_root_leads_to_the_customer_portal(): void
