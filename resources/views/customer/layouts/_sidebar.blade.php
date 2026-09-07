@@ -19,17 +19,18 @@
     </li>
 
     <li class="nav-item">
+      <a class="{{ $navClass($req->routeIs('customer.files')) }}" href="{{ route('customer.files') }}">
+        <i class="bi bi-folder2-open"></i>
+        <span>My Files</span>
+      </a>
+    </li>
+
+    <li class="nav-item">
       <a class="{{ $navClass($req->routeIs('customer.statement')) }}" href="{{ route('customer.statement') }}">
         <i class="bi bi-journal-text"></i>
         <span>My Statement</span>
       </a>
     </li>
-
-    {{--
-      My Files lands here in the phase after this one. The menu carries only
-      what exists: an item that leads nowhere reads as a broken portal rather
-      than an unfinished one.
-    --}}
 
   </ul>
 

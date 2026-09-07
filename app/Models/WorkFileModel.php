@@ -81,6 +81,64 @@ class WorkFileModel extends Model
         'part_pesi_required', 'under_verification', 'partly_approved'];
 
     /**
+     * The same nine states, said to the person whose file it is.
+     *
+     * STATUSES is office vocabulary — "File Dispatch" and "Part Pesi Required"
+     * mean something to whoever runs the counter and nothing to a customer.
+     * More than clarity is at stake in one of them: dispatch is the moment the
+     * papers go to a vendor, and naming that here would give away who does the
+     * work. It says where the file has got to, not who is holding it.
+     *
+     * Kept as a separate map rather than derived, so changing what the office
+     * calls a state cannot quietly change what a customer is told.
+     */
+    public const CUSTOMER_STATUSES = [
+        'in_office' => 'In our office',
+        'paper_pendency' => 'Documents pending from you',
+        'file_dispatch' => 'Submitted at the RTO',
+        'part_pesi_required' => 'Part payment required',
+        'under_verification' => 'Under verification',
+        'partly_approved' => 'Partly approved',
+        'approval_done' => 'Approved',
+        'paper_returned' => 'Returned to you',
+        'cancelled' => 'Cancelled',
+    ];
+
+    /**
+     * What to tell a customer a file is doing.
+     *
+     * Falls back to the plainest true thing rather than to the raw key: an
+     * unmapped state leaking "part_pesi_required" onto a customer's screen is
+     * worse than saying it is in progress.
+     */
+    public static function customerStatus(?string $status): string
+    {
+        return self::CUSTOMER_STATUSES[$status] ?? 'In progress';
+    }
+
+    /**
+     * How a customer's status badge should be coloured.
+     *
+     * The office badge takes the raw status as its data-state, which is fine on
+     * a screen the office reads. On the portal it would put the office's own
+     * shorthand into the page source — "file_dispatch" says the papers were
+     * sent somewhere, which is the one thing the wording above is careful not
+     * to say. So the portal colours on a tone instead, and the tone says how
+     * the file feels rather than what the office calls it.
+     */
+    public static function customerTone(?string $status): string
+    {
+        return match ($status) {
+            'paper_pendency', 'part_pesi_required' => 'needs-you',
+            'file_dispatch', 'under_verification', 'partly_approved' => 'moving',
+            self::APPROVED => 'approved',
+            self::RETURNED => 'closed',
+            self::CANCELLED => 'cancelled',
+            default => 'waiting',
+        };
+    }
+
+    /**
      * Bootstrap contextual class per status, for the badge on the list.
      */
     public const STATUS_BADGES = [
@@ -1371,6 +1429,42 @@ class WorkFileModel extends Model
      * @param  array<int>  $fileIds
      * @return array<int, array<int, object>>  keyed by file: name, status, approved_on
      */
+    /**
+     * One customer's files, and only the columns that customer may see.
+     *
+     * The select list is the security boundary, written out rather than
+     * narrowed from select * afterwards. work_file carries vendor_id,
+     * vendor_amount, vendor_date and both vendor_returned columns on the same
+     * row as the file number; the difference between vendor_amount and
+     * customer_amount is the margin, and a query that fetches the row and
+     * trusts the caller to drop four fields is a query one careless edit away
+     * from handing it over.
+     *
+     * Cancelled files are shown. A customer who was charged nothing still sent
+     * papers in and is owed an answer about where they went.
+     */
+    public static function forCustomer(int $customerId)
+    {
+        return DB::table('work_file')
+            ->leftJoin('work_type', 'work_type.id', '=', 'work_file.work_type_id')
+            ->where('work_file.customer_id', $customerId)
+            ->select(
+                'work_file.id',
+                'work_file.file_no',
+                'work_file.received_date',
+                'work_file.registration_no',
+                'work_file.description',
+                'work_file.status',
+                'work_file.customer_amount',
+                'work_file.returned_amount',
+                'work_file.returned_on',
+                'work_file.approval_screenshot',
+                'work_type.name as work_type'
+            )
+            ->orderByDesc('work_file.received_date')
+            ->orderByDesc('work_file.id');
+    }
+
     public static function workBreakdown(array $fileIds): array
     {
         if (! $fileIds) {

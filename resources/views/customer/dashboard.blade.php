@@ -51,15 +51,34 @@
             <div class="col-lg-6">
                 <div class="card">
                     <div class="card-body pt-4">
-                        <h5 class="card-title p-0 mb-2">Your Files</h5>
-                        {{--
-                            Said plainly rather than shown as an empty list: a
-                            screen of zeroes reads as "you have no files", which
-                            would not be true.
-                        --}}
-                        <p class="text-muted mb-0">
-                            The status of each of your files will appear here shortly.
-                        </p>
+                        <h5 class="card-title p-0 mb-3">Your Files</h5>
+
+                        @if ($fileCount === 0)
+                            {{-- Four zeroes read as a broken screen. A customer
+                                 with nothing on their account is told so. --}}
+                            <p class="text-muted mb-0">
+                                Nothing yet. Anything you send us will appear here.
+                            </p>
+                        @else
+                            <div class="statement-summary">
+                                <div class="stat">
+                                    <span class="label">In Progress</span>
+                                    <span class="value">{{ $open }}</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="label">Approved</span>
+                                    <span class="value dr">{{ $approved }}</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="label">Returned</span>
+                                    <span class="value">{{ $returned }}</span>
+                                </div>
+                            </div>
+
+                            <a href="{{ route('customer.files') }}" class="btn btn-outline-primary mt-3">
+                                <i class="bi bi-folder2-open"></i> View All Files
+                            </a>
+                        @endif
                     </div>
                 </div>
             </div>

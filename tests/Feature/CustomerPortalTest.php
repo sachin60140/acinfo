@@ -493,6 +493,312 @@ class CustomerPortalTest extends TestCase
         );
     }
 
+    // ------------------------------------------------------------- the files
+
+    /**
+     * A file with a work on it, and a vendor holding it at a known rate.
+     *
+     * The vendor is the point: every leak test below needs a real name and a
+     * real figure on the row, because asserting that the word "vendor" is
+     * absent proves nothing if no vendor was ever attached.
+     */
+    private function fileWithVendor(PartyModel $customer, array $overrides = []): \App\Models\WorkFileModel
+    {
+        $vendor = $this->party('vendor', $overrides['vendor_mobile'] ?? '9000009999', ['password' => null]);
+        $vendor->name = 'Dabloo Ji Muzaffarpur';
+        $vendor->save();
+
+        $file = $this->fileFor($customer);
+        $file->registration_no = $overrides['registration_no'] ?? 'BR06GG1408';
+        $file->status = $overrides['status'] ?? 'file_dispatch';
+        $file->customer_amount = 9000;
+        $file->vendor_id = $vendor->id;
+        // The number that is the margin when set against 9000.
+        $file->vendor_amount = 5250;
+        $file->vendor_date = '2026-01-20';
+        $file->save();
+
+        $item = new \App\Models\WorkFileItemModel;
+        $item->work_file_id = $file->id;
+        $item->work_type_id = $file->work_type_id;
+        $item->customer_amount = 9000;
+        $item->vendor_amount = 5250;
+        $item->status = $file->status;
+        $item->approved_on = $overrides['approved_on'] ?? null;
+        $item->save();
+
+        return $file;
+    }
+
+    public function test_a_customer_sees_their_own_files_and_nobody_elses(): void
+    {
+        $mine = $this->party('customer', '9000000601');
+        $theirs = $this->party('customer', '9000000602');
+
+        $this->fileWithVendor($mine, ['registration_no' => 'BR06MINE01']);
+        $this->fileWithVendor($theirs, ['registration_no' => 'BR06THEM01', 'vendor_mobile' => '9000009998']);
+
+        $body = $this->withSession(['customer_id' => $mine->id])
+            ->get(route('customer.files'))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertStringContainsString('BR06MINE01', $body);
+        $this->assertStringNotContainsString('BR06THEM01', $body);
+    }
+
+    /**
+     * The single most important test in this portal.
+     *
+     * vendor_amount sits on the same row as file_no. The gap between it and
+     * customer_amount is what this business earns, and a query that fetched the
+     * row and trusted the caller to drop four fields would put it on the
+     * customer's screen with no error anywhere.
+     */
+    public function test_nothing_about_a_vendor_reaches_the_file_list(): void
+    {
+        $customer = $this->party('customer', '9000000603');
+
+        $this->fileWithVendor($customer);
+
+        $payload = json_encode($this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.files'))
+            ->assertOk()
+            ->json());
+
+        $this->assertStringNotContainsString('vendor', strtolower($payload), 'no vendor field');
+        $this->assertStringNotContainsString('Dabloo Ji', $payload, 'not who holds the papers');
+        $this->assertStringNotContainsString('5250', $payload, 'not what they are paid');
+        $this->assertStringNotContainsString('5,250', $payload);
+        // And the margin, which is neither figure but follows from both.
+        $this->assertStringNotContainsString('3750', $payload);
+
+        // What the customer was charged is theirs to see, so the test is not
+        // passing merely because the payload is empty.
+        $this->assertStringContainsString('9000', $payload);
+    }
+
+    public function test_the_status_is_said_in_words_a_customer_uses(): void
+    {
+        $customer = $this->party('customer', '9000000604');
+
+        $this->fileWithVendor($customer, ['status' => 'file_dispatch']);
+
+        $body = $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.files'))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertStringContainsString('Submitted at the RTO', $body);
+        // Dispatch is the moment the papers go to a vendor. Naming it that way
+        // would say a vendor exists even without naming which.
+        $this->assertStringNotContainsString('File Dispatch', $body);
+        $this->assertStringNotContainsString('file_dispatch', $body);
+    }
+
+    /**
+     * Every state has to have a customer-facing word, or one day a file reaches
+     * a state nobody translated and the office's own shorthand goes on screen.
+     */
+    public function test_every_status_the_database_allows_has_a_customer_word(): void
+    {
+        foreach (array_keys(\App\Models\WorkFileModel::STATUSES) as $status) {
+            $this->assertArrayHasKey(
+                $status,
+                \App\Models\WorkFileModel::CUSTOMER_STATUSES,
+                "$status has no customer-facing wording"
+            );
+        }
+    }
+
+    public function test_an_unmapped_status_never_shows_the_raw_key(): void
+    {
+        $this->assertSame('In progress', \App\Models\WorkFileModel::customerStatus('some_new_state'));
+        $this->assertSame('In progress', \App\Models\WorkFileModel::customerStatus(null));
+        // And an unknown state still gets a tone, so the badge is never unstyled.
+        $this->assertSame('waiting', \App\Models\WorkFileModel::customerTone('some_new_state'));
+    }
+
+    /**
+     * The colouring must not smuggle the vocabulary back in.
+     *
+     * The grid writes this key straight into a data-state attribute, so the
+     * office's own words would be in the page source even though no reader ever
+     * sees them rendered.
+     */
+    public function test_no_office_status_key_reaches_the_page_source(): void
+    {
+        $customer = $this->party('customer', '9000000611');
+
+        foreach (array_keys(\App\Models\WorkFileModel::STATUSES) as $i => $status) {
+            $this->fileWithVendor($customer, [
+                'status' => $status,
+                'vendor_mobile' => '90000098'.str_pad((string) $i, 2, '0', STR_PAD_LEFT),
+                'registration_no' => 'BR06KEY'.$i,
+            ]);
+        }
+
+        $body = $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.files'))->assertOk()->getContent();
+
+        foreach (array_keys(\App\Models\WorkFileModel::STATUSES) as $status) {
+            // "cancelled" is the same word in both vocabularies, so it is not
+            // evidence of the office's leaking through.
+            if ($status === 'cancelled') {
+                continue;
+            }
+
+            $this->assertStringNotContainsString($status, $body, "the raw key $status is in the page");
+        }
+    }
+
+    public function test_a_cancelled_file_is_shown_as_charging_nothing(): void
+    {
+        $customer = $this->party('customer', '9000000605');
+
+        $this->fileWithVendor($customer, ['status' => 'cancelled', 'registration_no' => 'BR06CANX1']);
+
+        $row = collect($this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
+            ->firstWhere('registration_no', 'BR06CANX1');
+
+        $this->assertSame('Cancelled', $row['status']);
+        // Cancelled charged nobody, so the list must not show the face figure
+        // and disagree with the statement on the next page.
+        $this->assertEquals(0, $row['charged']);
+    }
+
+    public function test_a_folder_whose_works_disagree_says_which_is_which(): void
+    {
+        $customer = $this->party('customer', '9000000606');
+
+        $file = $this->fileWithVendor($customer, ['status' => 'partly_approved', 'registration_no' => 'BR06SPLT1']);
+
+        // A second work on the same folder, already through.
+        $done = new \App\Models\WorkFileItemModel;
+        $done->work_file_id = $file->id;
+        $done->work_type_id = $file->work_type_id;
+        $done->customer_amount = 3000;
+        $done->status = 'approval_done';
+        $done->approved_on = '2026-02-14';
+        $done->save();
+
+        $row = collect($this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
+            ->firstWhere('registration_no', 'BR06SPLT1');
+
+        $this->assertSame('Partly approved', $row['status']);
+        $this->assertNotNull($row['works_note'], 'a split folder says how it is split');
+        $this->assertStringContainsString('approved', $row['works_note']);
+        $this->assertStringContainsString('pending', $row['works_note']);
+        $this->assertStringContainsString('14-02-2026', $row['approved_on']);
+    }
+
+    public function test_a_folder_going_one_way_says_nothing_extra(): void
+    {
+        $customer = $this->party('customer', '9000000607');
+
+        $this->fileWithVendor($customer, ['registration_no' => 'BR06ONEW1']);
+
+        $row = collect($this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
+            ->firstWhere('registration_no', 'BR06ONEW1');
+
+        // A second line repeating what the badge says is a line nobody reads.
+        $this->assertNull($row['works_note']);
+    }
+
+    public function test_the_home_screen_counts_the_files_by_where_they_stand(): void
+    {
+        $customer = $this->party('customer', '9000000608');
+
+        $this->fileWithVendor($customer, ['status' => 'in_office', 'registration_no' => 'BR06AAA01']);
+        $this->fileWithVendor($customer, ['status' => 'approval_done', 'vendor_mobile' => '9000009997', 'registration_no' => 'BR06AAA02']);
+        $this->fileWithVendor($customer, ['status' => 'approval_done', 'vendor_mobile' => '9000009996', 'registration_no' => 'BR06AAA03']);
+        $this->fileWithVendor($customer, ['status' => 'paper_returned', 'vendor_mobile' => '9000009995', 'registration_no' => 'BR06AAA04']);
+
+        $body = $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.dashboard'))
+            ->assertOk()
+            ->getContent();
+
+        // One open, two approved, one returned — read off the rendered cards.
+        $this->assertMatchesRegularExpression('/In Progress.*?>1</s', $body);
+        $this->assertMatchesRegularExpression('/Approved.*?>2</s', $body);
+        $this->assertMatchesRegularExpression('/Returned.*?>1</s', $body);
+    }
+
+    public function test_a_customer_with_no_files_is_told_so(): void
+    {
+        $customer = $this->party('customer', '9000000609');
+
+        $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.dashboard'))
+            ->assertOk()
+            ->assertSee('Nothing yet');
+    }
+
+    public function test_the_file_list_offers_no_way_into_the_office(): void
+    {
+        $customer = $this->party('customer', '9000000610');
+
+        $this->fileWithVendor($customer);
+
+        $this->assertStringNotContainsString(
+            'admin/',
+            $this->withSession(['customer_id' => $customer->id])
+                ->get(route('customer.files'))->assertOk()->getContent()
+        );
+    }
+
+    /**
+     * The seam between Blade and Vue, for the two portal screens.
+     *
+     * ScreenPropsTest guards this for every office screen, but it signs in as an
+     * admin and walks a fixed list of admin URLs — it cannot reach a page behind
+     * customerAuth. Without something here, a portal screen whose props and
+     * component disagree would render as a blank white card: no server error, no
+     * failing test, and the only person who sees it is the customer.
+     */
+    public static function portalScreens(): array
+    {
+        return [
+            'files' => ['customer.files', 'vue-customer-files'],
+            'statement' => ['customer.statement', 'vue-customer-statement'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('portalScreens')]
+    public function test_a_portal_screen_serves_the_same_component_either_way(string $route, string $mount): void
+    {
+        $customer = $this->party('customer', '9000000701');
+        $this->fileWithVendor($customer, ['vendor_mobile' => '9000009901']);
+        $this->entry($customer->id, '2026-01-05', 'debit', 4000);
+
+        $json = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route($route))
+            ->assertOk()
+            ->json();
+
+        $this->assertSame($mount, $json['mount'], 'the JSON names a different component');
+        $this->assertNotEmpty($json['props']['columns'] ?? [], 'the component is handed no columns');
+
+        // The page has to mount the same thing, or the two representations of
+        // one screen have drifted.
+        $page = $this->withSession(['customer_id' => $customer->id])
+            ->get(route($route))->assertOk()->getContent();
+
+        $this->assertStringContainsString('data-vue="'.$mount.'"', $page);
+
+        // And the component has to be registered, or the mount point stays an
+        // empty div and the screen is blank.
+        $this->assertStringContainsString(
+            "'".$mount."'",
+            file_get_contents(resource_path('js/mounts.js')),
+            "$mount is not registered in mounts.js"
+        );
+    }
+
     // ------------------------------------------------------ issuing a password
 
     public function test_the_office_can_give_a_customer_a_login(): void

@@ -442,6 +442,20 @@
 .ui-badge[data-state="cancelled"]          { background: var(--cr-050); color: var(--cr-700); }
 
 /*
+ * The same scale, for the customer portal.
+ *
+ * Keyed on a tone rather than on a status, because the raw status is office
+ * vocabulary and data-state puts it in the page source — see
+ * WorkFileModel::customerTone. Same colours, so a file looks the same to
+ * whoever is reading it.
+ */
+.ui-badge[data-state="waiting"]   { background: var(--n-100); color: var(--n-600); }
+.ui-badge[data-state="needs-you"] { background: var(--warn-050); color: var(--warn-600); }
+.ui-badge[data-state="moving"]    { background: #e0f2fe; color: #0369a1; }
+.ui-badge[data-state="approved"]  { background: var(--dr-050); color: var(--dr-700); }
+.ui-badge[data-state="closed"]    { background: var(--n-200); color: var(--ink-900); }
+
+/*
  * A filter chip carrying a count.
  *
  * Lives here rather than inside one page's <style>, because two screens use it

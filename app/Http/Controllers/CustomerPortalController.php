@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Middleware\CustomerAuthMiddleware;
 use App\Models\PartyLedgerModel;
 use App\Models\PartyModel;
+use App\Models\WorkFileModel;
 use App\Support\Screen;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -147,11 +148,35 @@ class CustomerPortalController extends Controller
 
         $balance = PartyLedgerModel::currentBalance($customer->id);
 
+        /*
+         * Counted in the database rather than by fetching the files and
+         * counting them here. This screen has no use for the rows themselves,
+         * and pulling every file a long-standing customer has ever sent in order
+         * to produce four numbers is work nobody asked for.
+         */
+        $byStatus = WorkFileModel::forCustomer($customer->id)
+            ->reorder()
+            ->select('work_file.status')
+            ->selectRaw('COUNT(*) as total')
+            ->groupBy('work_file.status')
+            ->pluck('total', 'status');
+
+        $counts = [
+            'approved' => (int) $byStatus->get(WorkFileModel::APPROVED, 0),
+            'returned' => (int) $byStatus->get(WorkFileModel::RETURNED, 0),
+            'cancelled' => (int) $byStatus->get(WorkFileModel::CANCELLED, 0),
+        ];
+
+        // Whatever is left is still in hand. Derived by subtraction so a status
+        // added later counts as open rather than vanishing from the totals.
+        $counts['open'] = max(0, (int) $byStatus->sum() - array_sum($counts));
+
         return view('customer.dashboard', [
             'customerName' => $customer->name,
             'customerMobile' => $customer->mobile,
             'balance' => $balance,
-        ] + $this->balanceWording($balance));
+            'fileCount' => (int) $byStatus->sum(),
+        ] + $counts + $this->balanceWording($balance));
     }
 
     /**
@@ -180,6 +205,123 @@ class CustomerPortalController extends Controller
             // the ledger's own two colours rather than red and green.
             'balanceTone' => $settled ? 'settled' : ($balance > 0 ? 'dr' : 'cr'),
         ];
+    }
+
+    /**
+     * The customer's files, one row per folder.
+     *
+     * Works are not given a row each. A folder of three is one thing the
+     * customer handed over and one thing they get back, and three rows repeating
+     * the same registration number reads as three jobs. Where the works have
+     * gone different ways the row says so underneath.
+     */
+    public function files(Request $req)
+    {
+        $customer = $this->customer();
+
+        $files = WorkFileModel::forCustomer($customer->id)->get();
+
+        // Every folder's works, for the whole page, in one query.
+        $breakdown = WorkFileModel::workBreakdown($files->pluck('id')->all());
+
+        $rows = [];
+        $counts = ['open' => 0, 'approved' => 0, 'returned' => 0, 'cancelled' => 0];
+
+        foreach ($files as $file) {
+            $works = $breakdown[$file->id] ?? [];
+
+            $counts[match ($file->status) {
+                WorkFileModel::APPROVED => 'approved',
+                WorkFileModel::RETURNED => 'returned',
+                WorkFileModel::CANCELLED => 'cancelled',
+                default => 'open',
+            }]++;
+
+            /*
+             * What was actually charged, not what the file was entered with. A
+             * cancelled file charged nobody and a part refund charged less, and
+             * a list that showed the face figure would disagree with the
+             * statement on the next page.
+             */
+            $charged = WorkFileModel::netCustomer(
+                $file->status,
+                $file->customer_amount,
+                $file->returned_amount
+            );
+
+            $names = array_values(array_unique(array_map(
+                fn ($work) => $work->name,
+                $works
+            )));
+
+            $approvedOn = array_values(array_filter(array_map(
+                fn ($work) => $work->status === WorkFileModel::APPROVED && $work->approved_on
+                    ? date('d-m-Y', strtotime($work->approved_on))
+                    : null,
+                $works
+            )));
+
+            $rows[] = [
+                'file_no' => $file->file_no,
+                'registration_no' => $file->registration_no ?: '—',
+                'received' => date('d-m-Y', strtotime($file->received_date)),
+                // Sorted on rather than shown: dd-mm-yyyy compared as text
+                // orders by day of the month, putting 02-03 above 01-12.
+                'received_raw' => $file->received_date,
+                'work_type' => $names ? implode(', ', $names) : ($file->work_type ?? '—'),
+                'description' => $file->description,
+
+                'status' => WorkFileModel::customerStatus($file->status),
+                /*
+                 * A tone, not the status. The grid puts this key straight into
+                 * data-state, and the raw status is office vocabulary — sending
+                 * "file_dispatch" would say in the page source what the wording
+                 * above is careful not to say out loud.
+                 */
+                'status_key' => WorkFileModel::customerTone($file->status),
+                /*
+                 * Only when the works disagree. workNote returns null when they
+                 * are all doing the same thing, and a line repeating what the
+                 * badge already says is a line nobody reads.
+                 */
+                'works_note' => WorkFileModel::workNote($works),
+
+                'approved_on' => $approvedOn ? implode(', ', array_unique($approvedOn)) : null,
+                'charged' => $charged,
+
+                // Greys the row. A finished file is still worth seeing but is no
+                // longer something the customer is waiting on.
+                'row_class' => in_array($file->status, [WorkFileModel::CANCELLED, WorkFileModel::RETURNED], true)
+                    ? 'is-closed'
+                    : '',
+            ];
+        }
+
+        $props = [
+            // Names the export file and heads the PDF and the print sheet.
+            'title' => $customer->name.' — My Files',
+            'perPage' => 25,
+            'columns' => [
+                ['key' => 'file_no', 'label' => 'File No.'],
+                ['key' => 'registration_no', 'label' => 'Vehicle', 'sub' => 'description'],
+                ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_raw'],
+                ['key' => 'work_type', 'label' => 'Work'],
+                ['key' => 'status', 'label' => 'Status', 'type' => 'badge', 'sub' => 'works_note'],
+                ['key' => 'approved_on', 'label' => 'Approved On'],
+                ['key' => 'charged', 'label' => 'Amount', 'type' => 'money'],
+
+                // Carried for searching and for the export only.
+                ['key' => 'description', 'label' => 'Description', 'hidden' => true],
+            ],
+            'rows' => $rows,
+            'totals' => ['charged' => 'sum'],
+            'emptyText' => 'No files yet. Anything you send us will appear here.',
+        ];
+
+        return Screen::make('customer.files', 'vue-customer-files', $props, [
+            'customerName' => $customer->name,
+            'fileCount' => count($rows),
+        ] + $counts)->toResponse($req);
     }
 
     /**
