@@ -418,6 +418,9 @@ class PartyController extends Controller
         $running = (float) $data['opening'];
         $entries = [];
 
+        // The note on the file each entry came from, for the whole page at once.
+        $remarks = PartyLedgerModel::fileRemarks($data['getRecords']);
+
         foreach ($data['getRecords'] as $entry) {
             $running += $entry->signedAmount();
             $isDebit = $entry->entry_type === 'debit';
@@ -436,8 +439,48 @@ class PartyController extends Controller
                 'debit' => $isDebit ? (float) $entry->amount : null,
                 'credit' => $isDebit ? null : (float) $entry->amount,
                 'balance' => round($running, 2),
+                'remarks' => $remarks[$entry->work_file_id] ?? null,
             ];
         }
+
+        /*
+         * The figure the Balance column counts up from, and the figure it
+         * arrives at. Both were drawn above the table and neither reached the
+         * exports, so a printed statement began mid-air — its first Balance
+         * explained by nothing — and ended without saying where it got to.
+         *
+         * Handed to the grid as framing rows rather than as entries: they are
+         * not transactions, and must not be searched, sorted or counted as any.
+         */
+        $opening = [[
+            'id' => null,
+            'txn_date' => $fromText === 'Beginning' ? '' : $fromText,
+            'particular' => 'Opening Balance',
+            'payment_mode' => null,
+            'ref_no' => null,
+            'ref_url' => null,
+            'debit' => null,
+            'credit' => null,
+            'balance' => round((float) $data['opening'], 2),
+            'remarks' => null,
+        ]];
+
+        $closing = [[
+            'id' => null,
+            'txn_date' => $toText === 'Till date' ? '' : $toText,
+            'particular' => 'Closing Balance',
+            'payment_mode' => null,
+            'ref_no' => null,
+            'ref_url' => null,
+            'debit' => (float) $data['debits'],
+            'credit' => (float) $data['credits'],
+            'balance' => round((float) $data['closing'], 2),
+            'remarks' => null,
+        ]];
+
+        // Only when there is one to show. A column of empty cells is clutter on
+        // screen and a column of commas in the spreadsheet.
+        $hasRemarks = (bool) $remarks;
 
         $props = [
             // Also the export filename and the heading on the PDF and the printout.
@@ -457,8 +500,14 @@ class PartyController extends Controller
                 ['key' => 'debit', 'label' => 'Debit', 'type' => 'money', 'class' => 'ui-money--dr'],
                 ['key' => 'credit', 'label' => 'Credit', 'type' => 'money', 'class' => 'ui-money--cr'],
                 ['key' => 'balance', 'label' => 'Balance', 'type' => 'balance', 'class' => 'ui-money--strong'],
+
+                // The note on the file the entry came from, when any entry has
+                // one. Last, so it never pushes the figures off a narrow screen.
+                ...($hasRemarks ? [['key' => 'remarks', 'label' => 'Remarks', 'width' => '12rem']] : []),
             ],
             'rows' => $entries,
+            'lead' => $opening,
+            'tail' => $closing,
             'perPage' => 50,
             /*
              * Never sortable. Balance is a running total carried forward from the

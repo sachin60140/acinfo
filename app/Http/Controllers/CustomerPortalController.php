@@ -617,6 +617,14 @@ class CustomerPortalController extends Controller
         $running = (float) $data['opening'];
         $rows = [];
 
+        /*
+         * The note on the file each entry came from. work_file.remarks, the one
+         * somebody types — never the status log's, which the application writes
+         * as "Given to <vendor>". A statement is the document most likely to be
+         * forwarded, so this is the worst place to get that wrong.
+         */
+        $remarks = PartyLedgerModel::fileRemarks($data['getRecords']);
+
         foreach ($data['getRecords'] as $entry) {
             $running += $entry->signedAmount();
             $isDebit = $entry->entry_type === 'debit';
@@ -632,8 +640,43 @@ class CustomerPortalController extends Controller
                 'debit' => $isDebit ? (float) $entry->amount : null,
                 'credit' => $isDebit ? null : (float) $entry->amount,
                 'balance' => round($running, 2),
+                'remarks' => $remarks[$entry->work_file_id] ?? null,
             ];
         }
+
+        /*
+         * What the Balance column counts up from, and what it arrives at. Both
+         * were drawn above the table and neither reached the exports, so a
+         * statement a customer printed began mid-air, its first Balance
+         * explained by nothing at all.
+         *
+         * Framing rows, not entries: never searched, sorted or counted as one.
+         */
+        $opening = [[
+            'txn_date' => $fromText === 'Beginning' ? '' : $fromText,
+            'particular' => 'Opening Balance',
+            'payment_mode' => null,
+            'ref_no' => null,
+            'debit' => null,
+            'credit' => null,
+            'balance' => round((float) $data['opening'], 2),
+            'remarks' => null,
+        ]];
+
+        $closing = [[
+            'txn_date' => $toText === 'Till date' ? '' : $toText,
+            'particular' => 'Closing Balance',
+            'payment_mode' => null,
+            'ref_no' => null,
+            'debit' => (float) $data['debits'],
+            'credit' => (float) $data['credits'],
+            'balance' => round((float) $data['closing'], 2),
+            'remarks' => null,
+        ]];
+
+        // Only when there is one to show, so a customer with none is not handed
+        // an empty column on screen or a column of commas in the spreadsheet.
+        $hasRemarks = (bool) $remarks;
 
         $props = [
             // Also the export filename and the heading on the PDF and printout.
@@ -648,8 +691,14 @@ class CustomerPortalController extends Controller
                 ['key' => 'debit', 'label' => 'Debit', 'type' => 'money', 'class' => 'ui-money--dr'],
                 ['key' => 'credit', 'label' => 'Credit', 'type' => 'money', 'class' => 'ui-money--cr'],
                 ['key' => 'balance', 'label' => 'Balance', 'type' => 'balance', 'class' => 'ui-money--strong'],
+
+                // The note on the file the entry came from, when any entry has
+                // one. Last, so it never pushes the figures off a phone.
+                ...($hasRemarks ? [['key' => 'remarks', 'label' => 'Remarks', 'width' => '12rem']] : []),
             ],
             'rows' => $rows,
+            'lead' => $opening,
+            'tail' => $closing,
             'perPage' => 50,
             /*
              * Never sortable: the balance is a running total, so re-ordering the

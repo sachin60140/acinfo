@@ -145,6 +145,45 @@ class PartyLedgerModel extends Model
      * Everything a statement page needs: the rows, the balance brought forward,
      * period totals and the closing balance.
      */
+    /**
+     * The office's note on each file a set of ledger entries came from.
+     *
+     * A ledger row has no remark of its own — the column does not exist. What a
+     * reader means by "the remark on this line" is the note typed on the file
+     * that generated it, so it is fetched by work_file_id and left null for the
+     * entries somebody typed straight into the ledger.
+     *
+     * Deliberately work_file.remarks and not the status log's, which the
+     * application writes itself as "Given to <vendor>". That distinction is
+     * kept in WorkFileModel::customerRemark and matters more on a statement
+     * than anywhere else, because a statement is the document that gets
+     * forwarded.
+     *
+     * @param  iterable<object>  $entries
+     * @return array<int, string>
+     */
+    public static function fileRemarks(iterable $entries): array
+    {
+        $ids = [];
+
+        foreach ($entries as $entry) {
+            if ($entry->work_file_id) {
+                $ids[$entry->work_file_id] = true;
+            }
+        }
+
+        if (! $ids) {
+            return [];
+        }
+
+        return DB::table('work_file')
+            ->whereIn('id', array_keys($ids))
+            ->whereNotNull('remarks')
+            ->where('remarks', '!=', '')
+            ->pluck('remarks', 'id')
+            ->all();
+    }
+
     public static function statement($id, $from = null, $to = null): array
     {
         $rows = self::getRecord($id, $from, $to);

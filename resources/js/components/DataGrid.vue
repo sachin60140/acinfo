@@ -94,6 +94,20 @@ const props = defineProps({
     // Columns to total, per group and overall: { columnKey: 'sum' }
     totals: { type: Object, default: () => ({}) },
 
+    /*
+     * Rows that frame the data rather than belong to it: a statement's opening
+     * balance above and its closing below.
+     *
+     * Kept out of the search, the sort, the paging and the totals, because none
+     * of those mean anything applied to them — an opening balance that can be
+     * filtered away, or sorted into the middle, stops being an opening balance.
+     * They go into every export, which is the whole point: the figure the
+     * Balance column counts up from was drawn outside the table, so a printed
+     * statement began mid-air with no figure to explain its first line.
+     */
+    lead: { type: Array, default: () => [] },
+    tail: { type: Array, default: () => [] },
+
     perPage: { type: Number, default: 50 },
     searchable: { type: Boolean, default: true },
 
@@ -292,12 +306,19 @@ const money2 = { money, balance };
 
 const exportColumns = computed(() => exportableColumns(props.columns));
 
+/*
+ * What every export is built from: the framing rows around the filtered set, in
+ * the order they are read. Written once so Copy, CSV, Excel, PDF and Print
+ * cannot disagree about whether a statement carries its opening balance.
+ */
+const exportable = computed(() => [...props.lead, ...sorted.value, ...props.tail]);
+
 function exportRows() {
-    return exportRowsOf(props.columns, sorted.value, money2);
+    return exportRowsOf(props.columns, exportable.value, money2);
 }
 
 function exportValues() {
-    return exportValuesOf(props.columns, sorted.value, money2);
+    return exportValuesOf(props.columns, exportable.value, money2);
 }
 
 const exportHead = computed(() => exportHeader(props.columns));
@@ -341,11 +362,11 @@ function download(blob, extension) {
 }
 
 function exportCsv() {
-    download(new Blob([toCsv(props.columns, sorted.value, money2)], { type: 'text/csv;charset=utf-8' }), 'csv');
+    download(new Blob([toCsv(props.columns, exportable.value, money2)], { type: 'text/csv;charset=utf-8' }), 'csv');
 }
 
 async function copy() {
-    const text = toClipboard(props.columns, sorted.value, money2);
+    const text = toClipboard(props.columns, exportable.value, money2);
 
     try {
         await navigator.clipboard.writeText(text);
@@ -591,7 +612,11 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
             </div>
         </div>
 
-        <div v-if="!sorted.length" class="ui-empty">
+        <!-- The framing rows count as something to show. A period with no
+             entries but a real opening balance is not an empty statement, and
+             saying "Nothing here" over a brought-forward figure reads as a
+             balance of nothing. -->
+        <div v-if="!sorted.length && !lead.length && !tail.length" class="ui-empty">
             <div class="ui-empty__icon"><i class="bi bi-inbox"></i></div>
             <div class="ui-empty__title">Nothing here</div>
             <div>{{ query ? 'Nothing matches that search.' : emptyText }}</div>
@@ -616,6 +641,23 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                         </th>
                     </tr>
                 </thead>
+
+                <!-- Above the body and outside the banding: the opening balance
+                     belongs to the statement, not to any group within it. -->
+                <tbody v-if="lead.length">
+                    <tr v-for="(row, i) in lead" :key="`lead-${i}`" class="grid__edge">
+                        <td
+                            v-for="column in shown"
+                            :key="column.key"
+                            :data-label="column.label"
+                            :class="[isNum(column) ? 'num' : '', column.class]">
+                            <span v-if="column.type === 'money' || column.type === 'balance'" :class="moneyClass(row, column)">
+                                {{ display(row, column) }}
+                            </span>
+                            <template v-else>{{ display(row, column) }}</template>
+                        </td>
+                    </tr>
+                </tbody>
 
                 <template v-for="band in banded" :key="band.key">
                     <tbody>
@@ -683,6 +725,22 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                         </tr>
                     </tbody>
                 </template>
+
+                <!-- And the closing below it, before the column totals. -->
+                <tbody v-if="tail.length">
+                    <tr v-for="(row, i) in tail" :key="`tail-${i}`" class="grid__edge">
+                        <td
+                            v-for="column in shown"
+                            :key="column.key"
+                            :data-label="column.label"
+                            :class="[isNum(column) ? 'num' : '', column.class]">
+                            <span v-if="column.type === 'money' || column.type === 'balance'" :class="moneyClass(row, column)">
+                                {{ display(row, column) }}
+                            </span>
+                            <template v-else>{{ display(row, column) }}</template>
+                        </td>
+                    </tr>
+                </tbody>
 
                 <tfoot v-if="hasTotals">
                     <tr>
@@ -795,6 +853,13 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
 .grid__subtotal td {
     background: var(--n-050);
     border-top: 1px solid var(--n-200);
+    font-weight: 600;
+}
+
+/* The framing rows. Set apart from the entries without being shouted: they are
+   context for the column beside them, not a finding. */
+.grid__table tr.grid__edge td {
+    background: var(--n-050, #f8fafc);
     font-weight: 600;
 }
 

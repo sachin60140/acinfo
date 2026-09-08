@@ -1693,6 +1693,160 @@ class CustomerPortalTest extends TestCase
         );
     }
 
+    // ---------------------------------------- what the statement export carries
+
+    public function test_the_statement_carries_its_opening_and_closing_balance(): void
+    {
+        $customer = $this->party('customer', '9000001301');
+
+        $this->entry($customer->id, '2026-01-10', 'debit', 4000, 'Older work');
+        $this->entry($customer->id, '2026-06-10', 'debit', 2500, 'June work');
+        $this->entry($customer->id, '2026-06-20', 'credit', 1000, 'Part payment');
+
+        $page = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.statement', ['from' => '2026-06-01', 'to' => '2026-06-30']))
+            ->assertOk();
+
+        $lead = $page->json('props.lead');
+        $tail = $page->json('props.tail');
+
+        $this->assertCount(1, $lead, 'one opening row');
+        $this->assertSame('Opening Balance', $lead[0]['particular']);
+        // What the period was entered with: the January debit, and nothing from
+        // inside the period itself.
+        $this->assertEquals(4000, $lead[0]['balance']);
+
+        $this->assertCount(1, $tail, 'one closing row');
+        $this->assertSame('Closing Balance', $tail[0]['particular']);
+        $this->assertEquals(5500, $tail[0]['balance'], '4000 + 2500 - 1000');
+        $this->assertEquals(2500, $tail[0]['debit'], 'the period\'s debits');
+        $this->assertEquals(1000, $tail[0]['credit'], 'and its credits');
+    }
+
+    /**
+     * The figures on the framing rows have to be the ones the summary above the
+     * table already shows, or the printed statement and the screen disagree
+     * about the same account.
+     */
+    public function test_the_framing_rows_agree_with_the_summary(): void
+    {
+        $customer = $this->party('customer', '9000001302');
+
+        $this->entry($customer->id, '2026-01-10', 'debit', 7000);
+        $this->entry($customer->id, '2026-02-10', 'credit', 2000);
+
+        $body = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.statement'))->assertOk();
+
+        $this->assertEquals($body->json('page.opening'), $body->json('props.lead.0.balance'));
+        $this->assertEquals($body->json('page.closing'), $body->json('props.tail.0.balance'));
+        $this->assertEquals($body->json('page.debits'), $body->json('props.tail.0.debit'));
+        $this->assertEquals($body->json('page.credits'), $body->json('props.tail.0.credit'));
+    }
+
+    public function test_a_period_with_no_entries_still_says_what_was_brought_forward(): void
+    {
+        $customer = $this->party('customer', '9000001303');
+
+        $this->entry($customer->id, '2026-01-10', 'debit', 3300, 'Before the period');
+
+        $page = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.statement', ['from' => '2026-06-01', 'to' => '2026-06-30']))
+            ->assertOk();
+
+        $this->assertSame([], $page->json('props.rows'), 'nothing happened in June');
+        // But something was owed going into it, which is the answer somebody
+        // asking for an empty month actually wants.
+        $this->assertEquals(3300, $page->json('props.lead.0.balance'));
+        $this->assertEquals(3300, $page->json('props.tail.0.balance'));
+    }
+
+    // ----------------------------------------------- remarks on the statement
+
+    public function test_a_line_carries_the_remark_from_the_file_it_came_from(): void
+    {
+        $customer = $this->party('customer', '9000001304');
+
+        $file = $this->fileFor($customer);
+        $file->remarks = 'Original RC collected';
+        $file->save();
+
+        $this->entry($customer->id, '2026-03-01', 'debit', 5000, 'Work on a file', $file->id);
+
+        $rows = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.statement'))->assertOk()->json('props.rows');
+
+        $this->assertSame('Original RC collected', $rows[0]['remarks']);
+
+        $columns = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.statement'))->assertOk()->json('props.columns');
+
+        $this->assertContains('remarks', array_column($columns, 'key'), 'and a column to show it in');
+    }
+
+    /** "If available" — an account with no remarks anywhere gets no column. */
+    public function test_a_statement_with_no_remarks_carries_no_remarks_column(): void
+    {
+        $customer = $this->party('customer', '9000001305');
+
+        $this->entry($customer->id, '2026-03-01', 'debit', 5000, 'Typed straight into the ledger');
+
+        $columns = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.statement'))->assertOk()->json('props.columns');
+
+        $this->assertNotContains('remarks', array_column($columns, 'key'));
+    }
+
+    public function test_an_entry_with_no_file_carries_no_remark(): void
+    {
+        $customer = $this->party('customer', '9000001306');
+
+        $file = $this->fileFor($customer);
+        $file->remarks = 'A note on the file';
+        $file->save();
+
+        $this->entry($customer->id, '2026-03-01', 'debit', 5000, 'From a file', $file->id);
+        $this->entry($customer->id, '2026-03-02', 'credit', 1000, 'A payment received');
+
+        $rows = collect($this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.statement'))->assertOk()->json('props.rows'));
+
+        $this->assertSame('A note on the file', $rows->firstWhere('particular', 'From a file')['remarks']);
+        // A payment is not about any file, so it borrows no file's note.
+        $this->assertNull($rows->firstWhere('particular', 'A payment received')['remarks']);
+    }
+
+    /**
+     * The other remark, again. work_file_status_log writes "Given to <vendor>",
+     * and a statement is the document most likely to be forwarded.
+     */
+    public function test_the_statement_never_borrows_the_status_logs_remark(): void
+    {
+        $customer = $this->party('customer', '9000001307');
+
+        $file = $this->fileFor($customer);
+        $file->remarks = 'Safe to show';
+        $file->save();
+
+        \Illuminate\Support\Facades\DB::table('work_file_status_log')->insert([
+            'work_file_id' => $file->id,
+            'from_status' => 'in_office',
+            'to_status' => 'file_dispatch',
+            'remark' => 'Given to Dabloo Ji Muzaffarpur',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->entry($customer->id, '2026-03-01', 'debit', 5000, 'From a file', $file->id);
+
+        $body = $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.statement'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('Safe to show', $body);
+        $this->assertStringNotContainsString('Dabloo Ji', $body);
+        $this->assertStringNotContainsString('Given to', $body);
+    }
+
     // ------------------------------------------------------ issuing a password
 
     public function test_the_office_can_give_a_customer_a_login(): void

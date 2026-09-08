@@ -762,6 +762,20 @@
                 "balance:balance"
             ],
             "emptyText": "string",
+            "lead": {
+                "list_of": {
+                    "balance": "number",
+                    "credit": "null",
+                    "debit": "null",
+                    "id": "null",
+                    "particular": "string",
+                    "payment_mode": "null",
+                    "ref_no": "null",
+                    "ref_url": "null",
+                    "remarks": "null",
+                    "txn_date": "string"
+                }
+            },
             "perPage": "number",
             "rows": {
                 "list_of": {
@@ -773,10 +787,25 @@
                     "payment_mode": "string",
                     "ref_no": "string",
                     "ref_url": "string",
+                    "remarks": "null",
                     "txn_date": "string"
                 }
             },
             "sortable": "bool",
+            "tail": {
+                "list_of": {
+                    "balance": "number",
+                    "credit": "number",
+                    "debit": "number",
+                    "id": "null",
+                    "particular": "string",
+                    "payment_mode": "null",
+                    "ref_no": "null",
+                    "ref_url": "null",
+                    "remarks": "null",
+                    "txn_date": "string"
+                }
+            },
             "title": "string",
             "totals": {
                 "credit": "string",
