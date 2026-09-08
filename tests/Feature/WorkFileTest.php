@@ -1332,6 +1332,170 @@ class WorkFileTest extends TestCase
         $this->assertFalse(WorkFileModel::returnableToCustomer()->contains('id', $file->id));
     }
 
+    /**
+     * Approved on the record rather than through the board.
+     *
+     * The board refuses an approval with no screenshot attached, which is right
+     * and is covered elsewhere — but it means setStatuses() cannot produce an
+     * approved file at all. A fixture that quietly stayed in_office would let
+     * every test below pass while proving nothing, which is what the first
+     * version of them did.
+     */
+    private function approve(WorkFileModel $file, string $on = '2026-04-10'): WorkFileModel
+    {
+        foreach (WorkFileItemModel::where('work_file_id', $file->id)->get() as $item) {
+            $item->status = WorkFileModel::APPROVED;
+            $item->approved_on = $on;
+            $item->approval_screenshot = 'uploads/approvals/fixture.png';
+            $item->save();
+        }
+
+        $file->load('items');
+        $file->rollUp();
+        $file->save();
+
+        $fresh = WorkFileModel::find($file->id);
+
+        $this->assertSame(WorkFileModel::APPROVED, $fresh->status, 'the fixture is what it claims');
+
+        return $fresh;
+    }
+
+    /**
+     * Approved work cannot be handed back with a refund.
+     *
+     * Returning is a refund, not a delivery: netCustomer takes the returned
+     * portion off the charge, and a return with no partial figure typed takes
+     * all of it. Offering an approved file on that screen offers to give back
+     * money the office earned on a job the RTO has already done, and the charge
+     * leaves the customer's statement with it.
+     */
+    public function test_an_approved_file_is_never_offered_for_return(): void
+    {
+        $file = $this->approve($this->receive());
+
+        $this->assertFalse(
+            WorkFileModel::returnableToCustomer()->contains('id', $file->id),
+            'approved work was offered for refund'
+        );
+    }
+
+    /**
+     * And the post refuses it too. The page a file was ticked on may have been
+     * open since before it was approved, and the post is what moves the money.
+     */
+    public function test_an_approved_file_is_refused_even_if_it_is_posted(): void
+    {
+        $file = $this->approve($this->receive());
+
+        $before = PartyLedgerModel::currentBalance($this->customer->id);
+
+        $this->returnToCustomer([$file->id]);
+
+        $this->assertSame(
+            WorkFileModel::APPROVED,
+            WorkFileModel::find($file->id)->status,
+            'the file was returned anyway'
+        );
+
+        $this->assertSame(
+            $before,
+            PartyLedgerModel::currentBalance($this->customer->id),
+            'the customer was refunded for work that was done'
+        );
+
+        $this->assertSame(
+            0,
+            PartyLedgerModel::where('work_file_id', $file->id)->where('file_role', 'customer_return')->count(),
+            'a refund was written'
+        );
+    }
+
+    /**
+     * A folder where some work came through and some did not.
+     *
+     * The refund is per folder, so returning this one gives back the approved
+     * work's charge along with the rest. The rule is "any work approved", not
+     * "the folder is approved".
+     */
+    public function test_a_partly_approved_folder_is_never_offered_for_return(): void
+    {
+        $file = $this->receive();
+
+        // A second job on the same folder, so the two can disagree.
+        $second = new WorkFileItemModel;
+        $second->work_file_id = $file->id;
+        $second->work_type_id = $this->workType->id;
+        $second->customer_amount = 2000;
+        $second->status = 'in_office';
+        $second->save();
+
+        $first = WorkFileItemModel::where('work_file_id', $file->id)->orderBy('id')->first();
+        $first->status = WorkFileModel::APPROVED;
+        $first->approved_on = '2026-04-10';
+        $first->approval_screenshot = 'uploads/approvals/fixture.png';
+        $first->save();
+
+        $file->load('items');
+        $file->rollUp();
+        $file->save();
+
+        $this->assertSame(
+            WorkFileModel::PARTLY_APPROVED,
+            WorkFileModel::find($file->id)->status,
+            'the fixture is what it claims'
+        );
+
+        $this->assertFalse(
+            WorkFileModel::returnableToCustomer()->contains('id', $file->id),
+            'a folder holding approved work was offered for refund'
+        );
+    }
+
+    /**
+     * A folder marked approved that has no works under it at all.
+     *
+     * Every file carries works today, so the check on the works catches every
+     * approved folder on its own and the folder's own status looks redundant.
+     * It is not: it is the only thing standing between an itemless approved
+     * folder and a refund, and "there are none of those right now" is a fact
+     * about this database rather than about the rule.
+     */
+    public function test_an_approved_folder_with_no_works_is_still_refused(): void
+    {
+        $file = $this->receive();
+
+        WorkFileItemModel::where('work_file_id', $file->id)->delete();
+
+        $file->status = WorkFileModel::APPROVED;
+        $file->save();
+
+        $this->assertSame(
+            0,
+            WorkFileItemModel::where('work_file_id', $file->id)->count(),
+            'the fixture is what it claims'
+        );
+
+        $this->assertFalse(
+            WorkFileModel::returnableToCustomer()->contains('id', $file->id),
+            'an approved folder was offered for refund because it had no works to check'
+        );
+    }
+
+    /** Everything short of approved is still returnable, as it was. */
+    public function test_work_still_in_hand_is_still_returnable(): void
+    {
+        foreach (['in_office', 'paper_pendency', 'file_dispatch', 'under_verification'] as $status) {
+            $file = $this->receive();
+            $this->setStatuses([$file->id => $status]);
+
+            $this->assertTrue(
+                WorkFileModel::returnableToCustomer()->contains('id', $file->id),
+                "a file at $status stopped being returnable"
+            );
+        }
+    }
+
     public function test_taking_a_file_back_from_a_vendor_needs_a_reason(): void
     {
         $file = $this->receive();

@@ -744,8 +744,13 @@ class WorkFileController extends Controller
             }
 
             $returned = DB::transaction(function () use ($req, $amounts) {
+                /*
+                 * The same rule the screen listed by, asked again here. The
+                 * page a file was ticked on may have been open since before it
+                 * was approved, and the post is what moves the money.
+                 */
                 $files = WorkFileModel::whereIn('id', $req->input('files'))
-                    ->whereNotIn('status', [WorkFileModel::RETURNED, WorkFileModel::CANCELLED])
+                    ->withoutApprovedWork()
                     ->get();
 
                 foreach ($files as $file) {

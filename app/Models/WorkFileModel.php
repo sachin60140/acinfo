@@ -1010,11 +1010,39 @@ class WorkFileModel extends Model
      * the same conditions are re-applied on save, so a stale page cannot return
      * a file twice.
      */
+    /**
+     * Files that may be handed back to the customer with a refund.
+     *
+     * Returning is a refund, not a delivery: netCustomer() takes the returned
+     * portion off the charge, and a return with no partial figure typed takes
+     * all of it. So a folder holding work that came through approved must not
+     * be on that screen — sending it there gives back money the office earned,
+     * on a job the RTO has already done, and the statement quietly loses the
+     * charge.
+     *
+     * "Any work approved", not "the folder is approved": a partly approved
+     * folder is one where some work is through and some is not, and refunding
+     * the whole of it refunds the part that finished.
+     *
+     * Applied as a scope so the screen that lists them and the post that acts
+     * on them ask the same question. Two places spelling out one rule is how
+     * a list and the thing behind it come to disagree.
+     */
+    public function scopeWithoutApprovedWork($query)
+    {
+        return $query
+            ->whereNotIn('status', [self::RETURNED, self::CANCELLED, self::APPROVED])
+            ->whereNotExists(fn ($q) => $q->select(DB::raw(1))
+                ->from('work_file_item')
+                ->whereColumn('work_file_item.work_file_id', 'work_file.id')
+                ->where('work_file_item.status', self::APPROVED));
+    }
+
     public static function returnableToCustomer()
     {
         return self::query()
             ->with('workType', 'customer', 'vendor', 'items.workType')
-            ->whereNotIn('status', [self::RETURNED, self::CANCELLED])
+            ->withoutApprovedWork()
             ->orderBy('received_date', 'asc')
             ->orderBy('id', 'asc')
             ->get();
