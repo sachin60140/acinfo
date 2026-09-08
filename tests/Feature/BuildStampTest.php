@@ -213,15 +213,123 @@ class BuildStampTest extends TestCase
         $this->assertSame(1_600_000_000, Build::newestMtime($this->tmp));
     }
 
+    // ------------------------------------------------------------- the commit
+
+    /** Forty hex characters in the file, seven on the page. */
+    private const SHA = '44a52c5e1b7d9f0a3c2e8d6b4a1f7c9e0d2b3a51';
+
+    public function test_the_commit_is_read_from_the_branch_git_is_on(): void
+    {
+        $this->write('.git/HEAD', "ref: refs/heads/main\n");
+        $this->write('.git/refs/heads/main', self::SHA."\n");
+
+        $this->assertSame('44a52c5', Build::commitIn($this->tmp));
+    }
+
+    /**
+     * git folds loose refs into one file when it tidies up, and then there is
+     * no refs/heads/main to read at all.
+     */
+    public function test_the_commit_is_found_in_packed_refs(): void
+    {
+        $this->write('.git/HEAD', "ref: refs/heads/main\n");
+        $this->write('.git/packed-refs', implode("\n", [
+            '# pack-refs with: peeled fully-peeled sorted',
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/feature/other',
+            self::SHA.' refs/heads/main',
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb refs/tags/v1.0.0',
+            '^cccccccccccccccccccccccccccccccccccccccc',
+        ])."\n");
+
+        $this->assertSame('44a52c5', Build::commitIn($this->tmp));
+    }
+
+    public function test_a_branch_that_is_not_packed_has_no_commit(): void
+    {
+        $this->write('.git/HEAD', "ref: refs/heads/nowhere\n");
+        $this->write('.git/packed-refs', self::SHA." refs/heads/main\n");
+
+        $this->assertNull(Build::commitIn($this->tmp));
+    }
+
+    /**
+     * A malformed line must not shadow the real one.
+     *
+     * "# refs/heads/main" — somebody commenting an entry out — splits into a
+     * name that matches and a sha that is a hash character. Stopping at the
+     * first matching name reported no commit at all while the real entry sat
+     * two lines below.
+     */
+    public function test_a_malformed_entry_does_not_hide_the_real_one(): void
+    {
+        $this->write('.git/HEAD', "ref: refs/heads/main\n");
+        $this->write('.git/packed-refs', implode("\n", [
+            '# pack-refs with: peeled fully-peeled sorted',
+            '# refs/heads/main',
+            self::SHA.' refs/heads/main',
+            '^cccccccccccccccccccccccccccccccccccccccc',
+        ])."\n");
+
+        $this->assertSame('44a52c5', Build::commitIn($this->tmp));
+    }
+
+    public function test_a_detached_head_names_its_own_commit(): void
+    {
+        $this->write('.git/HEAD', self::SHA."\n");
+
+        $this->assertSame('44a52c5', Build::commitIn($this->tmp));
+    }
+
+    public function test_a_tree_with_no_git_names_no_commit(): void
+    {
+        $this->assertNull(Build::commitIn($this->tmp.'/not-a-repo'));
+    }
+
+    /** Anything that is not a sha is not printed as one. */
+    public function test_a_ref_that_is_not_a_sha_is_refused(): void
+    {
+        $this->write('.git/HEAD', "ref: refs/heads/main\n");
+        $this->write('.git/refs/heads/main', "not a commit id\n");
+
+        $this->assertNull(Build::commitIn($this->tmp));
+    }
+
     // -------------------------------------------------------------- the label
 
     public function test_the_label_reads_the_way_it_is_meant_to(): void
     {
         $this->assertMatchesRegularExpression(
-            '/^v\d+(\.\d+)* · \d{8}-\d{4}$/u',
+            '/^v\d+(\.\d+)* · \d{8}-\d{4} · [0-9a-f]{7}$/u',
             Build::label(),
-            'v1.1.1 · 20260907-2121'
+            'v1.1.1 · 20260907-2121 · 44a52c5'
         );
+    }
+
+    /**
+     * The version alone cannot tell two builds apart — it only moves when a
+     * release is worth naming — so the commit is what makes the label point at
+     * one build rather than a period of them.
+     */
+    public function test_the_label_names_the_commit_it_was_built_from(): void
+    {
+        $this->assertNotNull(Build::commit(), 'this repository has a commit to name');
+        $this->assertStringEndsWith(' · '.Build::commit(), Build::label());
+    }
+
+    /**
+     * A build with nothing to read a commit from says so by being quiet. A
+     * placeholder in that position looks like an answer and is not one.
+     */
+    public function test_a_label_with_no_commit_to_name_stops_at_the_time(): void
+    {
+        $this->assertMatchesRegularExpression(
+            '/^v\d+(\.\d+)* · \d{8}-\d{4}$/u',
+            'v'.Build::version().' · '.Build::stamp(),
+            'the two-part form is still well formed'
+        );
+
+        // And nothing invented in place of the commit.
+        $this->assertNull(Build::commitIn($this->tmp));
     }
 
     public function test_the_stamp_is_written_in_the_timezone_the_app_uses(): void

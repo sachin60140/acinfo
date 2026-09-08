@@ -73,10 +73,110 @@ class Build
         return self::at()->format('Ymd-Hi');
     }
 
-    /** The whole thing: v1.1.1 · 20260907-2121 */
+    /**
+     * The commit this build was made from, short.
+     *
+     * The version beside it is a release name and only moves when a release is
+     * worth naming, so on its own it cannot tell two builds apart. This can:
+     * it changes every commit, and it points at exactly one of them, which
+     * turns "is that deployed?" from a judgement into a lookup.
+     *
+     * Read out of git's own files. Loose ref first, then packed-refs for a
+     * checkout git has tidied, then HEAD itself when it names a commit
+     * directly rather than a branch.
+     */
+    public static function commit(): ?string
+    {
+        if (array_key_exists('commit', self::$memo)) {
+            return self::$memo['commit'];
+        }
+
+        return self::$memo['commit'] = self::commitIn(base_path());
+    }
+
+    public static function commitIn(string $base): ?string
+    {
+        $git = self::gitDir($base);
+
+        if ($git === null) {
+            return null;
+        }
+
+        $ref = self::headRef($git);
+
+        // Detached: HEAD is the commit rather than a pointer to a branch.
+        if ($ref === null) {
+            return self::shortSha(@file_get_contents($git.'/HEAD'));
+        }
+
+        if (is_file($git.'/'.$ref)) {
+            return self::shortSha(@file_get_contents($git.'/'.$ref));
+        }
+
+        return self::packedSha($git, $ref);
+    }
+
+    /**
+     * The line in packed-refs for one ref.
+     *
+     * The file holds more than branches: a header comment, and a peeled target
+     * under each annotated tag. Neither can be told apart by position, so a
+     * line counts only when it names this ref *and* carries something that is
+     * actually a commit id — and a line that fails either test is stepped over
+     * rather than ending the search.
+     *
+     * That last part matters more than it looks. Returning on the first line
+     * whose name matched let a malformed entry — "# refs/heads/main", left by
+     * somebody editing the file — shadow the real one below it, and the build
+     * would report no commit at all while sitting on one.
+     */
+    private static function packedSha(string $git, string $ref): ?string
+    {
+        $packed = @file_get_contents($git.'/packed-refs');
+
+        if ($packed === false) {
+            return null;
+        }
+
+        foreach (preg_split('/\R/', $packed) as $line) {
+            [$sha, $name] = array_pad(preg_split('/\s+/', trim($line), 2), 2, null);
+
+            if ($name !== $ref) {
+                continue;
+            }
+
+            if (($short = self::shortSha($sha)) !== null) {
+                return $short;
+            }
+        }
+
+        return null;
+    }
+
+    /** Forty hex characters, or nothing. Seven is what a person reads out. */
+    private static function shortSha($raw): ?string
+    {
+        $sha = strtolower(trim((string) $raw));
+
+        return preg_match('/^[0-9a-f]{40}$/', $sha) ? substr($sha, 0, 7) : null;
+    }
+
+    /**
+     * The whole thing: v1.1.1 · 20260907-2121 · 44a52c5
+     *
+     * The commit is left off rather than faked when there is nothing to read
+     * it from — a build that cannot say which commit it is should say so by
+     * being quiet, not by printing something that looks like an answer.
+     */
     public static function label(): string
     {
-        return 'v'.self::version().' · '.self::stamp();
+        $parts = ['v'.self::version(), self::stamp()];
+
+        if (($commit = self::commit()) !== null) {
+            $parts[] = $commit;
+        }
+
+        return implode(' · ', $parts);
     }
 
     /**
