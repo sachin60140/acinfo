@@ -387,6 +387,22 @@
 .dr { color: var(--dr-600); }
 .cr { color: var(--cr-600); }
 
+/*
+ * The build stamp in the footer.
+ *
+ * Read once after a deploy and ignored every other time, so it is sized and
+ * coloured to be found rather than noticed. Tabular figures because the whole
+ * point is comparing it with another one.
+ */
+.build-stamp {
+    color: var(--n-400);
+    font-family: var(--font-num);
+    font-size: var(--t-xs);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
 .ui-money--void {
     color: var(--n-400);
     text-decoration: line-through;
