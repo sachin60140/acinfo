@@ -117,13 +117,77 @@ function onPick(file) {
     });
 }
 
+/*
+ * Narrowing the list.
+ *
+ * The list is everything waiting to go out, which on a busy week is longer than
+ * the screen, and the handover at the counter is for one vehicle or one
+ * customer at a time.
+ *
+ * Rows are hidden with v-show and never v-if. These rows carry the ticks and
+ * the agreed rates: removed from the DOM they would take their inputs with
+ * them, and a file ticked before the search was typed would silently stop being
+ * handed over. So they stay on the form, and the footer says how many of them
+ * the search is covering up.
+ */
+const search = ref('');
+
+const haystack = (file) => [
+    file.file_no,
+    file.registration_no,
+    file.description,
+    file.customer,
+    file.received_date,
+    ...jobs(file).map((item) => item.work_type),
+].filter(Boolean).join(' ').toLowerCase();
+
+const terms = computed(() =>
+    search.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
+);
+
+// Every term has to appear somewhere on the row, so a second word narrows
+// rather than widens — "car4sales hpa" is that customer's hypothecation work.
+const matches = (file) => {
+    if (! terms.value.length) {
+        return true;
+    }
+
+    const hay = haystack(file);
+
+    return terms.value.every((term) => hay.includes(term));
+};
+
+const shown = computed(() => props.files.filter(matches));
+
+/*
+ * Ticked, and hidden by the search. Still on the form and still going out,
+ * which is the right behaviour and the surprising one — so it is said here
+ * rather than discovered in the success message afterwards.
+ */
+const hiddenPicked = computed(() =>
+    props.files.filter((file) => isPicked(file) && ! matches(file)).length
+);
+
+/*
+ * Select all means all of what is on screen.
+ *
+ * With a search typed, ticking every file in the list would hand over ones the
+ * operator cannot see and did not mean — and this is the screen that credits a
+ * vendor. Unticking leaves the hidden ones alone for the mirror of that reason:
+ * quietly dropping a file somebody ticked earlier is as wrong as quietly adding
+ * one. The footer says how many are ticked but out of sight.
+ */
 const allPicked = computed({
-    get: () => props.files.length > 0 && picked.value.length === props.files.length,
+    get: () => shown.value.length > 0 && shown.value.every(isPicked),
     set: (on) => {
-        picked.value = on ? props.files.map((file) => file.id) : [];
+        const ids = shown.value.map((file) => file.id);
+
+        picked.value = on
+            ? [...new Set([...picked.value, ...ids])]
+            : picked.value.filter((id) => ! ids.includes(id));
 
         if (on) {
-            props.files.forEach(onPick);
+            shown.value.forEach(onPick);
         }
     },
 });
@@ -159,7 +223,9 @@ const afterClass = computed(() =>
 
 const summary = computed(() => {
     if (!picked.value.length) {
-        return 'Nothing ticked yet.';
+        return terms.value.length && ! shown.value.length
+            ? 'No files match that search.'
+            : 'Nothing ticked yet.';
     }
 
     const count = picked.value.length;
@@ -173,6 +239,12 @@ const summary = computed(() => {
 
     if (blanks.value) {
         parts.push(`${blanks.value} without a price yet`);
+    }
+
+    if (hiddenPicked.value) {
+        const many = hiddenPicked.value === 1 ? 'it is' : 'they are';
+
+        parts.push(`${hiddenPicked.value} not shown by the search — ${many} still going out`);
     }
 
     return parts.join(', ') + '.';
@@ -283,10 +355,24 @@ onMounted(() => {
                     </div>
                 </div>
 
-                <label class="give-all">
-                    <input type="checkbox" class="give-check" v-model="allPicked">
-                    Select all
-                </label>
+                <div class="give-tools">
+                    <div class="give-search">
+                        <i class="bi bi-search"></i>
+                        <!-- No name, so it posts nothing. It narrows what is on
+                             screen and never what is sent. -->
+                        <input
+                            type="search"
+                            class="ui-input"
+                            v-model="search"
+                            placeholder="Search file, vehicle, customer or work"
+                            aria-label="Search files waiting to go out">
+                    </div>
+
+                    <label class="give-all">
+                        <input type="checkbox" class="give-check" v-model="allPicked">
+                        Select all
+                    </label>
+                </div>
             </div>
 
             <div class="ui-card__body">
@@ -307,7 +393,7 @@ onMounted(() => {
                         </thead>
                         <tbody>
                             <template v-for="file in files" :key="file.id">
-                            <tr :class="{ 'is-picked': isPicked(file) }">
+                            <tr v-show="matches(file)" :class="{ 'is-picked': isPicked(file) }">
                                 <td data-label="Give out" class="give-pick">
                                     <input
                                         type="checkbox"
@@ -384,7 +470,7 @@ onMounted(() => {
 
                             <!-- The five most recent, on a row of their own: a
                                  table of eight columns cannot hold them. -->
-                            <tr v-for="item in jobs(file)" :key="`past-${item.id}`" v-show="showingRates === item.id">
+                            <tr v-for="item in jobs(file)" :key="`past-${item.id}`" v-show="showingRates === item.id && matches(file)">
                                 <td :colspan="9" class="give-past">
                                     <div class="give-past__head">
                                         <strong>{{ item.work_type }}</strong> at
@@ -475,6 +561,33 @@ onMounted(() => {
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+}
+
+/* The search and Select all share the right of the heading, and wrap under it
+   on a phone rather than squeezing the box to nothing. */
+.give-tools {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-3);
+    justify-content: flex-end;
+}
+
+.give-search {
+    align-items: center;
+    display: flex;
+    flex: 1 1 18rem;
+    gap: var(--s-2);
+    max-width: 26rem;
+}
+
+.give-search i {
+    color: var(--n-400);
+}
+
+.give-search .ui-input {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .give-all {
