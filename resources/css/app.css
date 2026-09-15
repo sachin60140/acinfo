@@ -627,10 +627,28 @@
     white-space: nowrap;
 }
 
+/*
+ * Every cell starts at the top of its row.
+ *
+ * Centred, a one-line cell floats in the middle of a row as tall as its
+ * tallest cell — and on a listing of thirteen columns something always wraps.
+ * A customer called "Kuwy Technology Service Pvt Ltd" takes four lines, and
+ * the status badge, the figures and the Edit link beside it all drift to the
+ * middle of that band: nothing lines up with the heading it belongs to, or
+ * with the cell next to it.
+ *
+ * On a row of one line the two are identical, so this costs nothing anywhere
+ * and fixes the rows where it shows.
+ */
 .ui-table tbody td {
     border-bottom: 1px solid var(--n-100);
     padding: var(--s-3);
-    vertical-align: middle;
+    vertical-align: top;
+}
+
+/* The heading sits on the same line the cells under it start on. */
+.ui-table thead th {
+    vertical-align: bottom;
 }
 
 .ui-table tbody tr:hover td {
