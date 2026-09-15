@@ -438,6 +438,102 @@ class FileExpenseTest extends TestCase
         $this->assertSame(0, WorkFileExpenseModel::where('work_file_id', $file->id)->count());
     }
 
+    // ------------------------------------------------- what each file shows
+
+    private function filesList(): array
+    {
+        return $this->actingAs($this->admin())
+            ->getJson(route('workfile.index'))->assertOk()->json('props');
+    }
+
+    public function test_the_files_list_says_what_each_file_was_paid_out_on(): void
+    {
+        $file = $this->file($this->party('customer'), [
+            'vendor_id' => $this->party('vendor')->id,
+            'vendor_amount' => 5000,
+        ]);
+
+        $this->spend($file, 450);
+
+        $row = collect($this->filesList()['rows'])->firstWhere('file_no', $file->file_no);
+
+        $this->assertEquals(450, $row['expenses']);
+        $this->assertEquals(5450, $row['cost'], 'the cost includes it');
+    }
+
+    public function test_a_file_with_nothing_paid_out_leaves_the_cell_empty(): void
+    {
+        $file = $this->file($this->party('customer'), [
+            'vendor_id' => $this->party('vendor')->id,
+            'vendor_amount' => 5000,
+        ]);
+
+        $row = collect($this->filesList()['rows'])->firstWhere('file_no', $file->file_no);
+
+        // Nothing and zero are different facts: 0.00 states an expense that was
+        // never incurred.
+        $this->assertNull($row['expenses']);
+    }
+
+    /**
+     * A file done in-house has no vendor cost, so that cell is blank — but one
+     * with a challan against it cost that challan, and blanking the cell would
+     * hide a figure that is in the margin beside it.
+     *
+     * This is how the column read for a while after expenses were first folded
+     * into the cost.
+     */
+    public function test_an_in_house_file_with_an_expense_still_shows_a_cost(): void
+    {
+        $file = $this->file($this->party('customer'));
+
+        $blank = collect($this->filesList()['rows'])->firstWhere('file_no', $file->file_no);
+
+        $this->assertNull($blank['cost'], 'in-house and nothing paid out: no cost');
+
+        $this->spend($file, 450);
+
+        $row = collect($this->filesList()['rows'])->firstWhere('file_no', $file->file_no);
+
+        $this->assertEquals(450, $row['cost'], 'the challan is what this file cost');
+    }
+
+    /**
+     * Expenses are not a change to what the vendor charged.
+     *
+     * The "was" line under the cost exists for a part refund or a vendor
+     * return. Counting expenses in that comparison put "was 5,000.00" under
+     * every file that had ever had a challan.
+     */
+    public function test_an_expense_is_not_reported_as_a_changed_vendor_rate(): void
+    {
+        $file = $this->file($this->party('customer'), [
+            'vendor_id' => $this->party('vendor')->id,
+            'vendor_amount' => 5000,
+        ]);
+
+        $this->spend($file, 450);
+
+        $row = collect($this->filesList()['rows'])->firstWhere('file_no', $file->file_no);
+
+        $this->assertNull($row['cost_was'], 'an expense was read as the vendor rate changing');
+    }
+
+    public function test_the_work_report_shows_them_per_file_too(): void
+    {
+        $customer = $this->party('customer');
+        $file = $this->file($customer);
+
+        $this->spend($file, 450);
+
+        $row = collect($this->actingAs($this->admin())
+            ->getJson(route('report.files', ['party_type' => 'customer', 'party_id' => $customer->id]))
+            ->assertOk()->json('props.rows'))
+            ->firstWhere('file_no', $file->file_no);
+
+        $this->assertEquals(450, $row['expenses']);
+    }
+
     // -------------------------------------------------------- the reporting
 
     private function report(array $query = [])

@@ -171,6 +171,9 @@ class WorkFileController extends Controller
             $line = WorkFileModel::rowTotals($f);
             $netCustomer = $line['billed'];
             $netVendor = $line['cost'];
+            // The office's own share of that cost, kept apart so the column
+            // below can say what the vendor was agreed at.
+            $expenses = $line['expenses'];
 
             $billed += $netCustomer;
             $cost += $netVendor;
@@ -219,13 +222,34 @@ class WorkFileController extends Controller
 
                 'vendor' => $f->vendor_name ?? 'In-house',
                 'vendor_url' => $f->vendor_id ? route('party.statement', $f->vendor_id) : null,
-                // An in-house file has no vendor and so has no cost; 0.00 states
-                // one that was never incurred, and netVendor() returns 0.0 for a
-                // null amount. The old cell was left blank for exactly this row.
-                'cost' => $f->vendor_amount === null ? null : $netVendor,
-                'cost_was' => abs($netVendor - (float) $f->vendor_amount) > 0.005
+
+                /*
+                 * An in-house file has no vendor and so has no vendor cost;
+                 * 0.00 states one that was never incurred, and netVendor()
+                 * returns 0.0 for a null amount, so the cell is left blank for
+                 * exactly that row.
+                 *
+                 * Unless the office paid something out on it. A file done
+                 * in-house with a challan against it cost that challan, and
+                 * blanking the cell would hide a figure that is in the margin
+                 * beside it — which is how this column briefly read when
+                 * expenses were first folded into the cost.
+                 */
+                'cost' => ($f->vendor_amount === null && $expenses <= 0) ? null : $netVendor,
+
+                /*
+                 * What the vendor was agreed at, when the cost no longer
+                 * matches it. Compared against the vendor's own share and not
+                 * the total: expenses are not a change to what the vendor
+                 * charged, and counting them here put "was 3,500.00" under
+                 * every file that had ever had a challan.
+                 */
+                'cost_was' => abs(($netVendor - $expenses) - (float) $f->vendor_amount) > 0.005
                     ? 'was '.number_format((float) $f->vendor_amount, 2, '.', ',')
                     : null,
+
+                // What the office paid out of its own till on this file.
+                'expenses' => $expenses > 0 ? $expenses : null,
 
                 // Null while a price is outstanding on any work: a difference
                 // between a figure and a blank is not a margin.
@@ -276,7 +300,7 @@ class WorkFileController extends Controller
             'emptyText' => $filtered
                 ? 'No files match these filters. Try widening the dates, or clearing the status.'
                 : 'No files received yet. Use Receive Files above to add the first one.',
-            'totals' => ['charged' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
+            'totals' => ['charged' => 'sum', 'cost' => 'sum', 'expenses' => 'sum', 'margin' => 'sum'],
             'rowClass' => 'row_class',
             'columns' => [
                 ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
@@ -295,6 +319,9 @@ class WorkFileController extends Controller
                 ['key' => 'charged', 'label' => 'Charged', 'type' => 'money', 'class' => 'dr', 'sub' => 'charged_was'],
                 ['key' => 'vendor', 'label' => 'Vendor', 'type' => 'link', 'linkTo' => 'vendor_url'],
                 ['key' => 'cost', 'label' => 'Cost', 'type' => 'money', 'class' => 'cr', 'sub' => 'cost_was'],
+                // What the office paid out of its own till, included in the
+                // Cost beside it and broken out so a margin can be read.
+                ['key' => 'expenses', 'label' => 'Expenses', 'type' => 'money', 'class' => 'cr'],
                 // A margin has a side: earned reads Dr, lost reads Cr, and neither
                 // needs a minus sign to be read correctly.
                 ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold'],

@@ -405,6 +405,7 @@
                 "charged:money",
                 "vendor:link",
                 "cost:money",
+                "expenses:money",
                 "margin:balance",
                 "status:badge",
                 "works_done:text",
@@ -426,6 +427,7 @@
                     "customer_url": "string",
                     "description": "string",
                     "edit_url": "string",
+                    "expenses": "null",
                     "file_no": "string",
                     "id": "number",
                     "margin": "number",
@@ -450,6 +452,7 @@
             "totals": {
                 "charged": "string",
                 "cost": "string",
+                "expenses": "string",
                 "margin": "string"
             }
         }
@@ -466,6 +469,7 @@
                 "charged:money",
                 "vendor:link",
                 "cost:money",
+                "expenses:money",
                 "margin:balance",
                 "status:badge",
                 "works_done:text",
@@ -487,6 +491,7 @@
                     "customer_url": "string",
                     "description": "string",
                     "edit_url": "string",
+                    "expenses": "null",
                     "file_no": "string",
                     "id": "number",
                     "margin": "number",
@@ -511,6 +516,7 @@
             "totals": {
                 "charged": "string",
                 "cost": "string",
+                "expenses": "string",
                 "margin": "string"
             }
         }
@@ -527,6 +533,7 @@
                 "charged:money",
                 "vendor:link",
                 "cost:money",
+                "expenses:money",
                 "margin:balance",
                 "status:badge",
                 "works_done:text",
@@ -542,6 +549,7 @@
             "totals": {
                 "charged": "string",
                 "cost": "string",
+                "expenses": "string",
                 "margin": "string"
             }
         }
@@ -558,6 +566,7 @@
                 "charged:money",
                 "vendor:link",
                 "cost:money",
+                "expenses:money",
                 "margin:balance",
                 "status:badge",
                 "works_done:text",
@@ -579,6 +588,7 @@
                     "customer_url": "string",
                     "description": "string",
                     "edit_url": "string",
+                    "expenses": "null",
                     "file_no": "string",
                     "id": "number",
                     "margin": "number",
@@ -603,6 +613,7 @@
             "totals": {
                 "charged": "string",
                 "cost": "string",
+                "expenses": "string",
                 "margin": "string"
             }
         }
@@ -897,6 +908,7 @@
                 "remark:text",
                 "billed:money",
                 "cost:money",
+                "expenses:money",
                 "margin:money",
                 "update:action:no-export:no-sort"
             ],
@@ -925,6 +937,7 @@
                     "cost": "number",
                     "counterparty": "string",
                     "description": "string",
+                    "expenses": "null",
                     "file_no": "string",
                     "id": "number",
                     "items": {
@@ -960,6 +973,7 @@
             "totals": {
                 "billed": "string",
                 "cost": "string",
+                "expenses": "string",
                 "margin": "string"
             }
         }
@@ -984,6 +998,7 @@
                 "remark:text",
                 "billed:money",
                 "cost:money",
+                "expenses:money",
                 "margin:money",
                 "update:action:no-export:no-sort"
             ],
@@ -1012,6 +1027,7 @@
                     "cost": "number",
                     "counterparty": "string",
                     "description": "string",
+                    "expenses": "null",
                     "file_no": "string",
                     "id": "number",
                     "items": {
@@ -1047,6 +1063,7 @@
             "totals": {
                 "billed": "string",
                 "cost": "string",
+                "expenses": "string",
                 "margin": "string"
             }
         }

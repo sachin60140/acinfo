@@ -227,7 +227,12 @@ class ReportTest extends TestCase
 
         // Banded per party, with the money subtotalled per band and overall.
         $this->assertSame('party_id', $props['groupBy']);
-        $this->assertSame(['billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum'], $props['totals']);
+        // Expenses are subtotalled beside the cost they are part of, so a band
+        // says how much of what it cost was the office's own money.
+        $this->assertSame(
+            ['billed' => 'sum', 'cost' => 'sum', 'expenses' => 'sum', 'margin' => 'sum'],
+            $props['totals']
+        );
 
         $names = array_column($props['rows'], 'party_name');
         $this->assertContains($this->customerA->name, $names);

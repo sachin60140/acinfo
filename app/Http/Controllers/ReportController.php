@@ -459,6 +459,9 @@ class ReportController extends Controller
                     'remark' => $line['remark'],
                     'billed' => (float) $line['totals']['billed'],
                     'cost' => (float) $line['totals']['cost'],
+                    // What the office paid out of its own till, included in the
+                    // cost beside it and broken out so a margin can be read.
+                    'expenses' => $line['totals']['expenses'] > 0 ? (float) $line['totals']['expenses'] : null,
                     // Left null so the cell is empty rather than stating a loss
                     // on work nobody has priced.
                     'margin' => $line['totals']['margin'] === null ? null : (float) $line['totals']['margin'],
@@ -499,7 +502,7 @@ class ReportController extends Controller
 
             'groupBy' => 'party_id',
             'groupLabel' => 'party_band',
-            'totals' => ['billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
+            'totals' => ['billed' => 'sum', 'cost' => 'sum', 'expenses' => 'sum', 'margin' => 'sum'],
             // Paging off in all but name: a party split across two pages would be
             // banded twice and subtotalled twice, each time on half its files.
             'perPage' => max(count($reportRows), 1),
@@ -526,6 +529,7 @@ class ReportController extends Controller
                 ['key' => 'remark', 'label' => 'Remarks'],
                 ['key' => 'billed', 'label' => 'Billed', 'type' => 'money'],
                 ['key' => 'cost', 'label' => 'Cost', 'type' => 'money'],
+                ['key' => 'expenses', 'label' => 'Expenses', 'type' => 'money'],
                 ['key' => 'margin', 'label' => 'Margin', 'type' => 'money'],
 
                 /*
