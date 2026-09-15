@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\WorkFileApiController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CustomerPortalController;
+use App\Http\Controllers\ExpenseTypeController;
 use App\Http\Controllers\PartyController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\UserController;
@@ -87,6 +88,14 @@ Route::group(['middleware' => 'admin'], function () {
      */
     Route::post('admin/work-types/{id}/delete', [WorkTypeController::class, 'destroy'])->name('worktype.delete');
 
+    /*
+     * The kinds of money the office pays out on a file. Same shape as the work
+     * types above: the literal segment comes second, so no two patterns collide.
+     */
+    Route::match(['get', 'post'], 'admin/expense-types', [ExpenseTypeController::class, 'index'])->name('expensetype.index');
+    Route::post('admin/expense-types/{id}/delete', [ExpenseTypeController::class, 'destroy'])->name('expensetype.delete');
+    Route::match(['get', 'post'], 'admin/expense-types/{id}', [ExpenseTypeController::class, 'index'])->name('expensetype.edit');
+
     Route::match(['get', 'post'], 'admin/work-types/{id}', [WorkTypeController::class, 'index'])->name('worktype.edit');
 
     Route::get('admin/files', [WorkFileController::class, 'index'])->name('workfile.index');
@@ -112,6 +121,9 @@ Route::group(['middleware' => 'admin'], function () {
 
     // What the work earned, cut by month, year, work type, vendor or customer.
     Route::get('admin/reports/profit', [ReportController::class, 'profit'])->name('report.profit');
+
+    // Where the money went that nobody was tracking until now.
+    Route::get('admin/reports/expenses', [ReportController::class, 'expenses'])->name('report.expenses');
 
     /*
      * JSON for the browser-side screens. Inside the admin group on purpose: a

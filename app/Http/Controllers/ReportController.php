@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ExpenseTypeModel;
 use App\Models\PartyLedgerModel;
 use App\Models\PartyModel;
+use App\Models\WorkFileExpenseModel;
 use App\Models\WorkFileModel;
 use App\Support\Screen;
 use Illuminate\Http\Request;
@@ -124,6 +126,145 @@ class ReportController extends Controller
                     'to' => $to,
                 ])))
                 ->all(),
+        ])->toResponse($req);
+    }
+
+    /**
+     * What the office has paid out, and on which files.
+     *
+     * Every other report on this screen answers what the work earned. This one
+     * answers where the money went that nobody was tracking until now — a line
+     * per expense, banded by the kind it was, so "how much do challans cost us
+     * a month" has an answer rather than an impression.
+     *
+     * Office cash throughout: none of this appears on a party's statement,
+     * because none of it is owed by or to anybody.
+     */
+    public function expenses(Request $req)
+    {
+        $req->validate([
+            'expense_type_id' => 'nullable|integer|exists:expense_type,id',
+            'party_id' => 'nullable|integer|exists:party,id',
+            'from' => 'nullable|date_format:Y-m-d',
+            'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
+        ]);
+
+        $typeId = $req->query('expense_type_id');
+        $partyId = $req->query('party_id');
+        $from = $req->query('from');
+        $to = $req->query('to');
+
+        $query = WorkFileExpenseModel::query()
+            ->join('work_file', 'work_file.id', '=', 'work_file_expense.work_file_id')
+            ->join('expense_type', 'expense_type.id', '=', 'work_file_expense.expense_type_id')
+            ->leftJoin('party as customer', 'customer.id', '=', 'work_file.customer_id')
+            ->select(
+                'work_file_expense.id',
+                'work_file_expense.amount',
+                'work_file_expense.spent_on',
+                'work_file_expense.remark',
+                'work_file.id as file_id',
+                'work_file.file_no',
+                'work_file.registration_no',
+                'work_file.status',
+                'expense_type.id as type_id',
+                'expense_type.name as type_name',
+                'customer.name as customer_name'
+            );
+
+        if ($typeId) {
+            $query->where('expense_type.id', $typeId);
+        }
+
+        if ($partyId) {
+            $query->where('work_file.customer_id', $partyId);
+        }
+
+        // On the day the money left, not the day somebody entered it.
+        if ($from) {
+            $query->whereDate('work_file_expense.spent_on', '>=', $from);
+        }
+
+        if ($to) {
+            $query->whereDate('work_file_expense.spent_on', '<=', $to);
+        }
+
+        $rows = $query
+            ->orderBy('expense_type.name')
+            ->orderBy('work_file_expense.spent_on')
+            ->orderBy('work_file_expense.id')
+            ->get();
+
+        $fromText = $from ? date('d-m-Y', strtotime($from)) : 'Beginning';
+        $toText = $to ? date('d-m-Y', strtotime($to)) : 'Till date';
+        $periodText = $from || $to ? $fromText.' to '.$toText : 'All dates';
+
+        $total = (float) $rows->sum('amount');
+
+        $props = [
+            'title' => 'Expenses — '.$periodText,
+            // Banded by kind, so each band subtotals what that kind costs.
+            'groupBy' => 'type_id',
+            'groupLabel' => 'type_band',
+            'totals' => ['amount' => 'sum'],
+            // A kind split across two pages would be banded and subtotalled
+            // twice, each time on half its expenses.
+            'perPage' => max($rows->count(), 1),
+            'sortable' => false,
+            'emptyText' => ($typeId || $partyId || $from || $to)
+                ? 'No expenses match this report. Try widening the dates, or clearing the kind.'
+                : 'Nothing recorded yet. Expenses are entered on a file, under the works.',
+            'columns' => [
+                ['key' => 'type_id', 'label' => 'Kind Id', 'hidden' => true],
+                ['key' => 'spent_on', 'label' => 'Paid On', 'sortBy' => 'spent_sort'],
+                ['key' => 'type_name', 'label' => 'Kind'],
+                ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'file_url'],
+                ['key' => 'registration_no', 'label' => 'Vehicle'],
+                ['key' => 'customer_name', 'label' => 'Customer'],
+                ['key' => 'remark', 'label' => 'What For'],
+                ['key' => 'amount', 'label' => 'Amount', 'type' => 'money'],
+            ],
+            'rows' => $rows->map(fn ($one) => [
+                'id' => (int) $one->id,
+                'type_id' => (int) $one->type_id,
+                'type_band' => $one->type_name,
+                'type_name' => $one->type_name,
+                'spent_on' => date('d-m-Y', strtotime($one->spent_on)),
+                // Sorted on separately: dd-mm-yyyy compared as text orders by
+                // day of the month.
+                'spent_sort' => date('Y-m-d', strtotime($one->spent_on)),
+                'file_no' => $one->file_no,
+                'file_url' => route('workfile.edit', $one->file_id),
+                'registration_no' => $one->registration_no,
+                'customer_name' => $one->customer_name,
+                'remark' => $one->remark,
+                'amount' => (float) $one->amount,
+            ])->values(),
+        ];
+
+        // What each kind came to, for the tiles above the table.
+        $byType = $rows->groupBy('type_name')
+            ->map(fn ($group) => [
+                'count' => $group->count(),
+                'total' => (float) $group->sum('amount'),
+            ])
+            ->sortByDesc('total');
+
+        return Screen::make('admin.reports.expenses', 'vue-expense-report', $props, [
+            'periodText' => $periodText,
+            'from' => $from,
+            'to' => $to,
+            'maxDate' => now()->toDateString(),
+            'typeId' => $typeId ? (int) $typeId : null,
+            'partyId' => $partyId ? (int) $partyId : null,
+            'total' => $total,
+            'count' => $rows->count(),
+            'fileCount' => $rows->pluck('file_id')->unique()->count(),
+            'base' => route('report.expenses'),
+        ], [
+            'types' => ExpenseTypeModel::orderBy('name')->get(['id', 'name']),
+            'customers' => PartyModel::selectList('customer', $partyId),
+            'byType' => $byType,
         ])->toResponse($req);
     }
 

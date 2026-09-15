@@ -48,7 +48,12 @@ class FileExpenseTest extends TestCase
     {
         $party = new PartyModel;
         $party->party_type = $type;
-        $party->name = ucfirst($type).' for expenses';
+        /*
+         * Named apart, not just numbered apart. Two parties sharing a name made
+         * the customer filter untestable: a report of both of them uniqued down
+         * to one name and read exactly like a report of one.
+         */
+        $party->name = ucfirst($type).' '.uniqid().' for expenses';
         $party->mobile = '94000'.random_int(10000, 99999);
         $party->is_active = 1;
         $party->save();
@@ -431,6 +436,182 @@ class FileExpenseTest extends TestCase
         ])->assertSessionHasErrors('new_expenses.0.spent_on');
 
         $this->assertSame(0, WorkFileExpenseModel::where('work_file_id', $file->id)->count());
+    }
+
+    // -------------------------------------------------------- the reporting
+
+    private function report(array $query = [])
+    {
+        $url = route('report.expenses').($query ? '?'.http_build_query($query) : '');
+
+        return $this->actingAs($this->admin())->getJson($url)->assertOk();
+    }
+
+    public function test_the_report_lists_every_expense_with_the_file_it_was_on(): void
+    {
+        $customer = $this->party('customer');
+        $file = $this->file($customer);
+
+        $this->spend($file, 300, '2026-09-02');
+
+        $row = collect($this->report()->json('props.rows'))
+            ->firstWhere('file_no', $file->file_no);
+
+        $this->assertNotNull($row, 'the expense is on the report');
+        $this->assertSame('Transfer Challan', $row['type_name']);
+        $this->assertSame('02-09-2026', $row['spent_on']);
+        $this->assertEquals(300, $row['amount']);
+        $this->assertSame($customer->name, $row['customer_name']);
+    }
+
+    public function test_the_report_totals_what_was_paid_out(): void
+    {
+        $file = $this->file($this->party('customer'));
+
+        $before = (float) $this->report()->json('page.total');
+
+        $this->spend($file, 300);
+        $this->spend($file, 150);
+
+        $after = $this->report();
+
+        $this->assertEqualsWithDelta($before + 450, (float) $after->json('page.total'), 0.01);
+    }
+
+    public function test_the_report_narrows_to_a_kind(): void
+    {
+        $file = $this->file($this->party('customer'));
+
+        $challan = ExpenseTypeModel::where('name', 'Transfer Challan')->value('id');
+
+        $this->spend($file, 300);
+
+        $other = new WorkFileExpenseModel;
+        $other->work_file_id = $file->id;
+        $other->expense_type_id = ExpenseTypeModel::where('name', 'Affidavit')->value('id');
+        $other->amount = 150;
+        $other->spent_on = '2026-09-02';
+        $other->save();
+
+        $kinds = collect($this->report(['expense_type_id' => $challan])->json('props.rows'))
+            ->pluck('type_name')->unique()->values();
+
+        $this->assertSame(['Transfer Challan'], $kinds->all());
+    }
+
+    public function test_the_report_narrows_to_a_period(): void
+    {
+        $file = $this->file($this->party('customer'));
+
+        $this->spend($file, 300, '2026-01-10');
+        $this->spend($file, 150, '2026-06-10');
+
+        $rows = collect($this->report(['from' => '2026-06-01', 'to' => '2026-06-30'])->json('props.rows'))
+            ->where('file_no', $file->file_no);
+
+        $this->assertCount(1, $rows, 'only what was paid in June');
+        $this->assertEquals(150, $rows->first()['amount']);
+    }
+
+    public function test_the_report_narrows_to_one_customer(): void
+    {
+        $mine = $this->party('customer');
+        $theirs = $this->party('customer');
+
+        $this->spend($this->file($mine), 300);
+        $this->spend($this->file($theirs), 150);
+
+        $names = collect($this->report(['party_id' => $mine->id])->json('props.rows'))
+            ->pluck('customer_name')->unique()->values();
+
+        $this->assertSame([$mine->name], $names->all());
+    }
+
+    public function test_the_report_is_banded_by_kind(): void
+    {
+        $this->spend($this->file($this->party('customer')), 300);
+
+        $props = $this->report()->json('props');
+
+        $this->assertSame('type_id', $props['groupBy'], 'banded so each kind subtotals');
+        $this->assertArrayHasKey('amount', $props['totals']);
+    }
+
+    // ------------------------------------------------------ the kinds screen
+
+    public function test_the_types_screen_says_what_each_kind_has_cost(): void
+    {
+        $file = $this->file($this->party('customer'));
+        $this->spend($file, 300);
+        $this->spend($file, 150);
+
+        $row = collect($this->actingAs($this->admin())
+            ->getJson(route('expensetype.index'))->assertOk()->json('props.rows'))
+            ->firstWhere('name', 'Transfer Challan');
+
+        $this->assertNotNull($row);
+        $this->assertSame(2, $row['used']);
+        $this->assertEquals(450, $row['spent']);
+    }
+
+    public function test_a_kind_can_be_added_and_retired(): void
+    {
+        $name = 'Notary Fee '.uniqid();
+
+        $this->actingAs($this->admin())
+            ->post(route('expensetype.index'), ['name' => $name, 'default_amount' => '120'])
+            ->assertRedirect(route('expensetype.index'));
+
+        $type = ExpenseTypeModel::where('name', $name)->firstOrFail();
+
+        $this->assertSame('120.00', (string) $type->default_amount);
+        $this->assertTrue((bool) $type->is_active);
+
+        // Saving the edit form without the switch retires it.
+        $this->actingAs($this->admin())
+            ->post(route('expensetype.edit', $type->id), ['name' => $name])
+            ->assertRedirect(route('expensetype.index'));
+
+        $this->assertFalse((bool) $type->fresh()->is_active);
+    }
+
+    public function test_two_kinds_cannot_share_a_name(): void
+    {
+        $this->actingAs($this->admin())
+            ->post(route('expensetype.index'), ['name' => 'Affidavit'])
+            ->assertSessionHasErrors('name');
+    }
+
+    /**
+     * Deleting a kind money has been spent under would take the name of the
+     * thing that was paid off the file, the report and the margin.
+     */
+    public function test_a_kind_with_money_behind_it_cannot_be_deleted(): void
+    {
+        $file = $this->file($this->party('customer'));
+        $this->spend($file, 300);
+
+        $type = ExpenseTypeModel::where('name', 'Transfer Challan')->firstOrFail();
+
+        $this->actingAs($this->admin())
+            ->post(route('expensetype.delete', $type->id))
+            ->assertSessionHas('error');
+
+        $this->assertNotNull($type->fresh(), 'the kind was deleted out from under its expenses');
+    }
+
+    public function test_a_kind_nothing_was_spent_under_can_be_deleted(): void
+    {
+        $type = new ExpenseTypeModel;
+        $type->name = 'Unused '.uniqid();
+        $type->is_active = 1;
+        $type->save();
+
+        $this->actingAs($this->admin())
+            ->post(route('expensetype.delete', $type->id))
+            ->assertRedirect(route('expensetype.index'));
+
+        $this->assertNull($type->fresh());
     }
 
     public function test_the_edit_screen_offers_what_is_already_recorded(): void

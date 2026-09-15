@@ -140,6 +140,13 @@
       </a>
     </li>
 
+    <li class="nav-item">
+      <a class="{{ $navClass($req->routeIs('expensetype.index', 'expensetype.edit')) }}" href="{{ route('expensetype.index') }}">
+        <i class="bi bi-cash-stack"></i>
+        <span>Expense Types</span>
+      </a>
+    </li>
+
     <li class="nav-heading">Reports</li>
 
     <li class="nav-item">
@@ -153,6 +160,13 @@
       <a class="{{ $navClass($req->routeIs('report.files')) }}" href="{{ route('report.files') }}">
         <i class="bi bi-file-earmark-bar-graph"></i>
         <span>Work Report</span>
+      </a>
+    </li>
+
+    <li class="nav-item">
+      <a class="{{ $navClass($req->routeIs('report.expenses')) }}" href="{{ route('report.expenses') }}">
+        <i class="bi bi-cash-coin"></i>
+        <span>Expense Report</span>
       </a>
     </li>
 

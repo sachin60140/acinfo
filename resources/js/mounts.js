@@ -77,6 +77,8 @@ export const components = {
     // dialog over it for moving a file along without leaving the report.
     'vue-work-report': WorkReport,
     'vue-profit-report': DataGrid,
+    'vue-expense-report': DataGrid,
+    'vue-expense-types': DataGrid,
     'vue-client-list': DataGrid,
     'vue-client-statement': DataGrid,
 
