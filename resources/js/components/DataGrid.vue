@@ -633,7 +633,16 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
         </div>
 
         <div v-else class="ui-table-wrap">
-            <table class="ui-table grid__table">
+            <!--
+                A grid of many columns is given room to be itself and allowed
+                to scroll inside its own wrapper, rather than being squeezed
+                into the page width. Squeezed, every column takes what is left
+                after the fixed ones: a customer called "Kuwy Technology
+                Service Pvt Ltd" wrapped onto four lines and made a row four
+                lines tall, and the figures beside it drifted away from the row
+                they belonged to.
+            -->
+            <table class="ui-table grid__table" :class="{ 'grid__table--wide': shown.length >= 9 }">
                 <thead>
                     <tr>
                         <th
@@ -898,6 +907,24 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
     gap: var(--s-3);
     justify-content: center;
     padding: var(--s-3) 0;
+}
+
+/*
+ * Only above the width where the table is still a table. Below it every row
+ * becomes a card, where a minimum width would do nothing but bring back the
+ * sideways scroll the cards exist to avoid.
+ */
+@media (min-width: 992px) {
+    .grid__table--wide {
+        min-width: 72rem;
+    }
+
+    /* A name is a name. Wrapping "Kuwy Technology Service Pvt Ltd" is fine;
+       wrapping it after every word because the column is 90px is not. */
+    .grid__table--wide td,
+    .grid__table--wide th {
+        min-width: 5rem;
+    }
 }
 
 @media (max-width: 991.98px) {
