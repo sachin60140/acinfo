@@ -47,6 +47,12 @@ const props = defineProps({
     approvedKey: { type: String, required: true },
     cancelledKey: { type: String, required: true },
     errors: { type: Object, default: () => ({}) },
+
+    // What the office has paid out on this file, and the kinds it may be paid
+    // out under. Office cash: none of it touches a party ledger.
+    expenses: { type: Array, default: () => [] },
+    expenseTypes: { type: Array, default: () => [] },
+    today: { type: String, default: '' },
 });
 
 /*
@@ -167,6 +173,57 @@ function toggleRemove(work) {
 // What the file is left for, so the last work cannot be taken off and the
 // totals above say what will actually be charged.
 const keeping = computed(() => works.filter((work) => ! going(work)));
+
+/*
+ * What the office paid out on this file.
+ *
+ * Office cash, and cost only — a challan or an affidavit leaves the till and
+ * goes to nobody this application keeps a ledger for. It raises what the file
+ * cost, which is the whole reason it is recorded: every margin shown before
+ * this existed was too high by exactly the amount nobody was tracking.
+ */
+const paid = reactive(props.expenses.map((one) => ({ ...one })));
+const newPaid = reactive([]);
+const droppedPaid = reactive(new Set());
+
+const typeAmount = (id) =>
+    props.expenseTypes.find((type) => String(type.id) === String(id))?.amount ?? '';
+
+function addExpense() {
+    newPaid.push({
+        expense_type_id: '',
+        amount: '',
+        spent_on: props.today,
+        remark: '',
+    });
+}
+
+/*
+ * Choosing a kind fills in what it usually costs, on the choice only and never
+ * over something already typed — a figure that recomputed itself could not be
+ * corrected, and a challan is not the same at every office.
+ */
+function onExpenseType(row) {
+    if (String(row.amount).trim() !== '') {
+        return;
+    }
+
+    const usual = typeAmount(row.expense_type_id);
+
+    if (usual !== '') {
+        row.amount = Number(usual).toFixed(2);
+    }
+}
+
+function dropExpense(one) {
+    droppedPaid.has(one.id) ? droppedPaid.delete(one.id) : droppedPaid.add(one.id);
+}
+
+const paidTotal = computed(() =>
+    paid.filter((one) => ! droppedPaid.has(one.id))
+        .reduce((sum, one) => sum + (Number(one.amount) || 0), 0)
+    + newPaid.reduce((sum, one) => sum + (Number(one.amount) || 0), 0)
+);
 
 const worksOnFile = computed(
     () => (multiWork.value ? keeping.value.length : 1) + newWorks.length
@@ -897,6 +954,113 @@ onMounted(() => {
                         </span>
                     </div>
                 </div>
+
+                <!--
+                    Money the office paid out on this file: a transfer challan,
+                    an affidavit, a notary's fee. It raises what the file cost
+                    and writes to no ledger, because it went out of the till
+                    rather than to a vendor or on to a customer.
+                -->
+                <div v-if="isEdit" class="wf-paid">
+                    <div class="wf-paid__head">
+                        <h6 class="wf-paid__title">Expenses on this file</h6>
+                        <span class="ui-hint">
+                            Money the office paid out. It adds to the cost and lowers the margin;
+                            nobody's ledger moves.
+                        </span>
+                    </div>
+
+                    <div v-for="one in paid" :key="one.id" class="wf-paid__row" :class="{ 'is-going': droppedPaid.has(one.id) }">
+                        <select
+                            class="ui-select"
+                            :name="`expenses[${one.id}][expense_type_id]`"
+                            v-model="one.expense_type_id"
+                            :disabled="droppedPaid.has(one.id)">
+                            <option v-for="type in expenseTypes" :key="type.id" :value="type.id">{{ type.label }}</option>
+                        </select>
+                        <input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            class="ui-input ui-input--num"
+                            :name="`expenses[${one.id}][amount]`"
+                            v-model="one.amount"
+                            :disabled="droppedPaid.has(one.id)">
+                        <input
+                            type="date"
+                            class="ui-input"
+                            :name="`expenses[${one.id}][spent_on]`"
+                            v-model="one.spent_on"
+                            :max="today"
+                            :disabled="droppedPaid.has(one.id)">
+                        <input
+                            type="text"
+                            class="ui-input"
+                            :name="`expenses[${one.id}][remark]`"
+                            v-model="one.remark"
+                            maxlength="255"
+                            placeholder="What it was for"
+                            :disabled="droppedPaid.has(one.id)">
+                        <button
+                            type="button"
+                            class="ui-btn ui-btn--sm"
+                            :title="droppedPaid.has(one.id) ? 'Keep this expense' : 'Take this expense off the file'"
+                            @click="dropExpense(one)">
+                            <i class="bi" :class="droppedPaid.has(one.id) ? 'bi-arrow-counterclockwise' : 'bi-trash'"></i>
+                        </button>
+                        <!-- Marked rather than removed from the page: the row
+                             stays readable until the save, and an unticked mind
+                             can be changed. -->
+                        <input v-if="droppedPaid.has(one.id)" type="hidden" name="remove_expenses[]" :value="one.id">
+                    </div>
+
+                    <div v-for="(one, index) in newPaid" :key="`new-${index}`" class="wf-paid__row">
+                        <select
+                            class="ui-select"
+                            :name="`new_expenses[${index}][expense_type_id]`"
+                            v-model="one.expense_type_id"
+                            @change="onExpenseType(one)">
+                            <option value="">Select kind</option>
+                            <option v-for="type in expenseTypes" :key="type.id" :value="type.id">{{ type.label }}</option>
+                        </select>
+                        <input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            class="ui-input ui-input--num"
+                            :name="`new_expenses[${index}][amount]`"
+                            v-model="one.amount"
+                            placeholder="0.00">
+                        <input
+                            type="date"
+                            class="ui-input"
+                            :name="`new_expenses[${index}][spent_on]`"
+                            v-model="one.spent_on"
+                            :max="today">
+                        <input
+                            type="text"
+                            class="ui-input"
+                            :name="`new_expenses[${index}][remark]`"
+                            v-model="one.remark"
+                            maxlength="255"
+                            placeholder="What it was for">
+                        <button type="button" class="ui-btn ui-btn--sm" title="Drop this line" @click="newPaid.splice(index, 1)">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+
+                    <div class="wf-paid__foot">
+                        <button type="button" class="ui-btn ui-btn--sm" @click="addExpense">
+                            <i class="bi bi-plus-lg"></i> Add an expense
+                        </button>
+
+                        <span v-if="paidTotal" class="wf-paid__total">
+                            Paid out on this file <strong>{{ money(paidTotal) }}</strong>
+                        </span>
+                        <span v-else class="ui-hint">Nothing recorded yet.</span>
+                    </div>
+                </div>
+
                 <div class="ui-card__foot">
                     <span class="ui-hint">
                         Saving rewrites this file's entries on both statements.
@@ -1455,6 +1619,51 @@ onMounted(() => {
 @media (pointer: coarse) {
     .wf-form .input-group > .js-datefield {
         min-height: var(--tap);
+    }
+}
+
+/* Money the office paid out on a file. Laid out as a line per expense so a
+   challan and an affidavit read as two entries rather than one paragraph. */
+.wf-paid {
+    border-top: 1px solid var(--n-200);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    padding: var(--s-4);
+}
+
+.wf-paid__title {
+    font-size: var(--t-sm);
+    font-weight: 700;
+    margin: 0;
+}
+
+.wf-paid__row {
+    align-items: center;
+    display: grid;
+    gap: var(--s-2);
+    grid-template-columns: minmax(8rem, 1fr) 7rem 9rem minmax(8rem, 1.4fr) auto;
+}
+
+.wf-paid__row.is-going {
+    opacity: 0.55;
+}
+
+.wf-paid__foot {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    justify-content: space-between;
+}
+
+.wf-paid__total {
+    font-size: var(--t-sm);
+}
+
+@media (max-width: 767.98px) {
+    .wf-paid__row {
+        grid-template-columns: 1fr 1fr;
     }
 }
 </style>

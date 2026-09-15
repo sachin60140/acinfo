@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ExpenseTypeModel;
 use App\Models\PartyModel;
+use App\Models\WorkFileExpenseModel;
 use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
@@ -1424,6 +1426,32 @@ class WorkFileController extends Controller
                 // Work being taken off the file, by id.
                 'remove_works' => 'nullable|array',
                 'remove_works.*' => 'integer',
+
+                /*
+                 * Money the office paid out on this file: a transfer challan,
+                 * an affidavit, a notary's fee. Office cash, so no party ledger
+                 * is touched — it raises what the file cost and nothing else.
+                 *
+                 * Rows already on the file are corrected in place by id;
+                 * new_expenses are ones being added now. Both are guarded the
+                 * same way, because an expense is money and a mistyped one is a
+                 * margin that is wrong until somebody notices.
+                 */
+                'expenses' => 'nullable|array',
+                'expenses.*.expense_type_id' => 'required|integer|exists:expense_type,id',
+                'expenses.*.amount' => 'required|numeric|gt:0|max:99999999',
+                'expenses.*.spent_on' => 'required|date_format:Y-m-d|before_or_equal:today',
+                'expenses.*.remark' => 'nullable|string|max:255',
+
+                'new_expenses' => 'nullable|array',
+                'new_expenses.*.expense_type_id' => 'required|integer|exists:expense_type,id',
+                'new_expenses.*.amount' => 'required|numeric|gt:0|max:99999999',
+                'new_expenses.*.spent_on' => 'required|date_format:Y-m-d|before_or_equal:today',
+                'new_expenses.*.remark' => 'nullable|string|max:255',
+
+                // Expenses being taken off the file, by id.
+                'remove_expenses' => 'nullable|array',
+                'remove_expenses.*' => 'integer',
             ], [
                 'vendor_id.required_with' => 'Select the vendor this file was given to before entering a vendor amount.',
                 'items.*.work_type_id.required' => 'Every work on the file needs a type.',
@@ -1649,6 +1677,42 @@ class WorkFileController extends Controller
                     : $file->items()->whereIn('id', $removing->pluck('id'))->delete();
 
                 /*
+                 * What the office paid out on this file.
+                 *
+                 * Scoped to this file on every write. The ids arrive in the
+                 * form body, and an expense id from another file would
+                 * otherwise be edited or deleted from a page that has no
+                 * business with it.
+                 */
+                foreach ($req->input('expenses', []) as $id => $paid) {
+                    $file->expenses()->where('id', (int) $id)->update([
+                        'expense_type_id' => (int) $paid['expense_type_id'],
+                        'amount' => (float) $paid['amount'],
+                        'spent_on' => $paid['spent_on'],
+                        'remark' => trim((string) ($paid['remark'] ?? '')) ?: null,
+                        'updated_at' => now(),
+                    ]);
+                }
+
+                foreach ($req->input('new_expenses', []) as $paid) {
+                    if (($paid['expense_type_id'] ?? '') === '' || ($paid['amount'] ?? '') === '') {
+                        continue;
+                    }
+
+                    $expense = new WorkFileExpenseModel;
+                    $expense->work_file_id = $file->id;
+                    $expense->expense_type_id = (int) $paid['expense_type_id'];
+                    $expense->amount = (float) $paid['amount'];
+                    $expense->spent_on = $paid['spent_on'];
+                    $expense->remark = trim((string) ($paid['remark'] ?? '')) ?: null;
+                    $expense->save();
+                }
+
+                if ($dropped = $req->input('remove_expenses', [])) {
+                    $file->expenses()->whereIn('id', array_map('intval', $dropped))->delete();
+                }
+
+                /*
                  * The folder is the sum of its works, so it is written from
                  * them rather than from the boxes above — whenever any of them
                  * moved.
@@ -1771,6 +1835,42 @@ class WorkFileController extends Controller
                     'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
                 ])->values()
                 : [],
+
+            /*
+             * What the office has paid out on this file, and what it may be
+             * paid out under.
+             *
+             * Office cash: no party ledger is touched by any of this. It raises
+             * what the file cost and therefore lowers the margin, which is the
+             * whole point — a challan nobody recorded was a margin nobody could
+             * trust.
+             */
+            'expenses' => $isEdit
+                ? $file->expenses()->with('type')->orderBy('spent_on')->orderBy('id')->get()
+                    ->map(fn ($paid) => [
+                        'id' => (int) $paid->id,
+                        'expense_type_id' => (int) $paid->expense_type_id,
+                        'type' => $paid->type?->name,
+                        'amount' => (float) $paid->amount,
+                        'spent_on' => $paid->spent_on?->format('Y-m-d'),
+                        'remark' => $paid->remark,
+                    ])->values()
+                : [],
+
+            /*
+             * Retired types are still offered on a file already carrying one,
+             * so correcting the amount on an old expense does not force its
+             * kind to be changed as well.
+             */
+            'expenseTypes' => ExpenseTypeModel::selectList(
+                $isEdit ? $file->expenses()->pluck('expense_type_id')->all() : null
+            )->map(fn ($type) => [
+                'id' => (int) $type->id,
+                'label' => $type->name.($type->is_active ? '' : ' (retired)'),
+                'amount' => $type->default_amount === null ? '' : (float) $type->default_amount,
+            ])->values(),
+
+            'today' => date('Y-m-d'),
 
             /*
              * What this file already contributes to each party's balance.

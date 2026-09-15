@@ -201,6 +201,14 @@
                 }
             },
             "errors": "[]",
+            "expenseTypes": {
+                "list_of": {
+                    "amount": "string",
+                    "id": "number",
+                    "label": "string"
+                }
+            },
+            "expenses": "[]",
             "indexUrl": "string",
             "isEdit": "bool",
             "items": {
@@ -243,6 +251,7 @@
                     "user": "string"
                 }
             },
+            "today": "string",
             "values": {
                 "customer_amount": "string",
                 "customer_id": "number",

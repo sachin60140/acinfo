@@ -346,7 +346,26 @@ class WorkFileModel extends Model
     public function margin(): float
     {
         return self::netCustomer($this->status, $this->customer_amount, $this->returned_amount)
-            - self::netVendor($this->status, $this->vendor_amount, $this->isReturnedByVendor(), $this->vendor_returned_amount);
+            - self::netVendor($this->status, $this->vendor_amount, $this->isReturnedByVendor(), $this->vendor_returned_amount)
+            // What the office paid out of its own till on this file. Read from
+            // the database rather than from a loaded relation, so a margin is
+            // never quietly too high because nobody eager-loaded the expenses.
+            - $this->paidOut();
+    }
+
+    /** The office's own outlay on this file. */
+    public function paidOut(): float
+    {
+        if (! $this->exists) {
+            return 0.0;
+        }
+
+        return (float) WorkFileExpenseModel::where('work_file_id', $this->id)->sum('amount');
+    }
+
+    public function expenses(): HasMany
+    {
+        return $this->hasMany(WorkFileExpenseModel::class, 'work_file_id');
     }
 
     /**
@@ -763,14 +782,31 @@ class WorkFileModel extends Model
                  - LEAST(COALESCE(work_file.returned_amount, work_file.customer_amount), work_file.customer_amount)
         ELSE work_file.customer_amount END";
 
+    /**
+     * What the office paid out of its own till on a file.
+     *
+     * Added to the cost wherever cost is asked for, so every margin in this
+     * application counts it without each screen remembering to.
+     *
+     * Not zeroed on a cancelled file, which is the one place it parts company
+     * with the vendor figure above. A cancelled file charged nobody and owes no
+     * vendor, so both of those are nothing — but a challan paid before it was
+     * cancelled is money that actually left, and a report that quietly forgets
+     * it is the report this whole feature exists to stop.
+     */
+    public const PAID_OUT = "COALESCE((SELECT SUM(work_file_expense.amount)
+        FROM work_file_expense
+        WHERE work_file_expense.work_file_id = work_file.id), 0)";
+
     /** And what it cost, mirroring netVendor() the same way. */
-    public const SPENT = "CASE
+    public const SPENT = "(CASE
         WHEN work_file.status = 'cancelled' THEN 0
         WHEN work_file.vendor_returned_on IS NOT NULL
             THEN COALESCE(work_file.vendor_amount, 0)
                  - LEAST(COALESCE(work_file.vendor_returned_amount, COALESCE(work_file.vendor_amount, 0)),
                          COALESCE(work_file.vendor_amount, 0))
-        ELSE COALESCE(work_file.vendor_amount, 0) END";
+        ELSE COALESCE(work_file.vendor_amount, 0) END
+        + ".self::PAID_OUT.')';
 
     /**
      * Whether a file's margin can be known yet, as SQL.
@@ -1884,6 +1920,9 @@ class WorkFileModel extends Model
                 self::workLabelColumn(),
                 self::unpricedWorksColumn(),
                 self::unbilledWorksColumn(),
+                // What the office paid out of its own till, so rowTotals can
+                // add it to the cost without a query per row.
+                DB::raw(self::PAID_OUT.' as expenses'),
                 'customer.name as customer_name',
                 'vendor.name as vendor_name',
                 DB::raw(($isVendor ? 'vendor.id' : 'customer.id').' as party_id'),
@@ -2117,11 +2156,24 @@ class WorkFileModel extends Model
     public static function rowTotals($row): array
     {
         $billed = self::netCustomer($row->status, $row->customer_amount, $row->returned_amount);
-        $cost = self::netVendor($row->status, $row->vendor_amount, $row->vendor_returned_on !== null, $row->vendor_returned_amount);
+
+        /*
+         * The vendor's share, and the office's own.
+         *
+         * A row that was not asked for its expenses reports none rather than
+         * guessing: a query that has not selected them cannot say whether the
+         * answer is nothing or unknown, and inventing a zero would understate a
+         * cost rather than leave it visibly absent.
+         */
+        $paidOut = (float) ($row->expenses ?? 0);
+
+        $cost = self::netVendor($row->status, $row->vendor_amount, $row->vendor_returned_on !== null, $row->vendor_returned_amount)
+            + $paidOut;
 
         return [
             'billed' => $billed,
             'cost' => $cost,
+            'expenses' => $paidOut,
             'margin' => self::awaitingPrice($row) ? null : $billed - $cost,
         ];
     }
@@ -2280,6 +2332,9 @@ class WorkFileModel extends Model
                 self::workLabelColumn(),
                 self::unpricedWorksColumn(),
                 self::unbilledWorksColumn(),
+                // What the office paid out of its own till, so rowTotals can
+                // add it to the cost without a query per row.
+                DB::raw(self::PAID_OUT.' as expenses'),
                 'customer.name as customer_name',
                 'customer.id as customer_id',
                 'vendor.name as vendor_name',
