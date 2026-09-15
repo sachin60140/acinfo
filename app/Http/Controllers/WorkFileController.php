@@ -4,12 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Models\ExpenseTypeModel;
 use App\Models\PartyModel;
+use App\Models\WorkFileDocumentModel;
 use App\Models\WorkFileExpenseModel;
 use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
 use App\Support\Screen;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -1479,6 +1481,22 @@ class WorkFileController extends Controller
                 // Expenses being taken off the file, by id.
                 'remove_expenses' => 'nullable|array',
                 'remove_expenses.*' => 'integer',
+
+                /*
+                 * Papers scanned against the file. Several at once, because
+                 * that is how they are scanned — a form, its annexure and the
+                 * receipt are one trip to the scanner.
+                 *
+                 * PDFs only, and checked by content rather than by the name
+                 * the browser sent: this directory is web-served, and what
+                 * lands in it must not depend on what a filename claims.
+                 */
+                'documents' => 'nullable|array|max:20',
+                'documents.*' => 'file|mimes:pdf|max:10240',
+
+                // Documents being taken off the file, by id.
+                'remove_documents' => 'nullable|array',
+                'remove_documents.*' => 'integer',
             ], [
                 'vendor_id.required_with' => 'Select the vendor this file was given to before entering a vendor amount.',
                 'items.*.work_type_id.required' => 'Every work on the file needs a type.',
@@ -1740,6 +1758,65 @@ class WorkFileController extends Controller
                 }
 
                 /*
+                 * Papers scanned against the file. Each upload is a new row
+                 * and never an overwrite: a corrected form is what supersedes
+                 * the earlier one, and replacing it in place would lose the
+                 * record of what the office actually sent at the time.
+                 */
+                foreach ($req->file('documents', []) as $upload) {
+                    if (! $upload || ! $upload->isValid()) {
+                        continue;
+                    }
+
+                    /*
+                     * Read before the move, not after.
+                     *
+                     * storeUpload() moves the temporary file, and everything
+                     * the upload can tell you about itself is answered by
+                     * stat-ing that file — so asking afterwards throws rather
+                     * than returning the size of what was just stored.
+                     */
+                    $name = mb_substr($upload->getClientOriginalName(), 0, 255);
+                    $size = (int) $upload->getSize();
+
+                    $doc = new WorkFileDocumentModel;
+                    $doc->work_file_id = $file->id;
+                    $doc->path = WorkFileModel::storeUpload(
+                        $upload,
+                        null,
+                        $file->file_no,
+                        WorkFileModel::DOC_DIR
+                    );
+                    // Kept for showing and for sending it back under, never
+                    // for building a path: the stored name is generated.
+                    $doc->original_name = $name;
+                    $doc->size = $size;
+                    $doc->uploaded_by = Auth::id();
+                    $doc->save();
+                }
+
+                if ($goneDocs = $req->input('remove_documents', [])) {
+                    $docs = $file->documents()->whereIn('id', array_map('intval', $goneDocs))->get();
+
+                    foreach ($docs as $doc) {
+                        $doc->delete();
+
+                        /*
+                         * The file on disk goes only once the row naming it has
+                         * safely committed, or a rollback leaves a document
+                         * deleted and a row still pointing at it.
+                         */
+                        DB::afterCommit(function () use ($doc) {
+                            $path = public_path($doc->path);
+
+                            if (is_file($path)) {
+                                unlink($path);
+                            }
+                        });
+                    }
+                }
+
+                /*
                  * The folder is the sum of its works, so it is written from
                  * them rather than from the boxes above — whenever any of them
                  * moved.
@@ -1896,6 +1973,21 @@ class WorkFileController extends Controller
                 'label' => $type->name.($type->is_active ? '' : ' (retired)'),
                 'amount' => $type->default_amount === null ? '' : (float) $type->default_amount,
             ])->values(),
+
+            /*
+             * Papers scanned against this file, newest first — which is the
+             * order they are read in, because the newest is the one that
+             * supersedes the rest and the one the customer is offered.
+             */
+            'documents' => $isEdit
+                ? $file->documents()->orderByDesc('id')->get()->map(fn ($doc) => [
+                    'id' => (int) $doc->id,
+                    'name' => $doc->original_name,
+                    'size' => $doc->sizeText(),
+                    'uploaded' => $doc->created_at?->format('d-m-Y'),
+                    'url' => url($doc->path),
+                ])->values()
+                : [],
 
             'today' => date('Y-m-d'),
 

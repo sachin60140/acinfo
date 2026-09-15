@@ -188,6 +188,22 @@
                             </div>
                         @endif
 
+                        @if ($document)
+                            {{-- The papers themselves, under the name they were
+                                 scanned as. The newest is the one that
+                                 supersedes the rest, which is why it is the one
+                                 offered rather than a list to choose from. --}}
+                            <div class="file-remark mb-3">
+                                <span class="label">Your Document</span>
+                                <a href="{{ $document['url'] }}" class="btn btn-primary btn-sm">
+                                    <i class="bi bi-file-earmark-pdf"></i> Download {{ $document['name'] }}
+                                </a>
+                                <div class="statement-period">
+                                    Uploaded {{ $document['uploaded'] }}@if ($document['size']) &middot; {{ $document['size'] }}@endif
+                                </div>
+                            </div>
+                        @endif
+
                         @if ($fileScreenshot)
                             {{-- A file received before works were priced one by one
                                  carries its approval on the folder rather than on a

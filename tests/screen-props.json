@@ -200,6 +200,7 @@
                     "label": "string"
                 }
             },
+            "documents": "[]",
             "errors": "[]",
             "expenseTypes": {
                 "list_of": {

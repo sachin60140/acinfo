@@ -477,11 +477,55 @@ class CustomerPortalController extends Controller
             'charged' => WorkFileModel::netCustomer($file->status, $file->customer_amount, $file->returned_amount),
             'returnedOn' => $file->returned_on ? date('d-m-Y', strtotime($file->returned_on)) : null,
             'fileScreenshot' => $fileScreenshot,
+
+            /*
+             * The newest document on the file, for the customer to take away.
+             * Offered through a route rather than at its path: these are
+             * web-served with no authentication of their own.
+             */
+            'document' => ($doc = \App\Models\WorkFileDocumentModel::latestFor($file->id)) ? [
+                'name' => $doc->original_name,
+                'size' => $doc->sizeText(),
+                'uploaded' => $doc->created_at?->format('d-m-Y'),
+                'url' => route('customer.file.document', $file->id),
+            ] : null,
             'workCount' => count($rows),
             // Everything that has happened to this file, oldest first.
             'timeline' => WorkFileModel::customerTimeline($file->id),
             'filesUrl' => route('customer.files'),
         ])->toResponse($req);
+    }
+
+    /**
+     * The newest document on the file, served only to its customer.
+     *
+     * Through the application rather than linked at its path under public/, for
+     * the reason the approval below is: those files are web-served with no
+     * authentication, and a portal handing customers those URLs turns an
+     * unguessable filename into a link that is forwarded and saved for good.
+     *
+     * Always the newest, never one named in the URL. A document gets revised,
+     * the newest is the one that supersedes the rest, and an id taken from the
+     * address bar would be one more thing to have to scope.
+     */
+    public function document(Request $req, int $id)
+    {
+        $file = $this->ownFile($id);
+
+        $doc = \App\Models\WorkFileDocumentModel::latestFor($file->id);
+
+        abort_if($doc === null, 404);
+        abort_unless(WorkFileModel::isStoredUpload($doc->path), 404);
+
+        /*
+         * Sent as a download under the name it arrived with, not the generated
+         * one it is stored as — "Form-34.pdf" is what the customer asked for
+         * and "F-00051-9ccb13d4b79a.pdf" is what they would otherwise get.
+         */
+        return response()->download(public_path($doc->path), $doc->original_name, [
+            'Cache-Control' => 'private, no-store',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
     }
 
     /**

@@ -368,6 +368,12 @@ class WorkFileModel extends Model
         return $this->hasMany(WorkFileExpenseModel::class, 'work_file_id');
     }
 
+    /** Papers scanned against this file, newest last. */
+    public function documents(): HasMany
+    {
+        return $this->hasMany(WorkFileDocumentModel::class, 'work_file_id');
+    }
+
     /**
      * What a file actually earns from its customer, once its status is taken
      * into account. Cancelled never charged them; returned charged them and gave
@@ -421,6 +427,13 @@ class WorkFileModel extends Model
     public const UPLOAD_DIR = 'uploads/approvals';
 
     /**
+     * Papers scanned against a file, as opposed to the evidence that one work
+     * on it came through. Kept apart so a listing of either is a listing of
+     * one kind of thing.
+     */
+    public const DOC_DIR = 'uploads/documents';
+
+    /**
      * Store an approval screenshot against this file, replacing any earlier one.
      *
      * The stored name is derived from the file number and a hash, never from the
@@ -437,9 +450,9 @@ class WorkFileModel extends Model
      *
      * @param  string|null  $previous  a path this one replaces
      */
-    public static function storeUpload(UploadedFile $upload, ?string $previous = null, string $prefix = 'item'): string
+    public static function storeUpload(UploadedFile $upload, ?string $previous = null, string $prefix = 'item', string $dir = self::UPLOAD_DIR): string
     {
-        $directory = public_path(self::UPLOAD_DIR);
+        $directory = public_path($dir);
 
         if (! is_dir($directory)) {
             mkdir($directory, 0755, true);
@@ -455,7 +468,7 @@ class WorkFileModel extends Model
         $name = $safe.'-'.substr(md5(uniqid('', true)), 0, 12).'.'.$extension;
 
         $upload->move($directory, $name);
-        $stored = self::UPLOAD_DIR.'/'.$name;
+        $stored = $dir.'/'.$name;
 
         // The one it replaces goes only once the row pointing at the new path
         // has safely committed, or a rollback leaves evidence deleted and a
@@ -1717,8 +1730,15 @@ class WorkFileModel extends Model
             return false;
         }
 
-        return str_starts_with($path, self::UPLOAD_DIR.'/')
-            && is_file(public_path($path));
+        /*
+         * One of the two directories this application writes to, and nowhere
+         * else. Checked as a list rather than a prefix per caller: a third
+         * kind of upload should be refused here until it is added on purpose.
+         */
+        $ours = str_starts_with($path, self::UPLOAD_DIR.'/')
+            || str_starts_with($path, self::DOC_DIR.'/');
+
+        return $ours && is_file(public_path($path));
     }
 
     public static function workBreakdown(array $fileIds): array

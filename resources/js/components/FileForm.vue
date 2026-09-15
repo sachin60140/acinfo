@@ -53,6 +53,9 @@ const props = defineProps({
     expenses: { type: Array, default: () => [] },
     expenseTypes: { type: Array, default: () => [] },
     today: { type: String, default: '' },
+
+    // Papers scanned against this file, newest first.
+    documents: { type: Array, default: () => [] },
 });
 
 /*
@@ -218,6 +221,29 @@ function onExpenseType(row) {
 function dropExpense(one) {
     droppedPaid.has(one.id) ? droppedPaid.delete(one.id) : droppedPaid.add(one.id);
 }
+
+/*
+ * Papers scanned against this file.
+ *
+ * Several at a time, because that is how they are scanned — a form, its
+ * annexure and the receipt are one trip to the scanner. Each upload is a new
+ * document and never an overwrite: a corrected form supersedes the earlier one,
+ * and replacing it in place would lose the record of what was sent at the time.
+ */
+const droppedDocs = reactive(new Set());
+const picked = ref([]);
+
+function onDocs(event) {
+    // Named here rather than read off the input at submit time, so the panel
+    // can say what is about to be uploaded.
+    picked.value = [...event.target.files].map((one) => one.name);
+}
+
+function dropDoc(doc) {
+    droppedDocs.has(doc.id) ? droppedDocs.delete(doc.id) : droppedDocs.add(doc.id);
+}
+
+const keepingDocs = computed(() => props.documents.filter((doc) => ! droppedDocs.has(doc.id)));
 
 const paidTotal = computed(() =>
     paid.filter((one) => ! droppedPaid.has(one.id))
@@ -1061,6 +1087,59 @@ onMounted(() => {
                     </div>
                 </div>
 
+                <!--
+                    The papers themselves. Different from the approval
+                    screenshots above, which are evidence that one work came
+                    through: these are the file's own documents, and the newest
+                    is what the customer is offered.
+                -->
+                <div v-if="isEdit" class="wf-docs">
+                    <div class="wf-paid__head">
+                        <h6 class="wf-paid__title">Documents</h6>
+                        <span class="ui-hint">
+                            PDFs scanned against this file. The customer can download the newest one.
+                        </span>
+                    </div>
+
+                    <div v-for="(doc, i) in documents" :key="doc.id" class="wf-docs__row" :class="{ 'is-going': droppedDocs.has(doc.id) }">
+                        <i class="bi bi-file-earmark-pdf"></i>
+                        <a :href="doc.url" target="_blank" rel="noopener" class="ui-link wf-docs__name">{{ doc.name }}</a>
+                        <span class="ui-hint">
+                            {{ doc.uploaded }}<template v-if="doc.size"> &middot; {{ doc.size }}</template>
+                            <!-- Said on the row rather than left to be worked
+                                 out from the order. -->
+                            <template v-if="i === 0 && ! droppedDocs.has(doc.id)"> &middot; latest</template>
+                        </span>
+                        <button
+                            type="button"
+                            class="ui-btn ui-btn--sm"
+                            :title="droppedDocs.has(doc.id) ? 'Keep this document' : 'Take this document off the file'"
+                            @click="dropDoc(doc)">
+                            <i class="bi" :class="droppedDocs.has(doc.id) ? 'bi-arrow-counterclockwise' : 'bi-trash'"></i>
+                        </button>
+                        <input v-if="droppedDocs.has(doc.id)" type="hidden" name="remove_documents[]" :value="doc.id">
+                    </div>
+
+                    <div class="wf-docs__add">
+                        <input
+                            type="file"
+                            class="ui-input"
+                            name="documents[]"
+                            accept="application/pdf,.pdf"
+                            multiple
+                            @change="onDocs">
+                        <span v-if="picked.length" class="ui-hint">
+                            {{ picked.length }} {{ picked.length === 1 ? 'file' : 'files' }} will be added when you save.
+                        </span>
+                        <span v-else-if="! keepingDocs.length" class="ui-hint">
+                            Nothing scanned against this file yet.
+                        </span>
+                        <span v-else class="ui-hint">
+                            {{ keepingDocs.length }} on file. Adding another does not replace them.
+                        </span>
+                    </div>
+                </div>
+
                 <div class="ui-card__foot">
                     <span class="ui-hint">
                         Saving rewrites this file's entries on both statements.
@@ -1664,6 +1743,55 @@ onMounted(() => {
 @media (max-width: 767.98px) {
     .wf-paid__row {
         grid-template-columns: 1fr 1fr;
+    }
+}
+
+/* Papers scanned against a file. A line each, so a form and its annexure
+   read as two documents rather than one run of text. */
+.wf-docs {
+    border-top: 1px solid var(--n-200);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    padding: var(--s-4);
+}
+
+.wf-docs__row {
+    align-items: center;
+    display: grid;
+    gap: var(--s-2);
+    grid-template-columns: auto minmax(6rem, 1fr) auto auto;
+}
+
+.wf-docs__row.is-going {
+    opacity: 0.55;
+}
+
+.wf-docs__row.is-going .wf-docs__name {
+    text-decoration: line-through;
+}
+
+.wf-docs__name {
+    overflow-wrap: anywhere;
+}
+
+.wf-docs__add {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+}
+
+.wf-docs__add .ui-input {
+    flex: 1 1 16rem;
+    min-width: 0;
+}
+
+@media (max-width: 575.98px) {
+    /* The name takes the width it needs and the rest sits under it, rather
+       than four columns squeezing a filename to three characters. */
+    .wf-docs__row {
+        grid-template-columns: auto 1fr;
     }
 }
 </style>
