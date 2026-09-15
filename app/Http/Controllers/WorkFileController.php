@@ -709,6 +709,59 @@ class WorkFileController extends Controller
      * credit is added beside it, so the pair reads as "charged, then returned"
      * rather than the charge quietly vanishing.
      */
+    /**
+     * A page to return to, but only one of ours.
+     *
+     * This arrives in the form body, which means it arrives from whoever sent
+     * the form. Redirecting to it unchecked is how a link that looks like a
+     * page of this application lands somebody on a copy of the login screen
+     * somewhere else — so the host has to match, and anything that is not a
+     * plain http(s) URL on this site is ignored rather than argued with.
+     *
+     * The path and query survive; nothing else does.
+     */
+    private static function safeReturn($url): ?string
+    {
+        if (! is_string($url) || trim($url) === '') {
+            return null;
+        }
+
+        $parts = parse_url(trim($url));
+
+        if ($parts === false) {
+            return null;
+        }
+
+        /*
+         * Only the path and the query are kept, and the address is rebuilt from
+         * this application's own base. That is the whole guard: whatever host,
+         * scheme or credentials were sent are not rejected so much as never
+         * used, so there is nothing left for them to point at.
+         *
+         * Checking them as well was the first version of this and every one of
+         * those checks turned out to be unreachable — a URL naming another host
+         * was already landing on ours, because its host was thrown away here.
+         * A guard that cannot fail is not protection, it is furniture.
+         */
+        $path = $parts['path'] ?? '/';
+
+        /*
+         * Browsers read a backslash in this position as a slash, so "/\host"
+         * is "//host" by the time anything acts on it. Normalised before the
+         * test below rather than tested for separately: the point is that the
+         * string a browser sees must be the string that was checked.
+         */
+        $path = str_replace('\\', '/', $path);
+
+        // "//evil.test" parses as a path on some inputs and is a protocol
+        // relative URL to a browser.
+        if (! str_starts_with($path, '/') || str_starts_with($path, '//')) {
+            return null;
+        }
+
+        return url($path.(isset($parts['query']) ? '?'.$parts['query'] : ''));
+    }
+
     public function customerReturn(Request $req)
     {
         if ($req->isMethod('POST')) {
@@ -1185,6 +1238,21 @@ class WorkFileController extends Controller
             });
             if (! $changed['files']) {
                 return back()->with('error', 'Nothing was changed.');
+            }
+
+            /*
+             * Back where the change was made from. The board posts nothing
+             * here and lands on itself as before; the work report sends the
+             * page it was showing, so a reader who moved one file along does
+             * not lose the customer, the dates and the status they had filtered
+             * to in order to find it.
+             */
+            $back = self::safeReturn($req->input('return_to'));
+
+            if ($back !== null) {
+                return redirect($back)->with('success', $changed['items']
+                    ? $changed['items'].' '.Str::plural('work', $changed['items']).' updated.'
+                    : 'Remarks saved.');
             }
 
             return redirect()->route('workfile.status', array_filter([

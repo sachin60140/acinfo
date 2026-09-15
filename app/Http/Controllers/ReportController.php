@@ -290,6 +290,29 @@ class ReportController extends Controller
                     'works_done' => $split['done'],
                     'works_approved_on' => $split['approved_on'],
                     'works_pending' => $split['pending'],
+
+                    /*
+                     * The works themselves, for the dialog that moves them
+                     * along. Statuses belong to works and not to folders — a
+                     * transfer can be approved on Tuesday with the
+                     * hypothecation addition still pending on Friday — so this
+                     * is what the update posts against.
+                     */
+                    'items' => array_map(fn ($work) => [
+                        'id' => (int) $work->id,
+                        'work_type' => $work->name,
+                        'status' => $work->status,
+                        'status_label' => WorkFileModel::STATUSES[$work->status] ?? $work->status,
+                        'approved_on_iso' => $work->approved_on ? date('Y-m-d', strtotime($work->approved_on)) : null,
+                        // Whether an approval already has evidence behind it,
+                        // never where it is: the dialog only needs to know
+                        // whether to insist on another.
+                        'has_screenshot' => (bool) $work->approval_screenshot,
+                    ], $breakdown[$row->id] ?? []),
+
+                    // The word on the button, and nothing on a folder with no
+                    // works to move.
+                    'update' => ($breakdown[$row->id] ?? []) ? 'Update' : null,
                     // The latest note against the file: what is pending, or why it
                     // stands where it does.
                     'remark' => $line['remark'],
@@ -317,6 +340,22 @@ class ReportController extends Controller
          */
         $props = [
             'title' => $partyLabel.'-wise Work Report — '.$periodText.' · '.$statusText,
+
+            /*
+             * What the update dialog needs. The statuses and the rules come
+             * from the model and the status screen rather than being restated
+             * here: this dialog posts to that controller, and a second copy of
+             * the list is a second thing to keep in step with the first.
+             */
+            'action' => route('workfile.status'),
+            'csrf' => csrf_token(),
+            // Back to this report, filtered and sorted as the reader left it.
+            'returnTo' => $req->fullUrl(),
+            'jobStatuses' => WorkFileModel::JOB_STATUSES,
+            'approvedKey' => WorkFileModel::APPROVED,
+            'reasonKeys' => [WorkFileModel::CANCELLED, WorkFileModel::RETURNED],
+            'today' => now()->toDateString(),
+
             'groupBy' => 'party_id',
             'groupLabel' => 'party_band',
             'totals' => ['billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
@@ -347,6 +386,22 @@ class ReportController extends Controller
                 ['key' => 'billed', 'label' => 'Billed', 'type' => 'money'],
                 ['key' => 'cost', 'label' => 'Cost', 'type' => 'money'],
                 ['key' => 'margin', 'label' => 'Margin', 'type' => 'money'],
+
+                /*
+                 * Moving a file along without leaving the report. Kept out of
+                 * the exports and the search text for the reason every action
+                 * column is: a column of the word "Update" is not data, and
+                 * searched, every row matches anyone typing it.
+                 */
+                [
+                    'key' => 'update',
+                    'label' => 'Update',
+                    'type' => 'action',
+                    'icon' => 'bi-pencil-square',
+                    'sortable' => false,
+                    'searchable' => false,
+                    'exportable' => false,
+                ],
             ],
             'rows' => $reportRows,
         ];

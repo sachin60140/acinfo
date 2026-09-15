@@ -1699,7 +1699,12 @@ class WorkFileModel extends Model
                 'work_file_item.work_file_id',
                 'work_file_item.status',
                 'work_file_item.approved_on',
-                'work_type.name'
+                'work_type.name',
+                // For screens that do something to a work rather than only
+                // describe it: the id to address it by, and whether its
+                // approval already has a document behind it.
+                'work_file_item.id',
+                'work_file_item.approval_screenshot'
             )
             ->get();
 

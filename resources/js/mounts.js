@@ -25,6 +25,7 @@ import ReceiveFileRows from './components/ReceiveFileRows.vue';
 import StatusBoard from './components/StatusBoard.vue';
 import UserDashboard from './components/UserDashboard.vue';
 import VendorReturn from './components/VendorReturn.vue';
+import WorkReport from './components/WorkReport.vue';
 import WorkTypes from './components/WorkTypes.vue';
 
 export const components = {
@@ -72,7 +73,9 @@ export const components = {
     'vue-party-list': DataGrid,
     'vue-party-statement': DataGrid,
     'vue-files-list': DataGrid,
-    'vue-work-report': DataGrid,
+    // The one listing with something to do to a row: the same grid, with a
+    // dialog over it for moving a file along without leaving the report.
+    'vue-work-report': WorkReport,
     'vue-profit-report': DataGrid,
     'vue-client-list': DataGrid,
     'vue-client-statement': DataGrid,

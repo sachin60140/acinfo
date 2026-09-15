@@ -870,6 +870,8 @@
     },
     "report-customer": {
         "vue-work-report": {
+            "action": "string",
+            "approvedKey": "string",
             "columns": [
                 "party_id:text:hidden",
                 "party_name:text",
@@ -886,12 +888,28 @@
                 "remark:text",
                 "billed:money",
                 "cost:money",
-                "margin:money"
+                "margin:money",
+                "update:action:no-export:no-sort"
             ],
+            "csrf": "string",
             "emptyText": "string",
             "groupBy": "string",
             "groupLabel": "string",
+            "jobStatuses": {
+                "approval_done": "string",
+                "cancelled": "string",
+                "file_dispatch": "string",
+                "in_office": "string",
+                "paper_pendency": "string",
+                "paper_returned": "string",
+                "part_pesi_required": "string",
+                "under_verification": "string"
+            },
             "perPage": "number",
+            "reasonKeys": {
+                "list_of": "string"
+            },
+            "returnTo": "string",
             "rows": {
                 "list_of": {
                     "billed": "number",
@@ -900,6 +918,16 @@
                     "description": "string",
                     "file_no": "string",
                     "id": "number",
+                    "items": {
+                        "list_of": {
+                            "approved_on_iso": "string",
+                            "has_screenshot": "bool",
+                            "id": "number",
+                            "status": "string",
+                            "status_label": "string",
+                            "work_type": "string"
+                        }
+                    },
                     "margin": "number",
                     "party_band": "string",
                     "party_id": "number",
@@ -910,6 +938,7 @@
                     "remark": "string",
                     "status": "string",
                     "status_key": "string",
+                    "update": "string",
                     "work_type": "string",
                     "works_approved_on": "string",
                     "works_done": "string",
@@ -918,6 +947,7 @@
                 }
             },
             "title": "string",
+            "today": "string",
             "totals": {
                 "billed": "string",
                 "cost": "string",
@@ -927,6 +957,8 @@
     },
     "report-vendor": {
         "vue-work-report": {
+            "action": "string",
+            "approvedKey": "string",
             "columns": [
                 "party_id:text:hidden",
                 "party_name:text",
@@ -943,12 +975,28 @@
                 "remark:text",
                 "billed:money",
                 "cost:money",
-                "margin:money"
+                "margin:money",
+                "update:action:no-export:no-sort"
             ],
+            "csrf": "string",
             "emptyText": "string",
             "groupBy": "string",
             "groupLabel": "string",
+            "jobStatuses": {
+                "approval_done": "string",
+                "cancelled": "string",
+                "file_dispatch": "string",
+                "in_office": "string",
+                "paper_pendency": "string",
+                "paper_returned": "string",
+                "part_pesi_required": "string",
+                "under_verification": "string"
+            },
             "perPage": "number",
+            "reasonKeys": {
+                "list_of": "string"
+            },
+            "returnTo": "string",
             "rows": {
                 "list_of": {
                     "billed": "number",
@@ -957,6 +1005,16 @@
                     "description": "string",
                     "file_no": "string",
                     "id": "number",
+                    "items": {
+                        "list_of": {
+                            "approved_on_iso": "null",
+                            "has_screenshot": "bool",
+                            "id": "number",
+                            "status": "string",
+                            "status_label": "string",
+                            "work_type": "string"
+                        }
+                    },
                     "margin": "number",
                     "party_band": "string",
                     "party_id": "number",
@@ -967,6 +1025,7 @@
                     "remark": "null",
                     "status": "string",
                     "status_key": "string",
+                    "update": "string",
                     "work_type": "string",
                     "works_approved_on": "string",
                     "works_done": "string",
@@ -975,6 +1034,7 @@
                 }
             },
             "title": "string",
+            "today": "string",
             "totals": {
                 "billed": "string",
                 "cost": "string",

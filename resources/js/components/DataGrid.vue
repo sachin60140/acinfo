@@ -56,6 +56,16 @@ import {
     toCsv,
 } from '../exports';
 
+/*
+ * A row the reader wants to do something to.
+ *
+ * The grid stays a table and knows nothing about what the something is: it
+ * says which row was asked about and leaves the screen around it to decide.
+ * That keeps the dialog, its form and its rules out of a component that thirty
+ * other screens render through.
+ */
+const emit = defineEmits(['action']);
+
 const props = defineProps({
     /*
      * { key, label, type, sortable, exportable, searchable, hidden, width,
@@ -684,6 +694,19 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                 <span v-else-if="column.type === 'badge'" class="ui-badge" :data-state="row[column.key + '_key']">
                                     {{ display(row, column) }}
                                 </span>
+                                <!-- A button and not a link: it does something to
+                                     this row rather than going somewhere, and a
+                                     link that goes nowhere cannot be middle-clicked,
+                                     bookmarked or opened in a tab the way its
+                                     appearance promises. -->
+                                <button
+                                    v-else-if="column.type === 'action'"
+                                    type="button"
+                                    class="ui-btn ui-btn--sm"
+                                    @click="emit('action', row, column)">
+                                    <i v-if="column.icon" class="bi" :class="column.icon"></i>
+                                    {{ display(row, column) || column.label }}
+                                </button>
                                 <span v-else :class="moneyClass(row, column)">{{ display(row, column) }}</span>
 
                                 <!-- What else the cell has to say. The note is a
