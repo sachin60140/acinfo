@@ -549,10 +549,16 @@ class WorkFileModel extends Model
         }
     }
 
-    public function screenshotUrl(): ?string
-    {
-        return $this->approval_screenshot ? url($this->approval_screenshot) : null;
-    }
+    /*
+     * There was a screenshotUrl() here, returning url($this->approval_screenshot)
+     * — the path under public/, which any browser will serve to anyone holding
+     * it, signed in or not.
+     *
+     * It is gone rather than left unused. Every screen now asks for
+     * route('workfile.approval') or route('customer.file.approval'), both of
+     * which decide who is asking; a helper sitting here handing out the
+     * unguarded address is the one that gets reached for next time.
+     */
 
     /**
      * The running number shown to the user. Derived from the id rather than a

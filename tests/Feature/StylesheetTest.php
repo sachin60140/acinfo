@@ -168,4 +168,131 @@ class StylesheetTest extends TestCase
             implode("\n  ", $problems)."\n\nMove the rules into resources/css/app.css, or include the partial that holds them."
         );
     }
+    /**
+     * A grid column can carry a class, and the grid stamps it on the <td>.
+     *
+     * So those names are not decoration: they land on a table cell, and a rule
+     * that gives one of them a display takes that cell out of its table. The
+     * row then has one fewer column than the heading promises, every cell after
+     * it slides one place left, and the last column is empty — a whole listing
+     * misread, from one property, with no error anywhere.
+     *
+     * That is what .cr did. CustomerReturn.vue kept a private copy of .ui-page
+     * under the name "cr", unscoped, and the ledger has used .cr for a credit
+     * figure since long before it. Every Cost and Expenses cell on every grid
+     * in the application quietly stopped being a table cell.
+     *
+     * Two-letter names in a global stylesheet is the underlying fault; this
+     * catches the consequence, which is the part that shows.
+     */
+    private const LAYOUT = ["display", "position", "float", "grid-area", "grid-column", "grid-row"];
+
+    /** Class names the controllers hand to a column, which end up on a cell. */
+    private function cellClasses(): array
+    {
+        $classes = [];
+        $root = app_path("Http/Controllers");
+
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root)) as $file) {
+            if ($file->isDir() || ! str_ends_with($file->getFilename(), ".php")) {
+                continue;
+            }
+
+            if (preg_match_all("/'class'\s*=>\s*'([^']+)'/", file_get_contents($file->getPathname()), $found)) {
+                foreach ($found[1] as $attr) {
+                    foreach (preg_split("/\s+/", trim($attr)) as $class) {
+                        if ($class !== "") {
+                            $classes[$class] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        return array_keys($classes);
+    }
+
+    /** Every rule in the application, as [where, selector, declarations]. */
+    private function rules(): array
+    {
+        $sources = [
+            resource_path("css/app.css"),
+            public_path("assets/css/nav.css"),
+            public_path("assets/css/responsive.css"),
+            public_path("assets/css/style.css"),
+        ];
+
+        foreach (glob(resource_path("js/components/*.vue")) as $component) {
+            $sources[] = $component;
+        }
+
+        $rules = [];
+
+        foreach ($sources as $source) {
+            if (! file_exists($source)) {
+                continue;
+            }
+
+            $css = file_get_contents($source);
+
+            // A component is mostly not CSS, so take only its style blocks.
+            if (str_ends_with($source, ".vue")) {
+                preg_match_all("#<style[^>]*>(.*?)</style>#s", $css, $blocks);
+                $css = implode("\n", $blocks[1]);
+            }
+
+            // Naive, and deliberately so: the inner rule of an @media block is
+            // matched the same as a top-level one, which is what we want — a
+            // display inside a media query removes the cell just as thoroughly.
+            preg_match_all("/([^{}]+)\{([^{}]*)\}/", $css, $found, PREG_SET_ORDER);
+
+            foreach ($found as $rule) {
+                $rules[] = [basename($source), trim($rule[1]), $rule[2]];
+            }
+        }
+
+        return $rules;
+    }
+
+    public function test_a_cell_class_is_never_given_a_layout_of_its_own(): void
+    {
+        $classes = $this->cellClasses();
+        $rules = $this->rules();
+
+        $this->assertContains("cr", $classes, "the controllers no longer name the class this guards");
+        $this->assertNotEmpty($rules, "no CSS was read — the check would pass vacuously");
+
+        $problems = [];
+
+        foreach ($rules as [$where, $selector, $body]) {
+            foreach (explode(",", $selector) as $one) {
+                $one = trim($one);
+
+                // Only a bare class selector: .cr on its own is received by
+                // every element in the application carrying the name, which is
+                // the form that does the damage. A scoped one — .give-past .cr
+                // — is a deliberate statement about one screen.
+                if (! preg_match("/^\.([a-z][\w-]*)$/i", $one, $name)) {
+                    continue;
+                }
+
+                if (! in_array($name[1], $classes, true)) {
+                    continue;
+                }
+
+                foreach (self::LAYOUT as $property) {
+                    if (preg_match("/(?<![\w-])".preg_quote($property, "/")."\s*:/i", $body)) {
+                        $problems[] = sprintf("%s: %s { %s: ... }", $where, $one, $property);
+                    }
+                }
+            }
+        }
+
+        $this->assertSame(
+            [],
+            $problems,
+            "A class a grid puts on a <td> is given a layout of its own, which stops the cell being a cell:\n  ".
+            implode("\n  ", $problems)."\n\nRename the rule, or scope it to the screen that wants it."
+        );
+    }
 }

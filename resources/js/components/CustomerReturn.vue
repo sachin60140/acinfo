@@ -160,7 +160,7 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
     <!-- Not "cr": party/_style.blade.php, which this page includes, uses .cr to
          mean credit and paints it red. Both rules sit at the same specificity,
          so which one wins is decided by stylesheet order alone. -->
-    <form v-else class="ui cr-return" :action="action" method="POST">
+    <form v-else class="ui ui-page cr-return" :action="action" method="POST">
         <!-- Rendered here rather than passed as a slot: the component is mounted
              onto a bare element, so there is no server markup to slot in. -->
         <input type="hidden" name="_token" :value="csrf">
@@ -374,12 +374,6 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
     letter-spacing: 0.06em;
     padding: 0.1rem 0.4rem;
     white-space: nowrap;
-}
-
-.cr {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-4);
 }
 
 .cr-when {

@@ -116,6 +116,18 @@ Route::group(['middleware' => 'admin'], function () {
 
     Route::match(['get', 'post'], 'admin/file/edit/{id}', [WorkFileController::class, 'edit'])->name('workfile.edit');
 
+    /*
+     * The evidence and the papers, served by the application rather than
+     * linked at their path under public/ — where the URL works for anyone
+     * holding it, signed in or not. The customer portal was given guarded
+     * routes for this reason; these are the office's.
+     */
+    Route::get('admin/file/{id}/approval/{item?}', [WorkFileController::class, 'approvalFile'])
+        ->whereNumber('id')->whereNumber('item')->name('workfile.approval');
+
+    Route::get('admin/file/{id}/document/{doc}', [WorkFileController::class, 'documentFile'])
+        ->whereNumber('id')->whereNumber('doc')->name('workfile.document');
+
     // Read-only reporting.
     Route::get('admin/reports/files', [ReportController::class, 'files'])->name('report.files');
 

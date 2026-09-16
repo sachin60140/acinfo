@@ -1,12 +1,39 @@
-# Nothing in here is ever meant to run.
+# Nothing in here is fetched by its path, and nothing in here ever runs.
 #
-# This directory holds approval screenshots, uploaded by admin users and served
-# straight off the filesystem — storage/app/public is unreachable on this host
-# because symlink() is disabled, so uploads have to live under public/.
+# Two locks, because they fail differently.
 #
-# Filenames are already derived from the file number and the content-guessed
-# extension rather than from anything the browser sent. This is the second lock:
-# even if something malformed did land here, the server will not execute it.
+# The first: approval screenshots and scanned documents live under public/
+# because storage/app/public is unreachable on this host — symlink() is
+# disabled — and moving them now would orphan every path already recorded
+# against a file. But a file under public/ is served by the web server to
+# whoever asks: no session, no check, forever. The URL of a customer's
+# paperwork kept working for anyone it was forwarded to, and kept working
+# after they stopped being a customer.
+#
+# Every screen asks through a route instead:
+#   admin/file/{id}/approval/{item?}     the office, behind the admin session
+#   admin/file/{id}/document/{doc}       the office, behind the admin session
+#   customer/file/{id}/approval/{item?}  the customer, scoped to their own file
+#   customer/file/{id}/document          the customer, scoped to their own file
+#
+# Those read the file with PHP, which these rules do not affect.
+#
+# The second lock is about what a file here could do rather than who can read
+# it. Names are already derived from the file number and the content-guessed
+# extension rather than from anything the browser sent, and the deny below
+# means a request never reaches a handler anyway — but the day someone opens
+# this directory up for one logo, the deny goes and this has to still be here.
+
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>
+
+# ---- Even if the above is ever relaxed, none of this executes -------------
 
 <IfModule mod_php.c>
     php_flag engine off

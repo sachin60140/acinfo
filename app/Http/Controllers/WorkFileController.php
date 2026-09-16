@@ -276,7 +276,7 @@ class WorkFileController extends Controller
                 // The evidence itself. Approval is the one status that has to be
                 // evidenced, so the screenshot has to be reachable from the list
                 // as it was from the paperclip — a statement of it is not evidence.
-                'screenshot_url' => $f->approval_screenshot ? url($f->approval_screenshot) : null,
+                'screenshot_url' => $f->approval_screenshot ? route('workfile.approval', $f->id) : null,
 
                 'action' => 'Edit',
 
@@ -791,6 +791,58 @@ class WorkFileController extends Controller
         }
 
         return url($path.(isset($parts['query']) ? '?'.$parts['query'] : ''));
+    }
+
+    /**
+     * An approval screenshot, served to the office by the application.
+     *
+     * These sit under public/ and are web-served, which means the URL works for
+     * anyone holding it whether or not they can sign in. The customer portal
+     * was given a guarded route for exactly that reason; the office kept
+     * linking at the path, so the same document had one address that checked
+     * who was asking and one that did not.
+     *
+     * Behind this route it is the admin session that decides, every time.
+     */
+    public function approvalFile(Request $req, int $id, ?int $item = null)
+    {
+        $file = WorkFileModel::findOrFail($id);
+
+        $path = $item === null
+            ? $file->approval_screenshot
+            // Scoped to this file, so an item id from another one resolves to
+            // nothing rather than to somebody else's evidence.
+            : WorkFileItemModel::where('work_file_id', $file->id)->where('id', $item)->value('approval_screenshot');
+
+        abort_unless(WorkFileModel::isStoredUpload($path), 404);
+
+        return response()->file(public_path($path), [
+            'Cache-Control' => 'private, no-store',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
+    /**
+     * One of a file's documents, likewise.
+     *
+     * Inline rather than as an attachment, because the office opens these to
+     * read them — but named, so saving one writes the name it was scanned
+     * under instead of the generated one it is stored as.
+     */
+    public function documentFile(Request $req, int $id, int $doc)
+    {
+        $file = WorkFileModel::findOrFail($id);
+
+        $document = $file->documents()->where('id', $doc)->first();
+
+        abort_if($document === null, 404);
+        abort_unless(WorkFileModel::isStoredUpload($document->path), 404);
+
+        return response()->file(public_path($document->path), [
+            'Content-Disposition' => 'inline; filename="'.str_replace('"', '', $document->original_name).'"',
+            'Cache-Control' => 'private, no-store',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
     }
 
     public function customerReturn(Request $req)
@@ -1376,7 +1428,7 @@ class WorkFileController extends Controller
                         'customer_amount' => (float) $item->customer_amount,
                         'status' => $item->status,
                         'has_screenshot' => (bool) $item->approval_screenshot,
-                        'screenshot_url' => $item->approval_screenshot ? url($item->approval_screenshot) : null,
+                        'screenshot_url' => $item->approval_screenshot ? route('workfile.approval', ['id' => $item->work_file_id, 'item' => $item->id]) : null,
                         'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
                         // The box is filled with today, which is right far more
                         // often than it is wrong, and can be typed over.
@@ -1916,7 +1968,7 @@ class WorkFileController extends Controller
             'refundPlaceholder' => $isEdit
                 ? number_format((float) $file->customer_amount, 2, '.', '')
                 : '0.00',
-            'screenshotUrl' => $isEdit && $file->approval_screenshot ? $file->screenshotUrl() : '',
+            'screenshotUrl' => $isEdit && $file->approval_screenshot ? route('workfile.approval', $file->id) : '',
 
             /*
              * The works this file is for.
@@ -1935,7 +1987,7 @@ class WorkFileController extends Controller
                     'vendor_amount' => $item->vendor_amount === null ? '' : (float) $item->vendor_amount,
                     'status' => $item->status,
                     'status_label' => WorkFileModel::STATUSES[$item->status] ?? $item->status,
-                    'screenshot_url' => $item->approval_screenshot ? url($item->approval_screenshot) : null,
+                    'screenshot_url' => $item->approval_screenshot ? route('workfile.approval', ['id' => $item->work_file_id, 'item' => $item->id]) : null,
                     'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
                 ])->values()
                 : [],
@@ -1985,7 +2037,7 @@ class WorkFileController extends Controller
                     'name' => $doc->original_name,
                     'size' => $doc->sizeText(),
                     'uploaded' => $doc->created_at?->format('d-m-Y'),
-                    'url' => url($doc->path),
+                    'url' => route('workfile.document', ['id' => $file->id, 'doc' => $doc->id]),
                 ])->values()
                 : [],
 

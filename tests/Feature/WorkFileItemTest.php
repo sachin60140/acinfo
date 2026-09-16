@@ -577,7 +577,13 @@ class WorkFileItemTest extends TestCase
         $approved = $works->firstWhere('id', $first->id);
         $pending = $works->firstWhere('id', $second->id);
 
-        $this->assertStringContainsString('item-first.png', $approved['screenshot_url']);
+        // Named by the work rather than by the stored file: the address is a
+        // route the office session is checked on, not the path under public/
+        // that anyone holding it could fetch.
+        $this->assertSame(
+            route('workfile.approval', ['id' => $file->id, 'item' => $first->id]),
+            $approved['screenshot_url']
+        );
         $this->assertSame(now()->format('d-m-Y'), $approved['approved_on']);
 
         $this->assertNull($pending['screenshot_url'], 'nothing to show for work not yet through');
