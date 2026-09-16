@@ -29,12 +29,12 @@
   <link href="{{ url('assets/vendor/simple-datatables/style.css') }}" rel="stylesheet">
 
   <!-- Template Main CSS File -->
-  <link href="{{ url('assets/css/style.css') }}" rel="stylesheet">
-  <link href="{{ url('assets/css/datepicker.css') }}" rel="stylesheet">
+  <link href="{{ \App\Support\Asset::url('assets/css/style.css') }}" rel="stylesheet">
+  <link href="{{ \App\Support\Asset::url('assets/css/datepicker.css') }}" rel="stylesheet">
   @yield('style')
   {{-- After @yield so a page's own styles cannot outrank these. --}}
-  <link href="{{ url('assets/css/nav.css') }}" rel="stylesheet">
-  <link href="{{ url('assets/css/responsive.css') }}" rel="stylesheet">
+  <link href="{{ \App\Support\Asset::url('assets/css/nav.css') }}" rel="stylesheet">
+  <link href="{{ \App\Support\Asset::url('assets/css/responsive.css') }}" rel="stylesheet">
 
   @vite(['resources/css/app.css', 'resources/js/app.js'])
 
@@ -71,7 +71,7 @@
 <script src="{{ url('assets/vendor/simple-datatables/simple-datatables.js') }}"></script>
 
 <!-- Template Main JS File -->
-<script src="{{ url('assets/js/main.js') }}"></script>
+<script src="{{ \App\Support\Asset::url('assets/js/main.js') }}"></script>
 <script src="{{ url('assets/js/datepicker.js') }}"></script>
 @yield('script')
 

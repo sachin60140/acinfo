@@ -33,15 +33,19 @@
     text-transform: uppercase;
 }
 
-/*
- * Rolled-up sections.
- *
- * The heading was a <li> of plain text; it is a button now, so everything a
- * button brings with it — a border, a background, a centred label, the browser's
- * own font — has to be taken back off before it looks like the heading it
- * replaced. The rest is the arrow and the space it needs.
- */
+/* ---- Rolled-up sections ------------------------------------------------ */
 
+/*
+ * A heading that was a line of text is a button now, and a button arrives with
+ * a great deal already decided for it: a border, a grey face, a centred label,
+ * the system font, a width no wider than its own text. All of that has to come
+ * off before it looks like the heading it replaced — and it has to come off
+ * here, because there is nowhere else these rules live.
+ *
+ * appearance is in the list on purpose. The rest of this can be satisfied and a
+ * browser will still draw its own button chrome underneath unless it is told
+ * plainly to stop.
+ */
 .sidebar-nav .nav-group {
     display: block;
 }
@@ -53,43 +57,60 @@
 }
 
 .sidebar-nav .nav-heading--toggle {
-    align-items: center;
-    background: none;
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
     border: 0;
-    cursor: pointer;
-    display: flex;
-    font: inherit;
-    gap: 6px;
-    /* The <li> it replaced carried this margin; without it every heading jumps
-       15px left of where it has always sat. */
-    margin: 10px 0 5px 15px;
-    padding: 2px 15px 2px 0;
-    text-align: left;
-    width: calc(100% - 15px);
-
+    border-radius: 6px;
+    box-shadow: none;
     color: #899bbd;
+    cursor: pointer;
+    font: inherit;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.06em;
+    text-align: left;
     text-transform: uppercase;
+
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    /* Flush with the nav links below it, which carry 15px of their own, so the
+       column of text reads as one column rather than two that nearly line up. */
+    margin: 12px 15px 4px;
+    padding: 6px 10px 6px 5px;
+    width: calc(100% - 30px);
 }
 
+/*
+ * It has to look like something you can press.
+ *
+ * As plain text it read as a label, and a label that silently swallows a click
+ * is worse than no control at all — the first thing anyone does is click it
+ * twice and decide the page is broken.
+ */
 .sidebar-nav .nav-heading--toggle:hover {
+    background: #f6f9ff;
     color: #4154f1;
 }
 
 .sidebar-nav .nav-heading--toggle:focus-visible {
-    border-radius: 4px;
     outline: 2px solid #4154f1;
-    outline-offset: 2px;
+    outline-offset: 1px;
 }
 
-/* Pushed to the right-hand end, which is where an arrow like this is looked
-   for, and turned rather than swapped so the two states are one shape. */
+/* At the far end of the row, where an arrow like this is looked for, and turned
+   rather than swapped so the two states are one shape in two positions. */
 .sidebar-nav .nav-heading__caret {
-    font-size: 12px;
+    color: #b4c0d3;
+    flex: none;
+    font-size: 11px;
     margin-left: auto;
-    transition: transform 0.15s ease;
+    transition: transform 0.18s ease;
+}
+
+.sidebar-nav .nav-heading--toggle:hover .nav-heading__caret {
+    color: #4154f1;
 }
 
 .sidebar-nav .nav-group.is-shut .nav-heading__caret {
@@ -99,9 +120,9 @@
 /*
  * Where the reader is, when the section holding it is shut.
  *
- * Without this, rolling up the section you are working in leaves nothing on
- * screen saying which part of the application you are in — the highlighted item
- * that said so is inside the part that was just hidden.
+ * Rolling up the section you are working in otherwise leaves nothing on screen
+ * saying which part of the application you are in: the highlighted item that
+ * said so is inside the part that was just hidden.
  */
 .sidebar-nav .nav-heading--current {
     color: #4154f1;
@@ -109,10 +130,20 @@
 
 .sidebar-nav .nav-heading__here {
     color: #4154f1;
-    font-size: 16px;
-    margin-left: -4px;
+    flex: none;
+    font-size: 18px;
+    /* bi-dot is drawn with a lot of air around it. */
+    margin: 0 -6px 0 -8px;
 }
 
 .sidebar-nav .nav-group:not(.is-shut) .nav-heading__here {
     display: none;
+}
+
+/* A finger is not a cursor: on a touch screen the row has to be big enough to
+   hit without hitting the link under it. */
+@media (pointer: coarse) {
+    .sidebar-nav .nav-heading--toggle {
+        min-height: 40px;
+    }
 }

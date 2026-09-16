@@ -24,8 +24,8 @@
     <link href="{{ url('assets/vendor/boxicons/css/boxicons.min.css') }}" rel="stylesheet">
 
     <!-- Template Main CSS File -->
-    <link href="{{ url('assets/css/style.css') }}" rel="stylesheet">
-    <link href="{{ url('assets/css/responsive.css') }}" rel="stylesheet">
+    <link href="{{ \App\Support\Asset::url('assets/css/style.css') }}" rel="stylesheet">
+    <link href="{{ \App\Support\Asset::url('assets/css/responsive.css') }}" rel="stylesheet">
 
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
@@ -129,7 +129,7 @@
     </main><!-- End #main -->
 
     <script src="{{ url('assets/vendor/bootstrap/js/bootstrap.bundle.min.js') }}"></script>
-    <script src="{{ url('assets/js/main.js') }}"></script>
+    <script src="{{ \App\Support\Asset::url('assets/js/main.js') }}"></script>
 
 </body>
 

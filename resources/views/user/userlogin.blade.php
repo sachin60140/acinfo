@@ -29,7 +29,7 @@
     <link href="{{url('assets/vendor/simple-datatables/style.css')}}" rel="stylesheet">
 
     <!-- Template Main CSS File -->
-    <link href="{{url('assets/css/style.css')}}" rel="stylesheet">
+    <link href="{{ \App\Support\Asset::url('assets/css/style.css') }}" rel="stylesheet">
 
 
     @vite(['resources/css/app.css', 'resources/js/app.js'])
