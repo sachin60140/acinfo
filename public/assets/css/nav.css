@@ -32,3 +32,87 @@
     margin: 10px 0 5px 15px;
     text-transform: uppercase;
 }
+
+/*
+ * Rolled-up sections.
+ *
+ * The heading was a <li> of plain text; it is a button now, so everything a
+ * button brings with it — a border, a background, a centred label, the browser's
+ * own font — has to be taken back off before it looks like the heading it
+ * replaced. The rest is the arrow and the space it needs.
+ */
+
+.sidebar-nav .nav-group {
+    display: block;
+}
+
+.sidebar-nav .nav-group__items {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.sidebar-nav .nav-heading--toggle {
+    align-items: center;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    display: flex;
+    font: inherit;
+    gap: 6px;
+    /* The <li> it replaced carried this margin; without it every heading jumps
+       15px left of where it has always sat. */
+    margin: 10px 0 5px 15px;
+    padding: 2px 15px 2px 0;
+    text-align: left;
+    width: calc(100% - 15px);
+
+    color: #899bbd;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.sidebar-nav .nav-heading--toggle:hover {
+    color: #4154f1;
+}
+
+.sidebar-nav .nav-heading--toggle:focus-visible {
+    border-radius: 4px;
+    outline: 2px solid #4154f1;
+    outline-offset: 2px;
+}
+
+/* Pushed to the right-hand end, which is where an arrow like this is looked
+   for, and turned rather than swapped so the two states are one shape. */
+.sidebar-nav .nav-heading__caret {
+    font-size: 12px;
+    margin-left: auto;
+    transition: transform 0.15s ease;
+}
+
+.sidebar-nav .nav-group.is-shut .nav-heading__caret {
+    transform: rotate(-90deg);
+}
+
+/*
+ * Where the reader is, when the section holding it is shut.
+ *
+ * Without this, rolling up the section you are working in leaves nothing on
+ * screen saying which part of the application you are in — the highlighted item
+ * that said so is inside the part that was just hidden.
+ */
+.sidebar-nav .nav-heading--current {
+    color: #4154f1;
+}
+
+.sidebar-nav .nav-heading__here {
+    color: #4154f1;
+    font-size: 16px;
+    margin-left: -4px;
+}
+
+.sidebar-nav .nav-group:not(.is-shut) .nav-heading__here {
+    display: none;
+}

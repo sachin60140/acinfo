@@ -14,6 +14,20 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        /*
+         * Which sidebar sections the reader has shut.
+         *
+         * Read by _sidebar.blade.php so the markup arrives in the right state
+         * rather than being corrected by script afterwards, and written by the
+         * browser when a heading is clicked — which is why it cannot be
+         * encrypted: an encrypted cookie the browser wrote is one Laravel
+         * discards as tampered with, silently, leaving the menu stuck open.
+         *
+         * It holds nothing but the group keys from that file. Nothing is
+         * decided by it but what is rolled up.
+         */
+        $middleware->encryptCookies(except: ['nav_collapsed']);
+
         $middleware->alias([
             'admin' => AdminMiddleware::class,
             'userAuth' => UserAuthMiddleware::class,

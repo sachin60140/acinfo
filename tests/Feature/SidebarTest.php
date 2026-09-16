@@ -196,4 +196,119 @@ class SidebarTest extends TestCase
 
         return $party;
     }
+    /*
+     * ---- Rolling the sections up --------------------------------------------
+     *
+     * The state is rendered by the server rather than applied by script
+     * afterwards, so it is testable here — and has to be, because the failure is
+     * a menu that springs open again on every page and nothing else.
+     */
+
+    /** The four headings, and the keys their state is stored under. */
+    public static function menuSections(): array
+    {
+        return [
+            'client ledger' => ['client-ledger', 'Client Ledger'],
+            'vendor and customer' => ['vendor-customer', 'Vendor &amp; Customer'],
+            'work files' => ['work-files', 'Work Files'],
+            'reports' => ['reports', 'Reports'],
+        ];
+    }
+
+    #[DataProvider('menuSections')]
+    public function test_every_section_can_be_rolled_up(string $key, string $label): void
+    {
+        $body = $this->actingAs($this->admin())->get('/admin/dashboard')->assertOk()->getContent();
+
+        $this->assertStringContainsString($label, $body);
+
+        // A button, so it is reachable by keyboard — and one that says both what
+        // it controls and whether that is currently open.
+        $this->assertMatchesRegularExpression(
+            '/<button[^>]*aria-expanded="true"[^>]*aria-controls="nav-group-'.preg_quote($key, '/').'"/s',
+            $body,
+            "the $label heading is not a toggle"
+        );
+
+        $this->assertStringContainsString('id="nav-group-'.$key.'"', $body);
+    }
+
+    #[DataProvider('menuSections')]
+    public function test_a_section_the_reader_shut_arrives_shut(string $key, string $label): void
+    {
+        $body = $this->actingAs($this->admin())
+            ->withUnencryptedCookie('nav_collapsed', $key)
+            ->get('/admin/dashboard')->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression(
+            '/aria-expanded="false"[^>]*aria-controls="nav-group-'.preg_quote($key, '/').'"/s',
+            $body,
+            "$label came back open"
+        );
+
+        // hidden on the list itself, so a shut section is shut for a screen
+        // reader and for find-in-page too, not only to the eye.
+        $this->assertMatchesRegularExpression(
+            '/id="nav-group-'.preg_quote($key, '/').'"\s+hidden/s',
+            $body
+        );
+    }
+
+    public function test_shutting_one_section_leaves_the_others_alone(): void
+    {
+        $body = $this->actingAs($this->admin())
+            ->withUnencryptedCookie('nav_collapsed', 'work-files')
+            ->get('/admin/dashboard')->assertOk()->getContent();
+
+        foreach (['client-ledger', 'vendor-customer', 'reports'] as $key) {
+            $this->assertDoesNotMatchRegularExpression(
+                '/id="nav-group-'.preg_quote($key, '/').'"\s+hidden/s',
+                $body,
+                "$key was shut too"
+            );
+        }
+    }
+
+    /**
+     * A shut section still says the reader is inside it.
+     *
+     * Rolling up the section you are working in otherwise leaves nothing on
+     * screen saying which part of the application you are in: the highlighted
+     * item that said so is inside the part that was just hidden.
+     */
+    public function test_a_shut_section_still_says_the_page_is_in_there(): void
+    {
+        $body = $this->actingAs($this->admin())
+            ->withUnencryptedCookie('nav_collapsed', 'reports')
+            ->get(route('report.profit'))->assertOk()->getContent();
+
+        // On the section holding the page, and on no other.
+        $this->assertSame(1, substr_count($body, 'nav-heading--current'));
+
+        $this->assertMatchesRegularExpression(
+            '/nav-heading--current[^>]*aria-controls="nav-group-reports"/s',
+            $body
+        );
+    }
+
+    /**
+     * Nothing was dropped when the four sections became one list.
+     *
+     * They were written out four times over before, and a rewrite that loses an
+     * item leaves a screen reachable only by typing its address.
+     */
+    public function test_every_screen_is_still_on_the_menu(): void
+    {
+        $body = $this->actingAs($this->admin())->get('/admin/dashboard')->assertOk()->getContent();
+
+        foreach ([
+            'Dashboard', 'Add Client Ledger', 'View Client', 'Receipt', 'Payment',
+            'Vendor Ledger', 'Customer Ledger',
+            'Receive Files', 'Give to Vendor', 'Return from Vendor', 'Return to Customer',
+            'Update Status', 'Approved Files', 'All Work Files', 'Work Types', 'Expense Types',
+            'Profit Report', 'Work Report', 'Expense Report',
+        ] as $item) {
+            $this->assertStringContainsString('<span>'.$item.'</span>', $body, "$item is not on the menu");
+        }
+    }
 }

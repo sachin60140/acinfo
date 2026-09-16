@@ -1,5 +1,6 @@
 import './bootstrap';
 import { mount } from './mounts';
+import { sidebar } from './sidebar';
 import './navigate';
 
 /*
@@ -15,3 +16,7 @@ import './navigate';
  * The registry itself lives in mounts.js, because navigation needs it too.
  */
 mount();
+
+// The menu rolls its sections up. One delegated listener, set once: the
+// sidebar itself is replaced on every visit.
+sidebar();
