@@ -154,6 +154,53 @@ describe('every row lines up with the header', () => {
         expect(vendor.querySelector('a')).toBe(null);
     });
 
+    /*
+     * A framing row draws its cells the way the entries do.
+     *
+     * It had a chain of its own — money or balance, else plain text — so a
+     * badge column lost its pill and a link column lost its anchor the moment
+     * a statement carried one. Nothing on a live screen rendered wrong today,
+     * because the statements' framing rows carry no badge and their reference
+     * is null; it was a trap laid for the next column somebody adds.
+     */
+    it('draws a badge in a framing row as a badge', () => {
+        const host = mount({
+            rows: [],
+            lead: [{ ...BARE_ROW, status: 'In Office', status_key: 'in_office' }],
+        });
+
+        const cells = [...host.querySelector('tbody tr').querySelectorAll('td')];
+        const heads = [...host.querySelectorAll('thead th')];
+        const i = heads.findIndex((th) => th.textContent.trim().startsWith('Status'));
+
+        const badge = cells[i].querySelector('.ui-badge');
+
+        expect(badge, 'the pill is drawn, not the bare word').not.toBe(null);
+        expect(badge.dataset.state).toBe('in_office');
+    });
+
+    it('draws a link in a framing row as a link', () => {
+        const host = mount({
+            rows: [],
+            tail: [{ ...BARE_ROW, file_no: 'Closing', edit_url: '/admin/file/edit/1' }],
+        });
+
+        const cells = [...host.querySelector('tbody tr').querySelectorAll('td')];
+
+        expect(cells[0].querySelector('a'), 'the anchor is drawn').not.toBe(null);
+    });
+
+    /* A brought-forward balance is not a row anything is done to. */
+    it('offers no action button in a framing row', () => {
+        const host = mount({
+            columns: [...FILES_COLUMNS, { key: 'go', label: 'Go', type: 'action' }],
+            rows: [],
+            lead: [{ ...BARE_ROW, go: 'Update' }],
+        });
+
+        expect(host.querySelector('tbody tr').querySelector('button')).toBe(null);
+    });
+
     it('keeps the framing rows in step with the header', () => {
         const host = mount({
             lead: [{ ...BARE_ROW, file_no: 'Opening' }],

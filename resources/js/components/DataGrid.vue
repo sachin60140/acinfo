@@ -670,7 +670,23 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                             :key="column.key"
                             :data-label="column.label"
                             :class="[isNum(column) ? 'num' : '', column.class]">
-                            <span v-if="column.type === 'money' || column.type === 'balance'" :class="moneyClass(row, column)">
+                            <!-- The same branches the entries get, so a framing row
+                                 does not quietly lose a badge's pill or a link's anchor
+                                 the moment a statement gains such a column. An action
+                                 is deliberately absent: a brought-forward balance is
+                                 not a row anything is done to. -->
+                            <a
+                                v-if="column.type === 'link' && row[column.linkTo]"
+                                :href="row[column.linkTo]"
+                                class="ui-link"
+                                :target="column.newTab ? '_blank' : null"
+                                :rel="column.newTab ? 'noopener' : null">
+                                {{ display(row, column) }}
+                            </a>
+                            <span v-else-if="column.type === 'badge' && display(row, column)" class="ui-badge" :data-state="row[column.key + '_key']">
+                                {{ display(row, column) }}
+                            </span>
+                            <span v-else-if="column.type === 'money' || column.type === 'balance'" :class="moneyClass(row, column)">
                                 {{ display(row, column) }}
                             </span>
                             <template v-else>{{ display(row, column) }}</template>
@@ -766,7 +782,23 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                             :key="column.key"
                             :data-label="column.label"
                             :class="[isNum(column) ? 'num' : '', column.class]">
-                            <span v-if="column.type === 'money' || column.type === 'balance'" :class="moneyClass(row, column)">
+                            <!-- The same branches the entries get, so a framing row
+                                 does not quietly lose a badge's pill or a link's anchor
+                                 the moment a statement gains such a column. An action
+                                 is deliberately absent: a brought-forward balance is
+                                 not a row anything is done to. -->
+                            <a
+                                v-if="column.type === 'link' && row[column.linkTo]"
+                                :href="row[column.linkTo]"
+                                class="ui-link"
+                                :target="column.newTab ? '_blank' : null"
+                                :rel="column.newTab ? 'noopener' : null">
+                                {{ display(row, column) }}
+                            </a>
+                            <span v-else-if="column.type === 'badge' && display(row, column)" class="ui-badge" :data-state="row[column.key + '_key']">
+                                {{ display(row, column) }}
+                            </span>
+                            <span v-else-if="column.type === 'money' || column.type === 'balance'" :class="moneyClass(row, column)">
                                 {{ display(row, column) }}
                             </span>
                             <template v-else>{{ display(row, column) }}</template>
