@@ -79,6 +79,18 @@ class ReportTest extends TestCase
         return $file;
     }
 
+    /** Money the office paid out at the counter on this file. */
+    private function spend(WorkFileModel $file, float $amount): \App\Models\WorkFileExpenseModel
+    {
+        $expense = new \App\Models\WorkFileExpenseModel;
+        $expense->work_file_id = $file->id;
+        $expense->expense_type_id = \App\Models\ExpenseTypeModel::query()->value('id');
+        $expense->amount = $amount;
+        $expense->spent_on = '2026-05-12';
+        $expense->save();
+
+        return $expense;
+    }
     private function admin(): User
     {
         $user = new User;
@@ -798,6 +810,132 @@ class ReportTest extends TestCase
         $this->assertEquals(1200, $rows[$second->work_type_id]->margin);
     }
 
+    /**
+     * Every cut of the same period accounts for the same money.
+     *
+     * The file expense is why this can go wrong. It is recorded against the
+     * folder and not against any one work — deliberately, because an affidavit
+     * is drawn for the vehicle rather than for the transfer as opposed to the
+     * hypothecation on the same papers. So the work-type cut cannot file it
+     * under a work, and for a while it simply left it out, while every other cut
+     * subtracted it. The same month then had two margins depending on which tab
+     * was open, and nothing on screen said which one was being read.
+     */
+    public function test_every_cut_of_a_period_accounts_for_the_same_money(): void
+    {
+        $file = $this->partlyApproved($this->customerA, $this->vendor);
+        $this->spend($file, 700);
+
+        $period = ['2026-01-01', '2026-12-31'];
+
+        $byCustomer = WorkFileModel::profitBy('customer', ...$period)
+            ->firstWhere('group_key', $this->customerA->id);
+
+        $byWorkType = WorkFileModel::profitBy('work_type', ...$period);
+
+        // 5,000 charged, 3,000 to the vendor, 700 over the counter.
+        $this->assertEquals(5000, $byCustomer->billed);
+        $this->assertEquals(3700, $byCustomer->cost);
+
+        $mine = $byWorkType->whereIn('group_key', $file->items->pluck('work_type_id')->all());
+        $counter = $byWorkType->firstWhere('group_key', 0);
+
+        $this->assertEquals(5000, $mine->sum('billed'));
+        $this->assertNotNull($counter, 'the counter money is nowhere on the work-type cut');
+
+        $this->assertEquals(
+            (float) $byCustomer->cost,
+            (float) $mine->sum('cost') + (float) $counter->cost,
+            'the two cuts disagree about what the period cost'
+        );
+    }
+
+    /**
+     * And it is a line of its own rather than a share of each work.
+     *
+     * Splitting it would be inventing a division nobody made — the whole reason
+     * the expense sits on the folder in the first place.
+     */
+    public function test_the_counter_money_is_not_spread_across_the_works(): void
+    {
+        $file = $this->partlyApproved($this->customerA, $this->vendor);
+        $this->spend($file, 700);
+
+        $rows = WorkFileModel::profitBy('work_type', '2026-01-01', '2026-12-31')->keyBy('group_key');
+
+        [$first, $second] = $file->items->all();
+
+        // Exactly what each work cost, untouched.
+        $this->assertEquals(1200, $rows[$first->work_type_id]->cost);
+        $this->assertEquals(1800, $rows[$second->work_type_id]->cost);
+
+        $this->assertEquals(700, $rows[0]->cost);
+        $this->assertEquals(-700, $rows[0]->margin);
+
+        // No work was done for a challan fee, so it adds nothing to the count
+        // of works at the foot of the column.
+        $this->assertEquals(0, $rows[0]->files);
+    }
+
+    /** A period with no counter money says nothing about it at all. */
+    public function test_a_period_with_no_counter_money_has_no_such_line(): void
+    {
+        $this->partlyApproved($this->customerA, $this->vendor);
+
+        $rows = WorkFileModel::profitBy('work_type', '2026-01-01', '2026-12-31');
+
+        $this->assertNull($rows->firstWhere('group_key', 0));
+    }
+
+    /** The screen shows it, under a name that says why it is not a work. */
+    public function test_the_report_screen_shows_the_counter_money(): void
+    {
+        $file = $this->partlyApproved($this->customerA, $this->vendor);
+        $this->spend($file, 700);
+
+        $props = $this->actingAs($this->admin())
+            ->getJson(route('report.profit', ['group' => 'work_type', 'from' => '2026-01-01', 'to' => '2026-12-31']))
+            ->assertOk()->json('props');
+
+        $row = collect($props['rows'])->firstWhere('label', 'Counter expenses');
+
+        $this->assertNotNull($row, 'the counter money is not on the screen');
+        $this->assertEquals(700, $row['cost']);
+        $this->assertEquals(-700, $row['margin']);
+
+        // A margin percentage of nothing charged is not a number anyone can act
+        // on, and this line charges nobody.
+        $this->assertNull($row['rate']);
+
+        $this->assertNotEmpty($row['label_note'], 'nothing says why it is not filed under a work');
+    }
+
+    /**
+     * The figure above the table counts the same money the table does.
+     *
+     * It is the one a reader takes away, and it sums the cost column — so a
+     * counter-expenses line the summary did not count would put the report back
+     * to disagreeing with itself, one band higher up the page.
+     */
+    public function test_the_summary_above_the_table_counts_the_counter_money(): void
+    {
+        $file = $this->partlyApproved($this->customerA, $this->vendor);
+        $this->spend($file, 700);
+
+        $page = $this->actingAs($this->admin())
+            ->getJson(route('report.profit', ['group' => 'work_type', 'from' => '2026-01-01', 'to' => '2026-12-31']))
+            ->assertOk()->json('page');
+
+        $props = $this->actingAs($this->admin())
+            ->getJson(route('report.profit', ['group' => 'work_type', 'from' => '2026-01-01', 'to' => '2026-12-31']))
+            ->assertOk()->json('props');
+
+        $this->assertEquals(
+            collect($props['rows'])->sum('cost'),
+            $page['totals']['cost'],
+            'the summary and the column it sums disagree'
+        );
+    }
     /**
      * Every cut is offered, and each keeps the period already chosen.
      */

@@ -103,7 +103,11 @@
                         <span class="value dr">{{ number_format($totals['billed'], 2, '.', ',') }}</span>
                     </div>
                     <div class="stat">
-                        <span class="label">Vendor Cost</span>
+                        {{-- Not "Vendor Cost": this sums the cost column, and that
+                             has counted money paid over the counter as well as money
+                             paid to a vendor since file expenses came in. The line
+                             for it is in the table directly below. --}}
+                        <span class="label">Cost</span>
                         <span class="value cr">{{ number_format($totals['cost'], 2, '.', ',') }}</span>
                     </div>
                     <div class="stat closing">

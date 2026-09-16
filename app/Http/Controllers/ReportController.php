@@ -76,6 +76,7 @@ class ReportController extends Controller
         $rows = $rows->map(fn ($row) => [
             'id' => (string) $row->group_key,
             'label' => $row->group_label,
+            'label_note' => $row->note ?? null,
             'files' => (int) $row->files,
             'billed' => (float) $row->billed,
             'cost' => (float) $row->cost,
@@ -94,7 +95,10 @@ class ReportController extends Controller
                 : 'No work has been booked yet.',
             'totals' => ['files' => 'sum', 'billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
             'columns' => [
-                ['key' => 'label', 'label' => $label],
+                // The counter-expenses line is the only one that has anything to
+                // add here, and it needs to: a row with a cost that charges
+                // nobody reads as a mistake until it says why.
+                ['key' => 'label', 'label' => $label, 'sub' => 'label_note'],
                 ['key' => 'files', 'label' => $group === 'work_type' ? 'Works' : 'Files', 'type' => 'count'],
                 ['key' => 'billed', 'label' => 'Billed', 'type' => 'money', 'class' => 'dr'],
                 ['key' => 'cost', 'label' => 'Cost', 'type' => 'money', 'class' => 'cr'],

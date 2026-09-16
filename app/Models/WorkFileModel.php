@@ -953,7 +953,7 @@ class WorkFileModel extends Model
             OR (work_file.vendor_id IS NOT NULL
                 AND (work_file_item.vendor_amount IS NULL OR work_file_item.vendor_amount <= 0)))";
 
-        return $query
+        $rows = $query
             ->selectRaw('work_type.id as group_key')
             ->selectRaw('work_type.name as group_label')
             ->selectRaw('COUNT(*) as files')
@@ -965,6 +965,65 @@ class WorkFileModel extends Model
             ->groupBy('work_type.id', 'work_type.name')
             ->orderByRaw('billed desc')
             ->get();
+
+        $counter = self::counterExpenses($from, $to);
+
+        return $counter === null ? $rows : $rows->push($counter);
+    }
+
+    /**
+     * The money that no work type can carry, as a row of its own.
+     *
+     * A challan or an affidavit is paid on the folder, and deliberately so — see
+     * the note on the create_file_expense_tables migration: an affidavit is
+     * drawn for the vehicle, not for the transfer as opposed to the
+     * hypothecation on the same papers. There is no honest way to split one
+     * across the three works it was spent on.
+     *
+     * Leaving it out is not the answer either, and was what happened until now:
+     * every other cut of this report subtracts it — they read SPENT, which
+     * includes it — so the same month had one margin under Customer and a
+     * larger one under Work Type, with nothing on screen saying which was which.
+     * A reader comparing the two tabs was comparing two different questions.
+     *
+     * So it is shown, on its own line, under a name that says why it is not
+     * filed under a work. The same move the vendor cut already makes for a file
+     * nobody was given: a real bucket for the things the grouping cannot hold,
+     * rather than a silence.
+     */
+    private static function counterExpenses(?string $from, ?string $to): ?object
+    {
+        $query = DB::table('work_file_expense')
+            ->join('work_file', 'work_file.id', '=', 'work_file_expense.work_file_id');
+
+        /*
+         * No status filter, unlike the works above. SPENT adds this money
+         * outside the CASE that zeroes a cancelled file's vendor cost, because
+         * the office paid it out whether or not the work was later called off —
+         * and the two cuts only reconcile if this counts the same rows.
+         */
+        self::betweenDates($query, $from, $to);
+
+        $total = (float) $query->sum('work_file_expense.amount');
+
+        if ($total <= 0) {
+            return null;
+        }
+
+        return (object) [
+            'group_key' => 0,
+            'group_label' => 'Counter expenses',
+            // Said on the row itself rather than left to the reader to work out
+            // from a line that has a cost and charges nobody.
+            'note' => 'Paid on the file, so no one work carries it',
+            // No work was done for a challan fee, and counting one here would
+            // put it in the Works total at the foot of the column.
+            'files' => 0,
+            'billed' => 0,
+            'cost' => $total,
+            'margin' => -$total,
+            'unpriced' => 0,
+        ];
     }
 
     /** The period a report covers, by the day the papers came in. */
