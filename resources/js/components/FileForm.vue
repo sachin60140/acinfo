@@ -225,19 +225,75 @@ function dropExpense(one) {
 /*
  * Papers scanned against this file.
  *
- * Several at a time, because that is how they are scanned — a form, its
- * annexure and the receipt are one trip to the scanner. Each upload is a new
- * document and never an overwrite: a corrected form supersedes the earlier one,
- * and replacing it in place would lose the record of what was sent at the time.
+ * One row per PDF: the file, and the name the customer will see it under. A
+ * folder's papers are an RC, a Form 29, an NOC, and the customer is offered all
+ * of them — so each needs a name a person gave it, not whatever the scanner
+ * called it. Each upload is a new document and never an overwrite.
+ *
+ * A row per file rather than one input taking several. A browser will not let a
+ * page take one file back out of a multiple picker, so a wrong pick among five
+ * meant choosing all five again; a row can simply be removed, and its file goes
+ * with it.
  */
 const droppedDocs = reactive(new Set());
-const picked = ref([]);
 
-function onDocs(event) {
-    // Named here rather than read off the input at submit time, so the panel
-    // can say what is about to be uploaded.
-    picked.value = [...event.target.files].map((one) => one.name);
+let docKey = 0;
+const blankDoc = () => ({ key: docKey++, title: '', chosen: '' });
+const newDocs = reactive([blankDoc()]);
+
+/** A starting point for the name, from the file: "Form-34.pdf" reads "Form 34". */
+function suggestName(filename) {
+    return filename.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
+
+function onDocPicked(row, event) {
+    const file = event.target.files && event.target.files[0];
+
+    row.chosen = file ? file.name : '';
+
+    // Suggested only into an empty box. A name already typed is the office's,
+    // and the scanner's filename is not an improvement on it.
+    if (file && ! row.title.trim()) {
+        row.title = suggestName(file.name);
+    }
+
+    // Always a spare row at the foot, so the next PDF is one click away rather
+    // than an "add another" and then a click.
+    if (file && newDocs[newDocs.length - 1] === row) {
+        newDocs.push(blankDoc());
+    }
+}
+
+function removeNewDoc(row) {
+    const at = newDocs.indexOf(row);
+
+    if (at !== -1) {
+        newDocs.splice(at, 1);
+    }
+
+    if (! newDocs.length || newDocs[newDocs.length - 1].chosen) {
+        newDocs.push(blankDoc());
+    }
+}
+
+/**
+ * What the scanner called it, when that says something the name does not.
+ *
+ * A document nobody has named yet shows the scan's own name as its name, and
+ * repeating it underneath with ".pdf" on the end is the same thing said twice.
+ */
+function arrivedNote(doc) {
+    if (! doc.arrived) {
+        return '';
+    }
+
+    return doc.arrived.replace(/\.pdf$/i, '') === doc.name ? '' : doc.arrived;
+}
+
+const addingDocs = computed(() => newDocs.filter((row) => row.chosen).length);
+
+// A row with a file and no name is refused on save; said here first, in place.
+const unnamedDocs = computed(() => newDocs.filter((row) => row.chosen && ! row.title.trim()).length);
 
 function dropDoc(doc) {
     droppedDocs.has(doc.id) ? droppedDocs.delete(doc.id) : droppedDocs.add(doc.id);
@@ -1090,26 +1146,40 @@ onMounted(() => {
                 <!--
                     The papers themselves. Different from the approval
                     screenshots above, which are evidence that one work came
-                    through: these are the file's own documents, and the newest
-                    is what the customer is offered.
+                    through: these are the file's own documents, and every one
+                    of them is offered to the customer under its name.
                 -->
                 <div v-if="isEdit" class="wf-docs">
                     <div class="wf-paid__head">
                         <h6 class="wf-paid__title">Documents</h6>
                         <span class="ui-hint">
-                            PDFs scanned against this file. The customer can download the newest one.
+                            PDFs for this file. The customer can download every one, under the name you give it here.
                         </span>
                     </div>
 
-                    <div v-for="(doc, i) in documents" :key="doc.id" class="wf-docs__row" :class="{ 'is-going': droppedDocs.has(doc.id) }">
-                        <i class="bi bi-file-earmark-pdf"></i>
-                        <a :href="doc.url" target="_blank" rel="noopener" class="ui-link wf-docs__name">{{ doc.name }}</a>
-                        <span class="ui-hint">
-                            {{ doc.uploaded }}<template v-if="doc.size"> &middot; {{ doc.size }}</template>
-                            <!-- Said on the row rather than left to be worked
-                                 out from the order. -->
-                            <template v-if="i === 0 && ! droppedDocs.has(doc.id)"> &middot; latest</template>
-                        </span>
+                    <div v-for="doc in documents" :key="doc.id" class="wf-docs__row" :class="{ 'is-going': droppedDocs.has(doc.id) }">
+                        <i class="bi bi-file-earmark-pdf wf-docs__icon"></i>
+                        <div class="wf-docs__label">
+                            <!-- The name, editable in place: most documents
+                                 uploaded before names existed carry only what
+                                 the scanner called them. Disabled once marked
+                                 for removal, so a document on its way out is not
+                                 renamed on the way. -->
+                            <input
+                                type="text"
+                                class="ui-input wf-docs__title"
+                                :name="`document_names[${doc.id}]`"
+                                :value="doc.name"
+                                maxlength="120"
+                                :disabled="droppedDocs.has(doc.id)"
+                                :aria-label="`Name of the document uploaded as ${doc.arrived}`">
+                            <span class="ui-hint wf-docs__meta">
+                                <template v-if="arrivedNote(doc)">{{ arrivedNote(doc) }} &middot; </template>{{ doc.uploaded }}<template v-if="doc.size"> &middot; {{ doc.size }}</template>
+                            </span>
+                        </div>
+                        <a :href="doc.url" target="_blank" rel="noopener" class="ui-btn ui-btn--sm" title="Open this PDF">
+                            <i class="bi bi-box-arrow-up-right"></i> Open
+                        </a>
                         <button
                             type="button"
                             class="ui-btn ui-btn--sm"
@@ -1121,18 +1191,47 @@ onMounted(() => {
                     </div>
 
                     <div class="wf-docs__add">
-                        <input
-                            type="file"
-                            class="ui-input"
-                            name="documents[]"
-                            accept="application/pdf,.pdf"
-                            multiple
-                            @change="onDocs">
-                        <span v-if="picked.length" class="ui-hint">
-                            {{ picked.length }} {{ picked.length === 1 ? 'file' : 'files' }} will be added when you save.
+                        <h6 class="wf-docs__subtitle">Add PDFs</h6>
+
+                        <!-- Named by the row's own key, not its position, so the
+                             server pairs each name with its own file even when a
+                             row in the middle was removed. -->
+                        <div v-for="row in newDocs" :key="row.key" class="wf-docs__pick">
+                            <input
+                                type="file"
+                                class="ui-input wf-docs__file"
+                                :name="`documents[${row.key}][file]`"
+                                accept="application/pdf,.pdf"
+                                aria-label="PDF to add"
+                                @change="onDocPicked(row, $event)">
+                            <input
+                                v-model="row.title"
+                                type="text"
+                                class="ui-input wf-docs__title"
+                                :class="{ 'is-invalid': row.chosen && ! row.title.trim() }"
+                                :name="`documents[${row.key}][title]`"
+                                maxlength="120"
+                                placeholder="Name, e.g. RC or Form 29"
+                                aria-label="Name the customer will see">
+                            <button
+                                v-if="row.chosen || row.title"
+                                type="button"
+                                class="ui-btn ui-btn--sm"
+                                title="Don't add this one"
+                                @click="removeNewDoc(row)">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                            <span v-else class="wf-docs__spacer" aria-hidden="true"></span>
+                        </div>
+
+                        <span v-if="unnamedDocs" class="ui-hint wf-docs__warn">
+                            Give {{ unnamedDocs === 1 ? 'the PDF' : 'each PDF' }} a name before saving — it is what the customer sees.
+                        </span>
+                        <span v-else-if="addingDocs" class="ui-hint">
+                            {{ addingDocs }} {{ addingDocs === 1 ? 'PDF' : 'PDFs' }} will be added when you save.
                         </span>
                         <span v-else-if="! keepingDocs.length" class="ui-hint">
-                            Nothing scanned against this file yet.
+                            Nothing uploaded for this file yet.
                         </span>
                         <span v-else class="ui-hint">
                             {{ keepingDocs.length }} on file. Adding another does not replace them.
@@ -1757,41 +1856,96 @@ onMounted(() => {
 }
 
 .wf-docs__row {
-    align-items: center;
+    align-items: start;
     display: grid;
-    gap: var(--s-2);
-    grid-template-columns: auto minmax(6rem, 1fr) auto auto;
+    gap: var(--s-2) var(--s-3);
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.wf-docs__icon {
+    color: var(--cr-600);
+    font-size: 1.35rem;
+    line-height: 2.2rem;
+}
+
+.wf-docs__label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.wf-docs__meta {
+    overflow-wrap: anywhere;
 }
 
 .wf-docs__row.is-going {
     opacity: 0.55;
 }
 
-.wf-docs__row.is-going .wf-docs__name {
+.wf-docs__row.is-going .wf-docs__title {
     text-decoration: line-through;
 }
 
-.wf-docs__name {
-    overflow-wrap: anywhere;
-}
-
 .wf-docs__add {
-    align-items: center;
+    border-top: 1px dashed var(--n-200);
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-3);
+    flex-direction: column;
+    gap: var(--s-2);
+    margin-top: var(--s-2);
+    padding-top: var(--s-3);
 }
 
-.wf-docs__add .ui-input {
-    flex: 1 1 16rem;
+.wf-docs__subtitle {
+    color: var(--n-500);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    margin: 0;
+    text-transform: uppercase;
+}
+
+/* The file, its name, and the way out of adding it — side by side on a desk,
+   so the name sits beside the file it belongs to. */
+.wf-docs__pick {
+    align-items: center;
+    display: grid;
+    gap: var(--s-2);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 2.2rem;
+}
+
+.wf-docs__pick .ui-input {
     min-width: 0;
+}
+
+.wf-docs__spacer {
+    display: block;
+}
+
+.wf-docs__title.is-invalid {
+    border-color: var(--cr-600);
+}
+
+.wf-docs__warn {
+    color: var(--cr-700);
+    font-weight: 600;
 }
 
 @media (max-width: 575.98px) {
     /* The name takes the width it needs and the rest sits under it, rather
        than four columns squeezing a filename to three characters. */
     .wf-docs__row {
-        grid-template-columns: auto 1fr;
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    /* On a phone the file and its name stack, with the remove button beside
+       the name it removes. */
+    .wf-docs__pick {
+        grid-template-columns: minmax(0, 1fr) 2.2rem;
+    }
+
+    .wf-docs__pick .wf-docs__file {
+        grid-column: 1 / -1;
     }
 }
 </style>

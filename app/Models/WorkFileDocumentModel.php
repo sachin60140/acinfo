@@ -9,10 +9,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /**
  * A document scanned against a file.
  *
- * Several per file, because documents get revised: a corrected form is a new
- * upload and not an overwrite, so the record of what was sent at the time
- * survives. The customer is offered the newest, which is the one that supersedes
- * the rest.
+ * Several per file: a folder's papers are an RC, a Form 29, an NOC, each its own
+ * scan. A corrected form is a new upload rather than an overwrite, so the record
+ * of what was sent at the time survives. The customer is offered all of them,
+ * each under the name the office gave it.
  */
 class WorkFileDocumentModel extends Model
 {
@@ -40,6 +40,61 @@ class WorkFileDocumentModel extends Model
     public static function latestFor(int $fileId): ?self
     {
         return self::where('work_file_id', $fileId)->orderByDesc('id')->first();
+    }
+
+    /** The longest name the office can give one. Matches the column. */
+    public const TITLE_MAX = 120;
+
+    /**
+     * What to call it on screen.
+     *
+     * The name the office gave it, or — for anything uploaded before names
+     * existed — the name it arrived with, less the ".pdf" every one of them
+     * shares. Never blank: a row with nothing to click on is a row nobody opens.
+     */
+    public function displayName(): string
+    {
+        $title = trim((string) $this->title);
+
+        if ($title !== '') {
+            return $title;
+        }
+
+        $arrived = preg_replace('/\.pdf$/i', '', trim((string) $this->original_name));
+
+        return $arrived !== '' ? $arrived : 'Document';
+    }
+
+    /**
+     * What it is saved as on the reader's computer.
+     *
+     * The display name plus .pdf, with the characters no file system accepts
+     * taken out. A customer who downloads four documents should end up with
+     * "RC.pdf" and "Form 29.pdf", not four files called scan_00123.pdf — and a
+     * name typed with a slash in it ("Form 29/30") must not become a path.
+     */
+    public function downloadName(): string
+    {
+        $name = preg_replace('/[\\\\\/:*?"<>|\x00-\x1F\x7F]+/u', ' ', $this->displayName());
+        $name = trim(preg_replace('/\s+/u', ' ', $name), " .");
+
+        return ($name !== '' ? mb_substr($name, 0, self::TITLE_MAX) : 'Document').'.pdf';
+    }
+
+    /**
+     * The same name in plain ASCII, for the browsers that cannot read the other.
+     *
+     * A Content-Disposition header carries both. Symfony insists the fallback is
+     * ASCII with no slash and no percent sign, and a name written entirely in
+     * Hindi transliterates to something or to nothing — so nothing becomes a
+     * name that still says what the file is.
+     */
+    public function downloadFallback(): string
+    {
+        $ascii = str_replace(['%', '/', '\\'], '', \Illuminate\Support\Str::ascii($this->downloadName()));
+        $ascii = trim(preg_replace('/\s+/', ' ', $ascii));
+
+        return ($ascii === '' || strcasecmp($ascii, '.pdf') === 0) ? 'document.pdf' : $ascii;
     }
 
     /**

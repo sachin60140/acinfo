@@ -133,8 +133,25 @@ class FileDocumentTest extends TestCase
         return new UploadedFile($path, $name, 'application/pdf', null, true);
     }
 
-    private function upload(WorkFileModel $file, array $pdfs)
+    /**
+     * Post documents the way the edit screen does: one row per PDF, each with
+     * the name the office gave it.
+     *
+     * A bare UploadedFile is named after its own filename, as the form suggests
+     * — which keeps the tests that are about something other than naming
+     * readable. A row given as an array is sent exactly as written, keys and
+     * all, for the tests that are about naming.
+     */
+    private function upload(WorkFileModel $file, array $pdfs, array $extra = [])
     {
+        $rows = [];
+
+        foreach ($pdfs as $key => $pdf) {
+            $rows[$key] = $pdf instanceof UploadedFile
+                ? ['file' => $pdf, 'title' => preg_replace('/\.pdf$/i', '', basename($pdf->getClientOriginalName()))]
+                : $pdf;
+        }
+
         $response = $this->actingAs($this->admin())->post('/admin/file/edit/'.$file->id, [
             'file_no' => $file->file_no,
             'received_date' => '2026-09-01',
@@ -142,8 +159,8 @@ class FileDocumentTest extends TestCase
             'work_type_id' => $file->work_type_id,
             'customer_id' => $file->customer_id,
             'customer_amount' => $file->customer_amount,
-            'documents' => $pdfs,
-        ]);
+            'documents' => $rows,
+        ] + $extra);
 
         foreach (WorkFileDocumentModel::where('work_file_id', $file->id)->get() as $doc) {
             $this->written[] = public_path($doc->path);
@@ -213,7 +230,7 @@ class FileDocumentTest extends TestCase
 
         // Named .pdf and claiming to be one. The check is on the content.
         $this->upload($file, [new UploadedFile($path, 'sneaky.pdf', 'application/pdf', null, true)])
-            ->assertSessionHasErrors('documents.0');
+            ->assertSessionHasErrors('documents.0.file');
 
         $this->assertSame(0, WorkFileDocumentModel::where('work_file_id', $file->id)->count());
     }
@@ -278,7 +295,168 @@ class FileDocumentTest extends TestCase
             ->getJson('/admin/file/edit/'.$file->id)->assertOk()->json('props.documents');
 
         $this->assertCount(2, $docs);
-        $this->assertSame('second.pdf', $docs[0]['name'], 'the newest is read first');
+        $this->assertSame('second', $docs[0]['name'], 'the newest is read first');
+        $this->assertSame('second.pdf', $docs[0]['arrived'], 'and what it arrived as is still there to see');
+    }
+
+    // ------------------------------------------------------------ naming them
+
+    /**
+     * The point of the change: each PDF carries the name the office gave it.
+     *
+     * A folder's papers are an RC, a Form 29 and an NOC, and the customer is
+     * offered all of them — from a list, which is only any use if the entries
+     * are called something a person would recognise.
+     */
+    public function test_each_pdf_is_saved_under_the_name_it_was_given(): void
+    {
+        $file = $this->file($this->customer());
+
+        $this->upload($file, [
+            ['file' => $this->pdf('scan_00123.pdf'), 'title' => 'RC'],
+            ['file' => $this->pdf('IMG-20260912-WA0004.pdf'), 'title' => 'Form 29'],
+        ])->assertSessionHasNoErrors();
+
+        $docs = WorkFileDocumentModel::where('work_file_id', $file->id)->orderBy('id')->get();
+
+        $this->assertSame(['RC', 'Form 29'], $docs->pluck('title')->all());
+
+        // What the scanner called them is kept, for telling scans apart.
+        $this->assertSame('scan_00123.pdf', $docs[0]->original_name);
+    }
+
+    public function test_a_pdf_with_no_name_is_refused(): void
+    {
+        $file = $this->file($this->customer());
+
+        $this->upload($file, [['file' => $this->pdf(), 'title' => '']])
+            ->assertSessionHasErrors('documents.0.title');
+
+        $this->assertSame(0, WorkFileDocumentModel::where('work_file_id', $file->id)->count());
+    }
+
+    /** A name typed with no PDF behind it is a document someone thinks they attached. */
+    public function test_a_name_with_no_pdf_is_refused(): void
+    {
+        $file = $this->file($this->customer());
+
+        $this->upload($file, [['title' => 'NOC']])
+            ->assertSessionHasErrors('documents.0.file');
+    }
+
+    /** The form always offers one more row than is filled. It saves nothing. */
+    public function test_the_spare_empty_row_is_ignored(): void
+    {
+        $file = $this->file($this->customer());
+
+        $this->upload($file, [
+            ['file' => $this->pdf(), 'title' => 'RC'],
+            ['title' => ''],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame(1, WorkFileDocumentModel::where('work_file_id', $file->id)->count());
+    }
+
+    /**
+     * Names are paired with files by the row's own key.
+     *
+     * The form names its rows by a counter that never reuses a number, so a
+     * row removed from the middle leaves a gap. Pairing by position in a second
+     * list would slide every name after the gap onto the wrong PDF.
+     */
+    public function test_names_stay_with_their_own_pdfs_across_a_gap(): void
+    {
+        $file = $this->file($this->customer());
+
+        $this->upload($file, [
+            3 => ['file' => $this->pdf('a.pdf'), 'title' => 'RC'],
+            7 => ['title' => ''],
+            9 => ['file' => $this->pdf('b.pdf'), 'title' => 'NOC'],
+        ])->assertSessionHasNoErrors();
+
+        $docs = WorkFileDocumentModel::where('work_file_id', $file->id)->get()->keyBy('original_name');
+
+        $this->assertSame('RC', $docs['a.pdf']->title);
+        $this->assertSame('NOC', $docs['b.pdf']->title);
+    }
+
+    /**
+     * A document uploaded before names existed can be named afterwards.
+     *
+     * Otherwise every one of them reaches the customer as whatever the scanner
+     * called it, with no way to put that right short of uploading it again.
+     */
+    public function test_a_document_already_on_the_file_can_be_named(): void
+    {
+        $file = $this->file($this->customer());
+        $this->upload($file, [$this->pdf('scan_00123.pdf')]);
+
+        $doc = WorkFileDocumentModel::latestFor($file->id);
+        $doc->title = null;
+        $doc->save();
+
+        $this->upload($file, [], ['document_names' => [$doc->id => 'Insurance']])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('Insurance', $doc->fresh()->title);
+    }
+
+    /**
+     * The form sends every box, touched or not. A blank one leaves the name
+     * alone, and one still holding what it showed writes nothing at all.
+     */
+    public function test_an_untouched_or_blank_name_changes_nothing(): void
+    {
+        $file = $this->file($this->customer());
+        $this->upload($file, [['file' => $this->pdf(), 'title' => 'RC']]);
+
+        $doc = WorkFileDocumentModel::latestFor($file->id);
+        $stamp = $doc->updated_at;
+
+        $this->travel(5)->minutes();
+
+        $this->upload($file, [], ['document_names' => [$doc->id => '   ']]);
+        $this->assertSame('RC', $doc->fresh()->title, 'a blank box cleared the name');
+
+        $this->upload($file, [], ['document_names' => [$doc->id => 'RC']]);
+        $this->assertEquals($stamp, $doc->fresh()->updated_at, 'an untouched box rewrote the row');
+    }
+
+    /** The ids arrive in the form body, and are looked up inside this file. */
+    public function test_a_document_on_another_file_cannot_be_renamed(): void
+    {
+        $mine = $this->file($this->customer());
+        $theirs = $this->file($this->customer());
+
+        $this->upload($theirs, [['file' => $this->pdf(), 'title' => 'RC']]);
+        $doc = WorkFileDocumentModel::latestFor($theirs->id);
+
+        $this->upload($mine, [], ['document_names' => [$doc->id => 'Renamed from elsewhere']]);
+
+        $this->assertSame('RC', $doc->fresh()->title);
+    }
+
+    /**
+     * The office opens one under its name too, including a name in Hindi —
+     * which, written raw into that header, some browsers refuse outright.
+     */
+    public function test_the_office_opens_a_document_under_its_name(): void
+    {
+        $file = $this->file($this->customer());
+        $this->upload($file, [['file' => $this->pdf('scan.pdf'), 'title' => 'फॉर्म 29']]);
+
+        $doc = WorkFileDocumentModel::latestFor($file->id);
+
+        $disposition = (string) $this->actingAs($this->admin())
+            ->get(route('workfile.document', ['id' => $file->id, 'doc' => $doc->id]))
+            ->assertOk()
+            ->headers->get('content-disposition');
+
+        $this->assertStringStartsWith('inline', $disposition);
+
+        // The UTF-8 name, encoded, and a plain one beside it for the rest.
+        $this->assertStringContainsString("filename*=utf-8''".rawurlencode('फॉर्म 29.pdf'), $disposition);
+        $this->assertMatchesRegularExpression('/filename="?[\x20-\x7E]+\.pdf"?/', $disposition);
     }
 
     // ------------------------------------------------------------ the customer
@@ -339,30 +517,115 @@ class FileDocumentTest extends TestCase
         $page = $this->withSession(['customer_id' => $customer->id])
             ->getJson(route('customer.file', $file->id))->assertOk();
 
-        $this->assertNull($page->json('page.document'), 'and nothing offered on the page');
+        $this->assertSame([], $page->json('page.documents'), 'and nothing offered on the page');
     }
 
-    public function test_the_file_page_offers_the_latest_through_the_application(): void
+    /**
+     * Every document on the file, not only the newest.
+     *
+     * The newest was offered alone on the idea that a document gets revised and
+     * the latest supersedes the rest. That holds for two copies of one form. It
+     * does not hold for an RC and a Form 29, and a customer offered only
+     * whichever was uploaded last could not get the other at all.
+     */
+    public function test_the_file_page_offers_every_document_under_its_name(): void
     {
         $customer = $this->customer();
         $file = $this->file($customer);
 
-        $this->upload($file, [$this->pdf('form-34.pdf')]);
+        $this->upload($file, [
+            ['file' => $this->pdf('scan_1.pdf'), 'title' => 'RC'],
+            ['file' => $this->pdf('scan_2.pdf'), 'title' => 'Form 29'],
+        ]);
 
-        $page = $this->withSession(['customer_id' => $customer->id])
-            ->getJson(route('customer.file', $file->id))->assertOk();
+        $docs = $this->withSession(['customer_id' => $customer->id])
+            ->getJson(route('customer.file', $file->id))->assertOk()->json('page.documents');
 
-        $this->assertSame('form-34.pdf', $page->json('page.document.name'));
-        $this->assertSame(
-            route('customer.file.document', $file->id),
-            $page->json('page.document.url'),
-            'offered through the route, not at its path'
-        );
+        $this->assertSame(['Form 29', 'RC'], array_column($docs, 'name'), 'every one, newest first');
 
-        // The stored path never reaches the customer in any form.
+        $ids = WorkFileDocumentModel::where('work_file_id', $file->id)->orderByDesc('id')->pluck('id');
+
+        foreach ($docs as $i => $doc) {
+            $this->assertSame(
+                route('customer.file.document', ['id' => $file->id, 'doc' => $ids[$i]]),
+                $doc['url'],
+                'offered through the route, each its own'
+            );
+        }
+
+        // The stored path never reaches the customer in any form, and neither
+        // does what the scanner called it.
         $body = $this->withSession(['customer_id' => $customer->id])
             ->get(route('customer.file', $file->id))->assertOk()->getContent();
 
         $this->assertStringNotContainsString(WorkFileModel::DOC_DIR, $body);
+        $this->assertStringNotContainsString('scan_1', $body);
+        $this->assertStringContainsString('Form 29', $body);
+    }
+
+    public function test_a_customer_downloads_the_one_they_chose_under_its_name(): void
+    {
+        $customer = $this->customer();
+        $file = $this->file($customer);
+
+        $this->upload($file, [
+            ['file' => $this->pdf('scan_1.pdf'), 'title' => 'RC'],
+            ['file' => $this->pdf('scan_2.pdf'), 'title' => 'Form 29'],
+        ]);
+
+        // The older of the two, which the page used to have no way to offer.
+        $rc = WorkFileDocumentModel::where('work_file_id', $file->id)->where('title', 'RC')->firstOrFail();
+
+        $response = $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.file.document', ['id' => $file->id, 'doc' => $rc->id]))
+            ->assertOk();
+
+        $disposition = (string) $response->headers->get('content-disposition');
+
+        $this->assertStringStartsWith('attachment', $disposition);
+        $this->assertStringContainsString('RC.pdf', $disposition);
+        $this->assertStringNotContainsString('scan_1', $disposition);
+    }
+
+    /**
+     * The document id is looked up inside the file named beside it, and that
+     * file inside the signed-in customer's own. Either one belonging elsewhere
+     * is not found.
+     */
+    public function test_a_document_from_another_file_is_not_served_through_this_one(): void
+    {
+        $customer = $this->customer();
+        $mine = $this->file($customer);
+        $alsoMine = $this->file($customer);
+        $stranger = $this->file($this->customer());
+
+        $this->upload($alsoMine, [['file' => $this->pdf(), 'title' => 'RC']]);
+        $this->upload($stranger, [['file' => $this->pdf(), 'title' => 'NOC']]);
+
+        $session = ['customer_id' => $customer->id];
+
+        // Their own document, asked for through the wrong file.
+        $this->withSession($session)
+            ->get(route('customer.file.document', ['id' => $mine->id, 'doc' => WorkFileDocumentModel::latestFor($alsoMine->id)->id]))
+            ->assertNotFound();
+
+        // Somebody else's, through their own file.
+        $this->withSession($session)
+            ->get(route('customer.file.document', ['id' => $mine->id, 'doc' => WorkFileDocumentModel::latestFor($stranger->id)->id]))
+            ->assertNotFound();
+    }
+
+    /** The old address, with no document named, still gives the newest. */
+    public function test_a_link_saved_before_the_list_still_works(): void
+    {
+        $customer = $this->customer();
+        $file = $this->file($customer);
+
+        $this->upload($file, [['file' => $this->pdf(), 'title' => 'First']]);
+        $this->upload($file, [['file' => $this->pdf(), 'title' => 'Second']]);
+
+        $disposition = (string) $this->portal($customer, $file)->assertOk()->headers->get('content-disposition');
+
+        $this->assertStringContainsString('Second.pdf', $disposition);
     }
 }

@@ -838,11 +838,20 @@ class WorkFileController extends Controller
         abort_if($document === null, 404);
         abort_unless(WorkFileModel::isStoredUpload($document->path), 404);
 
-        return response()->file(public_path($document->path), [
-            'Content-Disposition' => 'inline; filename="'.str_replace('"', '', $document->original_name).'"',
+        $response = response()->file(public_path($document->path), [
             'Cache-Control' => 'private, no-store',
             'X-Content-Type-Options' => 'nosniff',
         ]);
+
+        /*
+         * Set through the response rather than written as a header string. A
+         * name is typed by the office now and may be in Hindi, and a raw
+         * non-ASCII filename in that header is one some browsers refuse
+         * outright; this writes the UTF-8 name and an ASCII one beside it.
+         */
+        $response->setContentDisposition('inline', $document->downloadName(), $document->downloadFallback());
+
+        return $response;
     }
 
     public function customerReturn(Request $req)
@@ -1544,7 +1553,21 @@ class WorkFileController extends Controller
                  * lands in it must not depend on what a filename claims.
                  */
                 'documents' => 'nullable|array|max:20',
-                'documents.*' => 'file|mimes:pdf|max:10240',
+                'documents.*' => 'array',
+                /*
+                 * One row per PDF: the file, and the name the office gives it.
+                 * Each needs the other. A PDF with no name reaches the customer
+                 * as a row of hex; a name with no PDF is a document somebody
+                 * thinks they attached and did not. An empty row — no file, no
+                 * name — is the spare one the form always offers, and is
+                 * ignored.
+                 */
+                'documents.*.file' => 'nullable|file|mimes:pdf|max:10240|required_with:documents.*.title',
+                'documents.*.title' => 'nullable|string|max:'.WorkFileDocumentModel::TITLE_MAX.'|required_with:documents.*.file',
+
+                // Names given to documents already on the file, by id.
+                'document_names' => 'nullable|array',
+                'document_names.*' => 'nullable|string|max:'.WorkFileDocumentModel::TITLE_MAX,
 
                 // Documents being taken off the file, by id.
                 'remove_documents' => 'nullable|array',
@@ -1555,6 +1578,10 @@ class WorkFileController extends Controller
                 'items.*.customer_amount.required' => 'Every work on the file needs a charge.',
                 'new_works.*.work_type_id.required' => 'Every work added needs a type.',
                 'new_works.*.amount.required' => 'Every work added needs a charge.',
+                'documents.*.title.required_with' => 'Give each PDF a name — it is what the customer sees it as.',
+                'documents.*.file.required_with' => 'Choose the PDF for each name you typed.',
+                'documents.*.file.mimes' => 'Only PDF files can be added as documents.',
+                'documents.*.file.max' => 'Each PDF must be 10 MB or smaller.',
             ]);
 
             $adding = collect($req->input('new_works', []))
@@ -1815,10 +1842,17 @@ class WorkFileController extends Controller
                  * the earlier one, and replacing it in place would lose the
                  * record of what the office actually sent at the time.
                  */
-                foreach ($req->file('documents', []) as $upload) {
+                foreach ($req->file('documents', []) as $i => $row) {
+                    $upload = is_array($row) ? ($row['file'] ?? null) : null;
+
                     if (! $upload || ! $upload->isValid()) {
                         continue;
                     }
+
+                    // Paired by the row's own index rather than by position in
+                    // a second list, so a spare empty row between two filled
+                    // ones cannot shift every name after it onto the wrong PDF.
+                    $title = trim((string) $req->input("documents.$i.title"));
 
                     /*
                      * Read before the move, not after.
@@ -1842,9 +1876,43 @@ class WorkFileController extends Controller
                     // Kept for showing and for sending it back under, never
                     // for building a path: the stored name is generated.
                     $doc->original_name = $name;
+                    $doc->title = mb_substr($title, 0, WorkFileDocumentModel::TITLE_MAX);
                     $doc->size = $size;
                     $doc->uploaded_by = Auth::id();
                     $doc->save();
+                }
+
+                /*
+                 * Names given to documents already here — mostly the ones
+                 * uploaded before documents had names at all, which otherwise
+                 * reach the customer as whatever the scanner called them.
+                 *
+                 * Scoped to this file, so an id from somebody else's cannot be
+                 * renamed from here. A blank box means leave it alone rather
+                 * than clear it: the form sends every box whether or not it was
+                 * touched, and a name the office gave is not undone by a field
+                 * that happened to be empty.
+                 */
+                $naming = collect((array) $req->input('document_names', []))
+                    ->map(fn ($name) => trim((string) $name))
+                    ->filter(fn ($name) => $name !== '');
+
+                if ($naming->isNotEmpty()) {
+                    $named = $file->documents()
+                        ->whereIn('id', $naming->keys()->map(fn ($id) => (int) $id)->all())
+                        ->get();
+
+                    foreach ($named as $doc) {
+                        $name = mb_substr($naming[$doc->id], 0, WorkFileDocumentModel::TITLE_MAX);
+
+                        // Untouched boxes arrive holding what was shown in
+                        // them; writing that back would change nothing but
+                        // updated_at.
+                        if ($name !== $doc->displayName()) {
+                            $doc->title = $name;
+                            $doc->save();
+                        }
+                    }
                 }
 
                 if ($goneDocs = $req->input('remove_documents', [])) {
@@ -2034,7 +2102,10 @@ class WorkFileController extends Controller
             'documents' => $isEdit
                 ? $file->documents()->orderByDesc('id')->get()->map(fn ($doc) => [
                     'id' => (int) $doc->id,
-                    'name' => $doc->original_name,
+                    'name' => $doc->displayName(),
+                    // What the scanner called it, shown quietly beside the name
+                    // so the office can still tell which scan a name was given to.
+                    'arrived' => $doc->original_name,
                     'size' => $doc->sizeText(),
                     'uploaded' => $doc->created_at?->format('d-m-Y'),
                     'url' => route('workfile.document', ['id' => $file->id, 'doc' => $doc->id]),

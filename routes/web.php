@@ -198,10 +198,11 @@ Route::group(['middleware' => 'customerAuth'], function () {
         ->whereNumber('id')
         ->name('customer.file');
 
-    // The newest document on the file, under the name it arrived with. No id
-    // for the document itself: the newest is the one that supersedes the rest.
-    Route::get('customer/file/{id}/document', [CustomerPortalController::class, 'document'])
+    // One document on the file, under the name the office gave it. Without a
+    // document id it is the newest, which is all this address used to offer.
+    Route::get('customer/file/{id}/document/{doc?}', [CustomerPortalController::class, 'document'])
         ->whereNumber('id')
+        ->whereNumber('doc')
         ->name('customer.file.document');
 
     Route::get('customer/file/{id}/approval/{item?}', [CustomerPortalController::class, 'approval'])

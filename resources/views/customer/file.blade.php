@@ -43,6 +43,58 @@
             margin-bottom: 0.15rem;
         }
 
+        /* The documents on the file: one row each, the name to recognise it by
+           and the button to take it away, with the button dropping under the
+           name on a phone rather than squeezing it to one word a line. */
+        .file-docs {
+            list-style: none;
+            margin: 0.35rem 0 0;
+            padding: 0;
+        }
+
+        .file-docs__row {
+            align-items: center;
+            border-top: 1px solid #eef1f7;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem 0.75rem;
+            padding: 0.55rem 0;
+        }
+
+        .file-docs__row:first-child {
+            border-top: 0;
+            padding-top: 0.2rem;
+        }
+
+        .file-docs__icon {
+            color: #dc3545;
+            flex: none;
+            font-size: 1.35rem;
+        }
+
+        .file-docs__text {
+            display: flex;
+            flex: 1 1 12rem;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .file-docs__name {
+            color: #2f3d4a;
+            font-weight: 600;
+            overflow-wrap: anywhere;
+        }
+
+        .file-docs__get {
+            flex: none;
+            margin-left: auto;
+        }
+
+        @media (max-width: 575.98px) {
+            .file-docs__get {
+                margin-left: 2.1rem;
+            }
+        }
         /* The history. A rail down the left with a dot per entry, coloured the
            same way the status badges are. */
         .tl {
@@ -188,19 +240,32 @@
                             </div>
                         @endif
 
-                        @if ($document)
-                            {{-- The papers themselves, under the name they were
-                                 scanned as. The newest is the one that
-                                 supersedes the rest, which is why it is the one
-                                 offered rather than a list to choose from. --}}
+                        @if (count($documents))
+                            {{-- The papers themselves, every one of them, each
+                                 under the name the office gave it. A button per
+                                 document rather than one for the newest: an RC
+                                 and a Form 29 are two papers, not two versions
+                                 of one. --}}
                             <div class="file-remark mb-3">
-                                <span class="label">Your Document</span>
-                                <a href="{{ $document['url'] }}" class="btn btn-primary btn-sm">
-                                    <i class="bi bi-file-earmark-pdf"></i> Download {{ $document['name'] }}
-                                </a>
-                                <div class="statement-period">
-                                    Uploaded {{ $document['uploaded'] }}@if ($document['size']) &middot; {{ $document['size'] }}@endif
-                                </div>
+                                <span class="label">
+                                    Your {{ count($documents) === 1 ? 'Document' : 'Documents' }}
+                                </span>
+                                <ul class="file-docs">
+                                    @foreach ($documents as $doc)
+                                        <li class="file-docs__row">
+                                            <i class="bi bi-file-earmark-pdf file-docs__icon"></i>
+                                            <div class="file-docs__text">
+                                                <span class="file-docs__name">{{ $doc['name'] }}</span>
+                                                <span class="statement-period">
+                                                    Uploaded {{ $doc['uploaded'] }}@if ($doc['size']) &middot; {{ $doc['size'] }}@endif
+                                                </span>
+                                            </div>
+                                            <a href="{{ $doc['url'] }}" class="btn btn-primary btn-sm file-docs__get">
+                                                <i class="bi bi-download"></i> Download
+                                            </a>
+                                        </li>
+                                    @endforeach
+                                </ul>
                             </div>
                         @endif
 

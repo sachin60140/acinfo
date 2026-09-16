@@ -479,16 +479,27 @@ class CustomerPortalController extends Controller
             'fileScreenshot' => $fileScreenshot,
 
             /*
-             * The newest document on the file, for the customer to take away.
-             * Offered through a route rather than at its path: these are
+             * Every document on the file, newest first, each under the name
+             * the office gave it. A folder's papers are an RC, a Form 29 and an
+             * NOC — separate scans, none of which supersedes the others — so
+             * offering only the newest left the customer with whichever
+             * happened to be uploaded last.
+             *
+             * Each through a route rather than at its path: these are
              * web-served with no authentication of their own.
              */
-            'document' => ($doc = \App\Models\WorkFileDocumentModel::latestFor($file->id)) ? [
-                'name' => $doc->original_name,
-                'size' => $doc->sizeText(),
-                'uploaded' => $doc->created_at?->format('d-m-Y'),
-                'url' => route('customer.file.document', $file->id),
-            ] : null,
+            // $file is a plain row from the customer's own scope, not a model,
+            // so the documents are asked for by its id.
+            'documents' => \App\Models\WorkFileDocumentModel::where('work_file_id', $file->id)
+                ->orderByDesc('id')->get()
+                ->map(fn ($doc) => [
+                    'name' => $doc->displayName(),
+                    'size' => $doc->sizeText(),
+                    'uploaded' => $doc->created_at?->format('d-m-Y'),
+                    'url' => route('customer.file.document', ['id' => $file->id, 'doc' => $doc->id]),
+                ])
+                ->values()
+                ->all(),
             'workCount' => count($rows),
             // Everything that has happened to this file, oldest first.
             'timeline' => WorkFileModel::customerTimeline($file->id),
@@ -497,32 +508,37 @@ class CustomerPortalController extends Controller
     }
 
     /**
-     * The newest document on the file, served only to its customer.
+     * One document on the file, served only to its customer.
      *
      * Through the application rather than linked at its path under public/, for
      * the reason the approval below is: those files are web-served with no
      * authentication, and a portal handing customers those URLs turns an
      * unguessable filename into a link that is forwarded and saved for good.
      *
-     * Always the newest, never one named in the URL. A document gets revised,
-     * the newest is the one that supersedes the rest, and an id taken from the
-     * address bar would be one more thing to have to scope.
+     * The document is named in the URL now that there is a list to choose from,
+     * and is looked up inside the customer's own file — so an id belonging to
+     * somebody else's is not found, rather than found and refused. With no id
+     * it is the newest, which is what this address meant before the list
+     * existed, and a link saved then still works.
      */
-    public function document(Request $req, int $id)
+    public function document(Request $req, int $id, ?int $doc = null)
     {
         $file = $this->ownFile($id);
 
-        $doc = \App\Models\WorkFileDocumentModel::latestFor($file->id);
+        $doc = $doc === null
+            ? \App\Models\WorkFileDocumentModel::latestFor($file->id)
+            : \App\Models\WorkFileDocumentModel::where('work_file_id', $file->id)->whereKey($doc)->first();
 
         abort_if($doc === null, 404);
         abort_unless(WorkFileModel::isStoredUpload($doc->path), 404);
 
         /*
-         * Sent as a download under the name it arrived with, not the generated
-         * one it is stored as — "Form-34.pdf" is what the customer asked for
-         * and "F-00051-9ccb13d4b79a.pdf" is what they would otherwise get.
+         * Sent as a download under the name the office gave it — "RC.pdf",
+         * "Form 29.pdf" — rather than the one it is stored as or the one the
+         * scanner gave it. A customer who takes four away should be able to
+         * tell them apart in their Downloads folder.
          */
-        return response()->download(public_path($doc->path), $doc->original_name, [
+        return response()->download(public_path($doc->path), $doc->downloadName(), [
             'Cache-Control' => 'private, no-store',
             'X-Content-Type-Options' => 'nosniff',
         ]);
