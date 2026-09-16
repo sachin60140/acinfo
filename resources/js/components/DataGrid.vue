@@ -281,7 +281,18 @@ function sum(rows) {
  * one of which the rest of the app never uses.
  */
 function total(column, value) {
-    return column.type === 'balance' ? balance(value) : money(value);
+    if (column.type === 'balance') {
+        return balance(value);
+    }
+
+    // A count is a number of things. Through money() nine works totalled to
+    // "9.00", under a column of cells reading 3, 2, 2 and 2 — and nobody has
+    // ever done nine-hundredths of a transfer.
+    if (column.type === 'count') {
+        return String(Math.round(Number(value) || 0));
+    }
+
+    return money(value);
 }
 
 function totalClass(column, value) {

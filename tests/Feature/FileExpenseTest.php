@@ -726,4 +726,60 @@ class FileExpenseTest extends TestCase
         $this->assertEquals(300.0, $props['expenses'][0]['amount']);
         $this->assertNotEmpty($props['expenseTypes'], 'and the kinds to add another under');
     }
+    // ------------------------------------------------ what the tiles are called
+
+    /**
+     * The figure above each listing is named for what it adds up.
+     *
+     * It was "Vendor Cost" on three screens, from before counter money existed.
+     * Each adds up a cost that has included counter money since, so a reader
+     * taking the tile at its word undercounted what the vendor was paid and
+     * overcounted nothing — they simply had the wrong idea of what the number
+     * was. The profit report was put right first; these are the other two.
+     */
+    public function test_the_files_list_tile_counts_counter_money_and_says_so(): void
+    {
+        $vendor = $this->party('vendor');
+        $file = $this->file($this->party('customer'), ['vendor_id' => $vendor->id, 'vendor_amount' => 3000]);
+        $this->spend($file, 700);
+
+        $response = $this->actingAs($this->admin())->getJson(route('workfile.index'))->assertOk();
+
+        $mine = collect($response->json('props.rows'))->firstWhere('id', $file->id);
+
+        $this->assertEquals(3700, $mine['cost'], 'the row counts the counter money');
+
+        // The tile adds up the same column, so it counts it too.
+        $this->assertEquals(
+            collect($response->json('props.rows'))->sum('cost'),
+            $response->json('page.cost')
+        );
+
+        $page = $this->actingAs($this->admin())->get(route('workfile.index'))->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('<span class="label">Vendor Cost</span>', $page);
+        $this->assertStringContainsString('<span class="label">Cost</span>', $page);
+    }
+
+    public function test_the_work_report_tile_counts_counter_money_and_says_so(): void
+    {
+        $customer = $this->party('customer');
+        $vendor = $this->party('vendor');
+        $file = $this->file($customer, ['vendor_id' => $vendor->id, 'vendor_amount' => 3000]);
+        $this->spend($file, 700);
+
+        $query = ['party_type' => 'customer', 'party_id' => $customer->id];
+
+        $totals = $this->actingAs($this->admin())
+            ->getJson(route('report.files', $query))
+            ->assertOk()->json('page.totals');
+
+        // Narrowed to one customer with one file, so the figure is exact.
+        $this->assertEquals(3700, $totals['cost']);
+
+        $page = $this->actingAs($this->admin())->get(route('report.files', $query))->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('<span class="label">Vendor Cost</span>', $page);
+        $this->assertStringContainsString('<span class="label">Cost</span>', $page);
+    }
 }
