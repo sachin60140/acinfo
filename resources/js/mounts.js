@@ -12,6 +12,8 @@ import ClientForm from './components/ClientForm.vue';
 import ClientPassword from './components/ClientPassword.vue';
 import CustomerReturn from './components/CustomerReturn.vue';
 import HandOver from './components/HandOver.vue';
+import PaperAudit from './components/PaperAudit.vue';
+import PaperChecklist from './components/PaperChecklist.vue';
 import DataGrid from './components/DataGrid.vue';
 import Dashboard from './components/Dashboard.vue';
 import FileForm from './components/FileForm.vue';
@@ -45,6 +47,9 @@ export const components = {
     'vue-customer-return': CustomerReturn,
     // Approved papers going back. A delivery, not a return: no amounts.
     'vue-hand-over': HandOver,
+    // Step 2: the audit queue and pending papers, and one file's checklist.
+    'vue-paper-audit': PaperAudit,
+    'vue-paper-checklist': PaperChecklist,
     'vue-vendor-return': VendorReturn,
     'vue-status-board': StatusBoard,
 

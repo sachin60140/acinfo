@@ -33,6 +33,9 @@ class WorkFilePaperModel extends Model
         self::NOT_NEEDED => 'Not needed',
     ];
 
+    // Only the pair a line is looked up by. Everything else is set field by field.
+    protected $fillable = ['work_file_id', 'paper_type_id'];
+
     protected $casts = [
         'required' => 'boolean',
     ];

@@ -41,9 +41,55 @@ class WorkFileModel extends Model
     /** The files list's view of approved work whose papers are still here. */
     public const AWAITING_HANDOVER = 'awaiting_handover';
 
+    /** A checklist was saved or a paper came in. See the status log's event column. */
+    public const PAPERS = 'papers';
+
+    /** The files list's views of the paper checklist. */
+    public const AWAITING_AUDIT = 'awaiting_audit';
+
+    public const PAPERS_PENDING = 'papers_pending';
+
+    /**
+     * A live work on this file whose papers are still to be checked, as SQL.
+     *
+     * Live meaning not finished: approved, returned and cancelled work has
+     * nothing left to be checked for. Only papers still being asked for count —
+     * a work type with no list, or a list of retired papers, has nothing to
+     * check and is not held up by an audit that could never find anything.
+     */
+    public const NEEDS_AUDIT = "EXISTS (SELECT 1 FROM work_file_item nai
+        JOIN work_type_paper nat ON nat.work_type_id = nai.work_type_id
+        JOIN paper_type nap ON nap.id = nat.paper_type_id AND nap.is_active = 1
+        WHERE nai.work_file_id = work_file.id
+          AND nai.papers_audited_at IS NULL
+          AND nai.status NOT IN ('approval_done', 'paper_returned', 'cancelled'))";
+
+    /**
+     * A paper this file is still waiting for, for work that is not finished.
+     */
+    public const PENDING_PAPERS = "EXISTS (SELECT 1 FROM work_file_paper ppp
+        JOIN work_file_paper_item ppi ON ppi.work_file_paper_id = ppp.id
+        JOIN work_file_item ppw ON ppw.id = ppi.work_file_item_id
+        WHERE ppp.work_file_id = work_file.id
+          AND ppp.state = 'pending'
+          AND ppw.status NOT IN ('approval_done', 'paper_returned', 'cancelled'))";
+
+    /** The same, named: "Form 30, Form 34" — for a list with no room for a query per row. */
+    public const PENDING_PAPER_NAMES = "(SELECT GROUP_CONCAT(DISTINCT ppt.name ORDER BY ppt.sort, ppt.name SEPARATOR ', ')
+        FROM work_file_paper ppn
+        JOIN paper_type ppt ON ppt.id = ppn.paper_type_id
+        JOIN work_file_paper_item ppni ON ppni.work_file_paper_id = ppn.id
+        JOIN work_file_item ppnw ON ppnw.id = ppni.work_file_item_id
+        WHERE ppn.work_file_id = work_file.id
+          AND ppn.state = 'pending'
+          AND ppnw.status NOT IN ('approval_done', 'paper_returned', 'cancelled'))";
+
     public const IN_OFFICE = 'in_office';
 
     public const DISPATCHED = 'file_dispatch';
+
+    /** Set and cleared by the paper checklist, never chosen by hand. */
+    public const PAPER_PENDENCY = 'paper_pendency';
 
     /** What the vendor filter calls work nobody was given. */
     public const IN_HOUSE = 'none';
@@ -307,6 +353,294 @@ class WorkFileModel extends Model
         $log->save();
 
         return $log;
+    }
+
+    // ---------------------------------------------------------- the paper checklist
+
+    public function papers(): HasMany
+    {
+        return $this->hasMany(WorkFilePaperModel::class, 'work_file_id');
+    }
+
+    /**
+     * Every paper this file needs, for the work on it that is not finished.
+     *
+     * A work not yet checked asks for what its work type needs today. A work
+     * already checked asks for exactly what it was checked against — the lines
+     * recorded for it — so editing the master list later never rewrites a file
+     * that has been done. A paper several works need is one line, naming all of
+     * them, carrying whatever state it already has: a work added after the RC
+     * came in does not ask for the RC again.
+     *
+     * @return array<int, array{paper_type_id: int, name: string, sort: int, required: bool, state: ?string, note: ?string, office_note: ?string, received_on: ?string, works: array<int, string>, line_id: ?int}>
+     */
+    public function paperChecklist(): array
+    {
+        $items = $this->items()->with('workType')->get()->reject(fn ($item) => $item->isSettled());
+
+        if ($items->isEmpty()) {
+            return [];
+        }
+
+        $rows = $this->papers()->with('paperType', 'items')->get()->keyBy('paper_type_id');
+
+        // What each unchecked work's type needs, in one query.
+        $fresh = $items->whereNull('papers_audited_at');
+        $needs = $fresh->isEmpty() ? collect() : DB::table('work_type_paper')
+            ->join('paper_type', 'paper_type.id', '=', 'work_type_paper.paper_type_id')
+            ->whereIn('work_type_paper.work_type_id', $fresh->pluck('work_type_id')->unique()->all())
+            ->where('paper_type.is_active', 1)
+            ->get(['work_type_paper.work_type_id', 'work_type_paper.required', 'paper_type.id', 'paper_type.name', 'paper_type.sort'])
+            ->groupBy('work_type_id');
+
+        $lines = [];
+
+        $add = function (int $paperId, string $name, int $sort, bool $required, $item) use (&$lines) {
+            $lines[$paperId] ??= [
+                'paper_type_id' => $paperId,
+                'name' => $name,
+                'sort' => $sort,
+                'required' => false,
+                'works' => [],
+            ];
+
+            $lines[$paperId]['required'] = $lines[$paperId]['required'] || $required;
+            $lines[$paperId]['works'][$item->id] = $item->workType?->name ?? 'Work';
+        };
+
+        foreach ($items as $item) {
+            if ($item->papers_audited_at === null) {
+                foreach ($needs->get($item->work_type_id, []) as $need) {
+                    $add((int) $need->id, $need->name, (int) $need->sort, (bool) $need->required, $item);
+                }
+
+                continue;
+            }
+
+            foreach ($rows as $row) {
+                if ($row->items->contains('id', $item->id)) {
+                    $add((int) $row->paper_type_id, $row->paperType->name, (int) $row->paperType->sort, (bool) $row->required, $item);
+                }
+            }
+        }
+
+        foreach ($lines as $paperId => &$line) {
+            $row = $rows->get($paperId);
+
+            $line['line_id'] = $row?->id;
+            $line['state'] = $row?->state;
+            $line['note'] = $row?->note;
+            $line['office_note'] = $row?->office_note;
+            $line['received_on'] = $row?->received_on;
+        }
+        unset($line);
+
+        uasort($lines, fn ($a, $b) => [$a['sort'], $a['name']] <=> [$b['sort'], $b['name']]);
+
+        return $lines;
+    }
+
+    /**
+     * Save a checked list: one state per paper, and the notes.
+     *
+     * Validation is the caller's — every line needs a state, and a required
+     * paper marked not needed needs a reason. This writes what it is given,
+     * attaches each line to the works it was checked for, stamps those works
+     * as checked, moves them in or out of Paper Pendency, and writes one entry
+     * on the file's history saying what changed.
+     *
+     * @param  array<int, array{state: string, note?: ?string, office_note?: ?string}>  $input  keyed by paper_type_id
+     * @return array{pending: array<int, string>, changed: bool}
+     */
+    public function savePaperChecklist(array $input): array
+    {
+        return DB::transaction(function () use ($input) {
+            $checklist = $this->paperChecklist();
+            $firstLook = $this->items()->whereNull('papers_audited_at')->whereNotIn('status', [self::APPROVED, self::RETURNED, self::CANCELLED])->pluck('id');
+            $today = now()->toDateString();
+            $folderWas = $this->status;
+
+            $moved = ['received' => [], 'pending' => [], 'not_needed' => []];
+
+            foreach ($checklist as $paperId => $line) {
+                $in = $input[$paperId];
+                $clean = fn ($value) => ($value = trim((string) $value)) !== '' ? mb_substr($value, 0, 200) : null;
+
+                $row = WorkFilePaperModel::firstOrNew(['work_file_id' => $this->id, 'paper_type_id' => $paperId]);
+                $was = $row->exists ? $row->state : null;
+
+                $row->state = $in['state'];
+                $row->required = $line['required'];
+                $row->note = $clean($in['note'] ?? null);
+                $row->office_note = $clean($in['office_note'] ?? null);
+
+                if ($row->state === WorkFilePaperModel::RECEIVED) {
+                    $row->received_on = $was === WorkFilePaperModel::RECEIVED ? ($row->received_on ?: $today) : $today;
+                } else {
+                    $row->received_on = null;
+                }
+
+                if (! $row->exists || $row->isDirty()) {
+                    $row->updated_by = Auth::id();
+                    $row->save();
+                }
+
+                if ($was !== $row->state) {
+                    $moved[$row->state][] = $line['name'];
+                }
+
+                $row->items()->syncWithoutDetaching(array_keys($line['works']));
+            }
+
+            if ($firstLook->isNotEmpty()) {
+                WorkFileItemModel::whereIn('id', $firstLook->all())->update(['papers_audited_at' => now()]);
+            }
+
+            $this->syncPaperPendency();
+
+            $pending = collect($this->paperChecklist())
+                ->where('state', WorkFilePaperModel::PENDING)
+                ->pluck('name')
+                ->values()
+                ->all();
+
+            $changed = $firstLook->isNotEmpty() || array_filter($moved);
+
+            if ($changed) {
+                $this->logStatus($folderWas, self::papersRemark($firstLook->isNotEmpty(), $moved, $pending), null, self::PAPERS);
+            }
+
+            return ['pending' => $pending, 'changed' => (bool) $changed];
+        });
+    }
+
+    /**
+     * Mark pending papers received, across however many files they are on.
+     *
+     * The counter's quickest action: the customer walks in with Form 30 for one
+     * file and an NOC for another. Only lines still pending are touched, so a
+     * page left open cannot mark something another person already changed.
+     *
+     * @param  array<int, int>  $lineIds  work_file_paper ids
+     * @return array<int, array{file_no: string, papers: array<int, string>}> keyed by work_file_id
+     */
+    public static function receivePapers(array $lineIds, ?string $on = null): array
+    {
+        return DB::transaction(function () use ($lineIds, $on) {
+            $lines = WorkFilePaperModel::with('paperType')
+                ->whereIn('id', array_map('intval', $lineIds))
+                ->where('state', WorkFilePaperModel::PENDING)
+                ->lockForUpdate()
+                ->get()
+                ->groupBy('work_file_id');
+
+            $done = [];
+
+            foreach ($lines as $fileId => $group) {
+                $file = self::find($fileId);
+
+                if (! $file) {
+                    continue;
+                }
+
+                $folderWas = $file->status;
+
+                foreach ($group as $line) {
+                    $line->state = WorkFilePaperModel::RECEIVED;
+                    $line->received_on = $on ?: now()->toDateString();
+                    $line->updated_by = Auth::id();
+                    $line->save();
+                }
+
+                $file->syncPaperPendency();
+
+                $names = $group->map(fn ($line) => $line->paperType->name)->all();
+                $still = collect($file->paperChecklist())->where('state', WorkFilePaperModel::PENDING)->pluck('name')->all();
+
+                $file->logStatus($folderWas, self::papersRemark(false, ['received' => $names], $still), null, self::PAPERS);
+
+                $done[$fileId] = ['file_no' => $file->file_no, 'papers' => $names];
+            }
+
+            return $done;
+        });
+    }
+
+    /**
+     * Move each unfinished work in or out of Paper Pendency to match its papers.
+     *
+     * A work with a paper pending is in Paper Pendency. A work in Paper
+     * Pendency with nothing pending goes back to where it would be without the
+     * papers holding it: with its vendor if the file has been given to one, in
+     * the office otherwise. Finished work is not touched.
+     *
+     * Returns whether anything moved; the folder is rolled up and saved if so.
+     */
+    public function syncPaperPendency(): bool
+    {
+        $pendingFor = DB::table('work_file_paper_item')
+            ->join('work_file_paper', 'work_file_paper.id', '=', 'work_file_paper_item.work_file_paper_id')
+            ->where('work_file_paper.work_file_id', $this->id)
+            ->where('work_file_paper.state', WorkFilePaperModel::PENDING)
+            ->pluck('work_file_paper_item.work_file_item_id')
+            ->unique();
+
+        $moved = false;
+
+        foreach ($this->items()->get() as $item) {
+            if ($item->isSettled()) {
+                continue;
+            }
+
+            $pending = $pendingFor->contains($item->id);
+
+            if ($pending && $item->status !== self::PAPER_PENDENCY) {
+                $item->status = self::PAPER_PENDENCY;
+            } elseif (! $pending && $item->status === self::PAPER_PENDENCY) {
+                $item->status = $this->vendor_id ? self::DISPATCHED : self::IN_OFFICE;
+            } else {
+                continue;
+            }
+
+            $item->save();
+            $moved = true;
+        }
+
+        if ($moved) {
+            $this->load('items');
+            $this->rollUp();
+            $this->save();
+            $this->syncLedger();
+        }
+
+        return $moved;
+    }
+
+    /**
+     * What a checklist save says on the file's history — and on the customer's.
+     * Paper names only: the notes belong to their lines.
+     */
+    private static function papersRemark(bool $firstLook, array $moved, array $stillPending): string
+    {
+        $parts = [];
+
+        if ($firstLook) {
+            $parts[] = 'Papers checked.';
+        }
+
+        if (! empty($moved['received']) && ! $firstLook) {
+            $parts[] = 'Received: '.implode(', ', $moved['received']).'.';
+        }
+
+        if (! empty($moved['not_needed']) && ! $firstLook) {
+            $parts[] = 'Not needed: '.implode(', ', $moved['not_needed']).'.';
+        }
+
+        $parts[] = $stillPending
+            ? 'Pending: '.implode(', ', $stillPending).'.'
+            : 'All papers received.';
+
+        return implode(' ', $parts);
     }
 
     // ------------------------------------------------------------- handing over
@@ -1819,6 +2153,9 @@ class WorkFileModel extends Model
 
         foreach (self::withoutUndoneHandovers($rows) as $row) {
             $handover = $row->event === self::HANDED_OVER;
+            $papers = $row->event === self::PAPERS;
+            // Whether this entry leaves the customer something to bring in.
+            $waiting = $papers && str_contains((string) $row->remark, 'Pending:');
 
             $out[] = [
                 'id' => (int) $row->id,
@@ -1827,8 +2164,18 @@ class WorkFileModel extends Model
                 'from' => $row->from_status ? self::customerStatus($row->from_status) : null,
                 // A handover moves nothing, so said as what happened rather than
                 // as the status the file was already at.
-                'to' => $handover ? 'Papers handed over to you' : self::customerStatus($row->to_status),
-                'tone' => $handover ? 'approved' : self::customerTone($row->to_status),
+                'to' => match (true) {
+                    $handover => 'Papers handed over to you',
+                    $waiting => 'Papers needed from you',
+                    $papers => 'Papers complete',
+                    default => self::customerStatus($row->to_status),
+                },
+                'tone' => match (true) {
+                    $handover => 'approved',
+                    $waiting => 'needs-you',
+                    $papers => 'moving',
+                    default => self::customerTone($row->to_status),
+                },
                 // Null when the entry is a note that did not move anything, so
                 // the line can read as a note rather than as a move to where it
                 // already was.
@@ -2556,6 +2903,9 @@ class WorkFileModel extends Model
                 'work_file.returned_amount',
                 'work_file.vendor_returned_amount',
                 'work_file.handed_over_on',
+                // Where its papers stand, without a query per row.
+                DB::raw(self::NEEDS_AUDIT.' as needs_audit'),
+                DB::raw(self::PENDING_PAPER_NAMES.' as pending_papers'),
                 self::workLabelColumn(),
                 self::unpricedWorksColumn(),
                 self::unbilledWorksColumn(),
@@ -2571,6 +2921,12 @@ class WorkFileModel extends Model
         if ($status === 'open') {
             // Work still in hand, the same set the dashboard counts.
             $query->whereIn('work_file.status', self::OPEN_STATUSES);
+        } elseif ($status === self::AWAITING_AUDIT) {
+            // Received, and its papers not yet checked — the audit queue.
+            $query->whereIn('work_file.status', [self::IN_OFFICE, self::PAPER_PENDENCY])
+                ->whereRaw(self::NEEDS_AUDIT);
+        } elseif ($status === self::PAPERS_PENDING) {
+            $query->whereRaw(self::PENDING_PAPERS);
         } elseif ($status === self::AWAITING_HANDOVER) {
             // Finished work whose papers the customer has not collected — the
             // list the counter works through.

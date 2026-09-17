@@ -8,6 +8,7 @@ use App\Models\WorkFileDocumentModel;
 use App\Models\WorkFileExpenseModel;
 use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
+use App\Models\WorkFilePaperModel;
 use App\Models\WorkTypeModel;
 use App\Support\Screen;
 use Illuminate\Http\Request;
@@ -59,7 +60,7 @@ class WorkFileController extends Controller
             // cannot be validated against the stored list.
             'status' => ['nullable', Rule::in(array_merge(
                 array_keys(WorkFileModel::STATUSES),
-                ['open', WorkFileModel::AWAITING_HANDOVER]
+                ['open', WorkFileModel::AWAITING_HANDOVER, WorkFileModel::AWAITING_AUDIT, WorkFileModel::PAPERS_PENDING]
             ))],
             'from' => 'nullable|date_format:Y-m-d',
             'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
@@ -268,8 +269,13 @@ class WorkFileController extends Controller
                 // that is finished.
                 'works_note' => implode(' · ', array_filter([
                     WorkFileModel::workNote($breakdown[$f->id] ?? []),
+                    // What the Details column used to be pressed into saying.
+                    $f->pending_papers ? 'Papers pending: '.$f->pending_papers : null,
+                    $f->needs_audit && in_array($f->status, [WorkFileModel::IN_OFFICE, WorkFileModel::PAPER_PENDENCY], true)
+                        ? 'Papers to check' : null,
                     WorkFileModel::handoverText($f->handed_over_on),
                 ])) ?: null,
+                'pending_papers' => $f->pending_papers ?: null,
                 'handed_over' => $f->handed_over_on ? date('d-m-Y', strtotime($f->handed_over_on)) : null,
 
                 /*
@@ -367,6 +373,8 @@ class WorkFileController extends Controller
                  * full list it is said in the status cell and exported here.
                  */
                 ['key' => 'handed_over', 'label' => 'Handed Over', 'exportOnly' => ! $approvals],
+                // A column a spreadsheet can filter on; on screen it is said in the status cell.
+                ['key' => 'pending_papers', 'label' => 'Papers Pending', 'exportOnly' => true],
                 // A column of the word "Edit" is noise in a spreadsheet, and in the
                 // search box it is worse: every row matches anyone typing "edit".
                 ['key' => 'action', 'label' => 'Action', 'type' => 'link', 'linkTo' => 'edit_url',
@@ -980,6 +988,221 @@ class WorkFileController extends Controller
     }
 
     /**
+     * Step 2 of a file's life: its papers checked.
+     *
+     * Two lists. Files received and not yet checked, each opening its
+     * checklist. And every paper still pending, across every file — which is
+     * what the counter works from when a customer walks in with Form 30 for one
+     * file and an NOC for another: search, tick, Mark received.
+     */
+    public function paperAudit(Request $req)
+    {
+        if ($req->isMethod('POST')) {
+            $req->validate([
+                'received' => 'required|array|min:1',
+                'received.*' => 'integer',
+                'received_on' => 'required|date_format:Y-m-d|before_or_equal:today',
+            ], [
+                'received.required' => 'Tick the papers the customer has brought in.',
+                'received_on.before_or_equal' => 'Papers cannot be received on a day that has not happened.',
+            ]);
+
+            $done = WorkFileModel::receivePapers($req->input('received'), $req->input('received_on'));
+
+            if (! $done) {
+                return back()->with('error', 'Those papers are no longer pending — someone may already have marked them.');
+            }
+
+            $count = collect($done)->sum(fn ($file) => count($file['papers']));
+
+            return redirect()->route('workfile.paperaudit')->with('success', $count.' '.Str::plural('paper', $count)
+                .' received: '.collect($done)->map(fn ($file) => $file['file_no'].' ('.implode(', ', $file['papers']).')')->implode('; '));
+        }
+
+        $back = route('workfile.paperaudit');
+
+        $toCheck = WorkFileModel::query()
+            ->with('workType', 'customer', 'items.workType')
+            ->whereIn('status', [WorkFileModel::IN_OFFICE, WorkFileModel::PAPER_PENDENCY])
+            ->whereRaw(WorkFileModel::NEEDS_AUDIT)
+            ->orderBy('received_date')
+            ->orderBy('id')
+            ->get();
+
+        $pending = DB::table('work_file_paper as p')
+            ->join('paper_type as pt', 'pt.id', '=', 'p.paper_type_id')
+            ->join('work_file as f', 'f.id', '=', 'p.work_file_id')
+            ->leftJoin('party as c', 'c.id', '=', 'f.customer_id')
+            ->where('p.state', WorkFilePaperModel::PENDING)
+            ->whereExists(fn ($q) => $q->select(DB::raw(1))
+                ->from('work_file_paper_item as pi')
+                ->join('work_file_item as i', 'i.id', '=', 'pi.work_file_item_id')
+                ->whereColumn('pi.work_file_paper_id', 'p.id')
+                ->whereNotIn('i.status', [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED]))
+            ->orderBy('f.received_date')
+            ->orderBy('f.id')
+            ->orderBy('pt.sort')
+            ->get(['p.id', 'p.work_file_id', 'p.note', 'p.office_note', 'p.updated_at', 'pt.name as paper',
+                'f.file_no', 'f.registration_no', 'f.received_date', 'c.name as customer']);
+
+        // Which works each pending paper is holding, in one query.
+        $holding = $pending->isEmpty() ? collect() : DB::table('work_file_paper_item as pi')
+            ->join('work_file_item as i', 'i.id', '=', 'pi.work_file_item_id')
+            ->leftJoin('work_type as t', 't.id', '=', 'i.work_type_id')
+            ->whereIn('pi.work_file_paper_id', $pending->pluck('id')->all())
+            ->whereNotIn('i.status', [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED])
+            ->orderBy('i.id')
+            ->get(['pi.work_file_paper_id', 't.name'])
+            ->groupBy('work_file_paper_id');
+
+        $props = [
+            'action' => route('workfile.paperaudit'),
+            'csrf' => csrf_token(),
+            'today' => date('Y-m-d'),
+            'search' => (string) $req->query('q', ''),
+            'toCheck' => $toCheck->map(fn ($file) => [
+                'id' => $file->id,
+                'file_no' => $file->file_no,
+                'registration_no' => $file->registration_no,
+                'customer' => $file->customer?->name,
+                'work_type' => $file->workLabel() ?: $file->workType?->name,
+                'received_date' => date('d-m-Y', strtotime($file->received_date)),
+                'papers_url' => route('workfile.papers', ['id' => $file->id, 'return_to' => $back]),
+            ])->values(),
+            'pending' => $pending->map(fn ($line) => [
+                'id' => (int) $line->id,
+                'file_id' => (int) $line->work_file_id,
+                'file_no' => $line->file_no,
+                'registration_no' => $line->registration_no,
+                'customer' => $line->customer,
+                'paper' => $line->paper,
+                'works' => $holding->get($line->id, collect())->pluck('name')->filter()->unique()->values()->all(),
+                'note' => $line->note,
+                'office_note' => $line->office_note,
+                'since' => date('d-m-Y', strtotime($line->updated_at)),
+                'papers_url' => route('workfile.papers', ['id' => $line->work_file_id, 'return_to' => $back]),
+            ])->values(),
+        ];
+
+        return Screen::make('admin.work.paper-audit', 'vue-paper-audit', $props, [
+            'toCheckCount' => $toCheck->count(),
+            'pendingCount' => $pending->count(),
+        ])->toResponse($req);
+    }
+
+    /**
+     * One file's paper checklist: every paper its unfinished work needs, each
+     * marked received, pending or not needed.
+     */
+    public function papers(Request $req, int $id)
+    {
+        $file = WorkFileModel::with('customer', 'items.workType')->findOrFail($id);
+        $back = self::safeReturn($req->input('return_to')) ?? route('workfile.paperaudit');
+
+        if ($req->isMethod('POST')) {
+            $checklist = $file->paperChecklist();
+
+            if (! $checklist) {
+                return redirect($back)->with('error', 'There is nothing to check on '.$file->file_no.': none of its unfinished work needs papers.');
+            }
+
+            $req->validate([
+                'papers' => 'required|array',
+                'papers.*.state' => ['nullable', Rule::in(array_keys(WorkFilePaperModel::STATES))],
+                'papers.*.note' => 'nullable|string|max:200',
+                'papers.*.office_note' => 'nullable|string|max:200',
+            ]);
+
+            /*
+             * Checked against the list as it stands now, not as the page drew
+             * it: a work added or cancelled since changes what has to be
+             * answered, and a line with no answer is the one thing this screen
+             * exists to prevent.
+             */
+            $errors = [];
+
+            foreach ($checklist as $paperId => $line) {
+                $in = (array) $req->input('papers.'.$paperId, []);
+                $state = $in['state'] ?? null;
+
+                if (! $state) {
+                    $errors['papers.'.$paperId.'.state'] = 'Mark '.$line['name'].' received, pending or not needed.';
+
+                    continue;
+                }
+
+                $reason = trim((string) ($in['note'] ?? '')).trim((string) ($in['office_note'] ?? ''));
+
+                if ($line['required'] && $state === WorkFilePaperModel::NOT_NEEDED && $reason === '') {
+                    $errors['papers.'.$paperId.'.note'] = $line['name'].' is a required paper. Say why it is not needed.';
+                }
+            }
+
+            if ($errors) {
+                return back()->withInput()->withErrors($errors);
+            }
+
+            $result = $file->savePaperChecklist(collect($checklist)
+                ->mapWithKeys(fn ($line, $paperId) => [$paperId => (array) $req->input('papers.'.$paperId)])
+                ->all());
+
+            return redirect($back)->with('success', $result['pending']
+                ? 'Papers checked for '.$file->file_no.'. Pending: '.implode(', ', $result['pending']).' — the customer can see what is needed.'
+                : 'Papers complete for '.$file->file_no.'. It is ready to give to a vendor.');
+        }
+
+        $checklist = $file->paperChecklist();
+        $bag = session('errors');
+        $failed = $bag && $bag->any();
+
+        $lastCheck = $file->statusLog()->with('user')->where('event', WorkFileModel::PAPERS)->first();
+
+        $props = [
+            'action' => route('workfile.papers', $file->id),
+            'csrf' => csrf_token(),
+            'returnTo' => $back,
+            'backUrl' => $back,
+            'editUrl' => route('workfile.edit', $file->id),
+            'file' => [
+                'file_no' => $file->file_no,
+                'registration_no' => $file->registration_no,
+                'customer' => $file->customer?->name,
+                'received' => date('d-m-Y', strtotime($file->received_date)),
+                'status' => WorkFileModel::STATUSES[$file->status] ?? $file->status,
+                'status_key' => $file->status,
+                'works' => $file->items->reject(fn ($item) => $item->isSettled())
+                    ->map(fn ($item) => $item->workType?->name)->filter()->values()->all(),
+            ],
+            'lastCheck' => $lastCheck ? [
+                'on' => date('d-m-Y', strtotime($lastCheck->created_at)),
+                'by' => $lastCheck->user?->name,
+            ] : null,
+            'states' => WorkFilePaperModel::STATES,
+            'lines' => collect($checklist)->map(function ($line, $paperId) use ($failed) {
+                $old = $failed ? (array) old('papers.'.$paperId, []) : null;
+
+                return [
+                    'paper_type_id' => $paperId,
+                    'name' => $line['name'],
+                    'required' => $line['required'],
+                    // A paper only if applicable starts as not needed; a required one starts unanswered.
+                    'state' => $old ? ($old['state'] ?? null) : ($line['state'] ?? ($line['required'] ? null : WorkFilePaperModel::NOT_NEEDED)),
+                    'saved_state' => $line['state'],
+                    'note' => $old ? ($old['note'] ?? '') : (string) $line['note'],
+                    'office_note' => $old ? ($old['office_note'] ?? '') : (string) $line['office_note'],
+                    'received_on' => $line['received_on'] ? date('d-m-Y', strtotime($line['received_on'])) : null,
+                    'works' => array_values($line['works']),
+                ];
+            })->values(),
+            'errors' => (object) ($bag ? collect($bag->messages())->map(fn ($messages) => $messages[0])->all() : []),
+        ];
+
+        return Screen::make('admin.work.papers', 'vue-paper-checklist', $props, [
+            'fileNo' => $file->file_no,
+        ])->toResponse($req);
+    }
+
+    /**
      * Approved papers going back to the customer.
      *
      * The counterpart to Return to Customer, and deliberately not part of it: a
@@ -1277,6 +1500,31 @@ class WorkFileController extends Controller
             $name = fn ($item) => $item->file->file_no.' · '.($item->workType?->name ?? 'work');
 
             /*
+             * Paper Pendency is set and cleared by the paper checklist. Chosen
+             * here by hand it would say papers are missing with no list of
+             * which; cleared here by hand it would say they are in while the
+             * list says they are not. Cancelling is the one move out that stays
+             * open, because it is not a claim about papers.
+             */
+            $byHand = $items->filter(function ($item) use ($wanted) {
+                $to = $wanted[$item->id];
+
+                if ($to === $item->status) {
+                    return false;
+                }
+
+                return $to === WorkFileModel::PAPER_PENDENCY
+                    || ($item->status === WorkFileModel::PAPER_PENDENCY && $to !== WorkFileModel::CANCELLED);
+            })->map($name);
+
+            if ($byHand->isNotEmpty()) {
+                return back()->withInput()->with(
+                    'error',
+                    'Paper Pendency follows the paper checklist. Mark the papers on Paper Audit instead for: '.$byHand->implode(', ')
+                );
+            }
+
+            /*
              * Approval has to be evidenced, and now per job: a hypothecation
              * addition and a transfer are approved separately, days apart, each
              * with its own document. Refuse the whole save and name what is
@@ -1517,6 +1765,8 @@ class WorkFileController extends Controller
             // for a folder and has its own screen; partly approved describes a
             // folder whose jobs disagree, and one job never disagrees with itself.
             'statuses' => WorkFileModel::JOB_STATUSES,
+            // The status only the paper checklist sets. cancelledKey, below, is the one move out of it.
+            'pendencyKey' => WorkFileModel::PAPER_PENDENCY,
             // Also offered per folder below, because a folder of several works
             // cannot send one of them home. See jobStatusesFor().
 
@@ -1540,6 +1790,8 @@ class WorkFileController extends Controller
                 'status' => $file->status,
                 'status_label' => WorkFileModel::STATUSES[$file->status] ?? $file->status,
                 'edit_url' => route('workfile.edit', $file->id),
+                // Where a work in Paper Pendency is taken out of it.
+                'papers_url' => route('workfile.papers', ['id' => $file->id, 'return_to' => route('workfile.status')]),
                 'last_remark' => $lastRemarks[$file->id] ?? null,
                 'statuses' => WorkFileModel::jobStatusesFor($file->items->count()),
 
@@ -2179,6 +2431,30 @@ class WorkFileController extends Controller
                 'collectedBy' => $file->collected_by,
                 'undoUrl' => route('workfile.handover.undo', $file->id),
             ] : null,
+            /*
+             * Where this file's papers stand, and the way to its checklist. The
+             * checklist is its own page — it is a list of fifteen lines with a
+             * note each, and a side column has no room for it.
+             */
+            'papers' => $isEdit ? (function () use ($file) {
+                $lines = collect($file->paperChecklist());
+
+                if ($lines->isEmpty()) {
+                    return null;
+                }
+
+                $pending = $lines->where('state', WorkFilePaperModel::PENDING)->pluck('name')->values()->all();
+                $unanswered = $lines->whereNull('state')->count();
+
+                return [
+                    'state' => $unanswered ? 'to_check' : ($pending ? 'pending' : 'complete'),
+                    'pending' => $pending,
+                    'toCheck' => $unanswered,
+                    'received' => $lines->where('state', WorkFilePaperModel::RECEIVED)->count(),
+                    'total' => $lines->count(),
+                    'url' => route('workfile.papers', ['id' => $file->id, 'return_to' => route('workfile.edit', $file->id)]),
+                ];
+            })() : null,
             'handoverUrl' => $isEdit && ! $file->isHandedOver() && $file->status === WorkFileModel::APPROVED
                 ? route('workfile.handover', ['q' => $file->file_no])
                 : null,

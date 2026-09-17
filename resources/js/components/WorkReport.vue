@@ -33,6 +33,8 @@ const props = defineProps({
     returnTo: { type: String, default: '' },
     jobStatuses: { type: Object, default: () => ({}) },
     approvedKey: { type: String, default: 'approval_done' },
+    pendencyKey: { type: String, default: 'paper_pendency' },
+    cancelledKey: { type: String, default: 'cancelled' },
     reasonKeys: { type: Array, default: () => [] },
     today: { type: String, default: '' },
 });
@@ -82,6 +84,8 @@ function onAction(row) {
             :return-to="returnTo"
             :statuses="jobStatuses"
             :approved-key="approvedKey"
+            :pendency-key="pendencyKey"
+            :cancelled-key="cancelledKey"
             :reason-keys="reasonKeys"
             :today="today"
             @close="editing = null" />

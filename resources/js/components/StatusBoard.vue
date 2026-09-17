@@ -36,6 +36,8 @@ const props = defineProps({
     resetUrl: { type: String, required: true },
     approvedKey: { type: String, required: true },
     cancelledKey: { type: String, required: true },
+    // Set and cleared by the paper checklist, never chosen here.
+    pendencyKey: { type: String, default: 'paper_pendency' },
     // Today, from the server: an approval cannot be dated after it, and the
     // browser's own clock is not the one the ledger is kept by.
     today: { type: String, default: '' },
@@ -46,6 +48,21 @@ const props = defineProps({
  * list of what is being changed — while each row still knows the folder it
  * belongs to, for the heading above it.
  */
+/*
+ * Paper Pendency follows the paper checklist. It is not offered as a move, and
+ * a work already in it moves out only by being cancelled — anything else is
+ * done by marking its papers. The server refuses both regardless; this is so
+ * the choice is not offered in the first place.
+ */
+function checklistOnly(current, key) {
+    if (key === current) {
+        return false;
+    }
+
+    return key === props.pendencyKey
+        || (current === props.pendencyKey && key !== props.cancelledKey);
+}
+
 const rows = reactive(
     props.files.flatMap((file) =>
         file.items.map((item, index) => ({
@@ -298,10 +315,19 @@ function onScreenshot(row, event) {
                                         :name="`statuses[${row.id}]`"
                                         v-model="row.chosen"
                                         @change="onStatusChange(row)">
-                                        <option v-for="(label, key) in row.file.statuses || statuses" :key="key" :value="key">
+                                        <option
+                                            v-for="(label, key) in row.file.statuses || statuses"
+                                            :key="key"
+                                            :value="key"
+                                            :disabled="checklistOnly(row.status, key)">
                                             {{ label }}
                                         </option>
                                     </select>
+
+                                    <div v-if="row.status === pendencyKey" class="ui-hint board__papers">
+                                        Waiting on papers.
+                                        <a v-if="row.file.papers_url" :href="row.file.papers_url" class="ui-link">Mark them on the checklist</a>
+                                    </div>
 
                                     <!-- An approval happened on a day and came with
                                          a document. Both belong to this job, and
@@ -512,6 +538,11 @@ function onScreenshot(row, event) {
 
 /* What an approval needs: the day it happened and the paper it came on. Side
    by side, because they are one act recorded twice. */
+/* Says why a work in Paper Pendency cannot be moved from here. */
+.board__papers {
+    margin-top: var(--s-1);
+}
+
 .board__extra {
     display: grid;
     gap: var(--s-2) var(--s-3);
@@ -635,7 +666,12 @@ function onScreenshot(row, event) {
 }
 
 @media (max-width: 575.98px) {
-    .board__extra {
+    /* Says why a work in Paper Pendency cannot be moved from here. */
+.board__papers {
+    margin-top: var(--s-1);
+}
+
+.board__extra {
         grid-template-columns: 1fr;
     }
 }

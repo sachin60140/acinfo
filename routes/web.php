@@ -115,6 +115,13 @@ Route::group(['middleware' => 'admin'], function () {
     // The three moments in a file's life, each on its own screen.
     Route::match(['get', 'post'], 'admin/file/receive', [WorkFileController::class, 'receive'])->name('workfile.receive');
 
+    // Step 2: papers checked. The queue and the counter's Mark received, then
+    // one file's checklist.
+    Route::match(['get', 'post'], 'admin/file/audit', [WorkFileController::class, 'paperAudit'])->name('workfile.paperaudit');
+
+    Route::match(['get', 'post'], 'admin/file/{id}/papers', [WorkFileController::class, 'papers'])
+        ->whereNumber('id')->name('workfile.papers');
+
     Route::match(['get', 'post'], 'admin/file/assign', [WorkFileController::class, 'assign'])->name('workfile.assign');
 
     Route::match(['get', 'post'], 'admin/file/vendor-return', [WorkFileController::class, 'vendorReturn'])->name('workfile.vendorreturn');

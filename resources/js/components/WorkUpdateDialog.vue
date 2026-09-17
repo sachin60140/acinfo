@@ -30,12 +30,24 @@ const props = defineProps({
     // { key: label } — what a work may be moved to, from the model.
     statuses: { type: Object, default: () => ({}) },
     approvedKey: { type: String, default: 'approval_done' },
+    // Set and cleared by the paper checklist; see StatusBoard.vue.
+    pendencyKey: { type: String, default: 'paper_pendency' },
+    cancelledKey: { type: String, default: 'cancelled' },
     // The states the server refuses without a reason.
     reasonKeys: { type: Array, default: () => ['cancelled', 'paper_returned'] },
     today: { type: String, default: '' },
 });
 
 const emit = defineEmits(['close']);
+
+function checklistOnly(current, key) {
+    if (key === current) {
+        return false;
+    }
+
+    return key === props.pendencyKey
+        || (current === props.pendencyKey && key !== props.cancelledKey);
+}
 
 const open = computed(() => Boolean(props.file));
 
@@ -195,10 +207,17 @@ onBeforeUnmount(() => {
                                         :name="`statuses[${work.id}]`"
                                         v-model="form[work.id].status"
                                         :ref="i === 0 ? (el) => (firstField = el) : undefined">
-                                        <option v-for="(label, key) in statuses" :key="key" :value="key">
+                                        <option
+                                            v-for="(label, key) in statuses"
+                                            :key="key"
+                                            :value="key"
+                                            :disabled="checklistOnly(work.status, key)">
                                             {{ label }}
                                         </option>
                                     </select>
+                                    <div v-if="work.status === pendencyKey" class="ui-hint">
+                                        Waiting on papers — marked on Paper Audit.
+                                    </div>
                                 </div>
 
                                 <div class="ui-field wu__remark">

@@ -65,6 +65,13 @@ const props = defineProps({
      */
     handover: { type: Object, default: null },
     handoverUrl: { type: String, default: null },
+
+    /*
+     * Where the paper checklist stands: { state: to_check | pending | complete,
+     * pending: [names], toCheck, received, total, url }, or null when none of
+     * the unfinished work needs papers.
+     */
+    papers: { type: Object, default: null },
 });
 
 // Asked for only when taking a handover back, which has to say why.
@@ -1324,9 +1331,32 @@ onMounted(() => {
                     a handover back is its own request with its own reason, and a
                     form cannot sit inside another.
                 -->
-                <div v-if="handover || handoverUrl" class="ui-card wf-papers">
+                <div v-if="papers || handover || handoverUrl" class="ui-card wf-papers">
                     <div class="ui-card__body">
                         <h2 class="ui-card__title wf-effect__title">Papers</h2>
+
+                        <!-- The checklist, summed up. The list itself is its own
+                             page: fifteen lines with a note each do not fit here. -->
+                        <div v-if="papers" class="wf-papers__check" :class="`is-${papers.state}`">
+                            <p class="wf-papers__state">
+                                <template v-if="papers.state === 'to_check'">
+                                    <i class="bi bi-clipboard"></i>
+                                    {{ papers.toCheck }} {{ papers.toCheck === 1 ? 'paper' : 'papers' }} still to check.
+                                </template>
+                                <template v-else-if="papers.state === 'pending'">
+                                    <i class="bi bi-hourglass-split"></i>
+                                    Pending: <strong>{{ papers.pending.join(', ') }}</strong>
+                                </template>
+                                <template v-else>
+                                    <i class="bi bi-clipboard-check"></i>
+                                    All {{ papers.total }} papers in.
+                                </template>
+                            </p>
+                            <a :href="papers.url" class="ui-btn ui-btn--sm" :class="{ 'ui-btn--primary': papers.state !== 'complete' }">
+                                <i class="bi bi-list-check"></i>
+                                {{ papers.state === 'to_check' ? 'Check papers' : 'Open checklist' }}
+                            </a>
+                        </div>
 
                         <template v-if="handover">
                             <p class="wf-papers__state">
@@ -1406,6 +1436,10 @@ onMounted(() => {
                                     </template>
                                     <template v-else-if="entry.kind === 'note'">
                                         Note &mdash; <strong>{{ entry.to }}</strong>
+                                    </template>
+                                    <template v-else-if="entry.kind === 'papers'">
+                                        <strong>Papers checked</strong>
+                                        <template v-if="entry.from !== entry.to"> &mdash; {{ entry.from }} &rarr; {{ entry.to }}</template>
                                     </template>
                                     <template v-else-if="entry.kind === 'handover'">
                                         <strong>Papers handed over</strong>
@@ -1858,6 +1892,28 @@ onMounted(() => {
 
 .wf-papers__state .bi {
     color: var(--dr-600);
+}
+
+/* The checklist's summary sits above the handover, and apart from it. */
+.wf-papers__check {
+    align-items: flex-start;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+}
+
+.wf-papers__check + * {
+    border-top: 1px solid var(--n-100);
+    margin-top: var(--s-3);
+    padding-top: var(--s-3);
+}
+
+.wf-papers__check.is-pending .wf-papers__state .bi {
+    color: var(--warn-600);
+}
+
+.wf-papers__check.is-to_check .wf-papers__state .bi {
+    color: var(--n-500);
 }
 
 .wf-papers__facts {

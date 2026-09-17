@@ -500,6 +500,8 @@ class ReportController extends Controller
             // Back to this report, filtered and sorted as the reader left it.
             'returnTo' => $req->fullUrl(),
             'jobStatuses' => WorkFileModel::JOB_STATUSES,
+            'pendencyKey' => WorkFileModel::PAPER_PENDENCY,
+            'cancelledKey' => WorkFileModel::CANCELLED,
             'approvedKey' => WorkFileModel::APPROVED,
             'reasonKeys' => [WorkFileModel::CANCELLED, WorkFileModel::RETURNED],
             'today' => now()->toDateString(),

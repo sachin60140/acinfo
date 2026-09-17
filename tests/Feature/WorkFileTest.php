@@ -685,13 +685,13 @@ class WorkFileTest extends TestCase
     {
         $file = $this->receive();
 
-        $this->setStatuses([$file->id => 'paper_pendency'], [$file->id => 'Insurance copy awaited from customer']);
+        $this->setStatuses([$file->id => 'part_pesi_required'], [$file->id => 'Part payment awaited from customer']);
 
         $latest = WorkFileModel::find($file->id)->statusLog()->first();
 
         $this->assertSame('in_office', $latest->from_status);
-        $this->assertSame('paper_pendency', $latest->to_status);
-        $this->assertSame('Insurance copy awaited from customer', $latest->remark);
+        $this->assertSame('part_pesi_required', $latest->to_status);
+        $this->assertSame('Part payment awaited from customer', $latest->remark);
         $this->assertFalse($latest->isNoteOnly());
     }
 
@@ -703,12 +703,12 @@ class WorkFileTest extends TestCase
     {
         $file = $this->receive();
 
-        $this->setStatuses([$file->id => 'paper_pendency'], [$file->id => 'Insurance copy awaited']);
+        $this->setStatuses([$file->id => 'part_pesi_required'], [$file->id => 'Part payment awaited']);
         $this->setStatuses([$file->id => 'under_verification'], [$file->id => 'Submitted at RTO']);
 
         $remarks = WorkFileModel::find($file->id)->statusLog()->pluck('remark')->all();
 
-        $this->assertSame(['Submitted at RTO', 'Insurance copy awaited', 'Received from customer'], $remarks);
+        $this->assertSame(['Submitted at RTO', 'Part payment awaited', 'Received from customer'], $remarks);
     }
 
     public function test_a_remark_can_be_added_without_moving_the_file(): void
@@ -797,7 +797,7 @@ class WorkFileTest extends TestCase
         $one = $this->receive();
         $two = $this->receive(['customer_amount' => '2000']);
 
-        $this->setStatuses([$one->id => 'paper_pendency'], [$one->id => 'First note']);
+        $this->setStatuses([$one->id => 'part_pesi_required'], [$one->id => 'First note']);
         $this->setStatuses([$one->id => 'under_verification'], [$one->id => 'Second note']);
 
         $remarks = WorkFileModel::latestRemarks([$one->id, $two->id]);
@@ -1487,7 +1487,14 @@ class WorkFileTest extends TestCase
     {
         foreach (['in_office', 'paper_pendency', 'file_dispatch', 'under_verification'] as $status) {
             $file = $this->receive();
-            $this->setStatuses([$file->id => $status]);
+
+            if ($status === 'paper_pendency') {
+                // Set by the paper checklist, not the board — so set here directly.
+                WorkFileItemModel::where('work_file_id', $file->id)->update(['status' => $status]);
+                WorkFileModel::whereKey($file->id)->update(['status' => $status]);
+            } else {
+                $this->setStatuses([$file->id => $status]);
+            }
 
             $this->assertTrue(
                 WorkFileModel::returnableToCustomer()->contains('id', $file->id),

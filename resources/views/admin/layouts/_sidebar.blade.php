@@ -62,6 +62,8 @@
           'label' => 'Work Files',
           'items' => [
               ['label' => 'Receive Files', 'icon' => 'bi-folder-plus', 'href' => route('workfile.receive'), 'active' => $req->routeIs('workfile.receive')],
+              // Between receiving papers and sending them out: the order the work happens in.
+              ['label' => 'Paper Audit', 'icon' => 'bi-clipboard-check', 'href' => route('workfile.paperaudit'), 'active' => $req->routeIs('workfile.paperaudit', 'workfile.papers')],
               ['label' => 'Give to Vendor', 'icon' => 'bi-truck', 'href' => route('workfile.assign'), 'active' => $req->routeIs('workfile.assign')],
               ['label' => 'Return from Vendor', 'icon' => 'bi-arrow-return-left', 'href' => route('workfile.vendorreturn'), 'active' => $req->routeIs('workfile.vendorreturn')],
               ['label' => 'Return to Customer', 'icon' => 'bi-arrow-counterclockwise', 'href' => route('workfile.customerreturn'), 'active' => $req->routeIs('workfile.customerreturn')],

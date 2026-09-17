@@ -227,6 +227,7 @@
                     "work_type_id": "number"
                 }
             },
+            "papers": "null",
             "receivedDateField": "string",
             "refundPlaceholder": "string",
             "returnedKey": "string",
@@ -310,6 +311,34 @@
             "today": "string"
         }
     },
+    "file-papers": {
+        "vue-paper-checklist": {
+            "action": "string",
+            "backUrl": "string",
+            "csrf": "string",
+            "editUrl": "string",
+            "errors": "[]",
+            "file": {
+                "customer": "string",
+                "file_no": "string",
+                "received": "string",
+                "registration_no": "string",
+                "status": "string",
+                "status_key": "string",
+                "works": {
+                    "list_of": "string"
+                }
+            },
+            "lastCheck": "null",
+            "lines": "[]",
+            "returnTo": "string",
+            "states": {
+                "not_needed": "string",
+                "pending": "string",
+                "received": "string"
+            }
+        }
+    },
     "file-receive": {
         "vue-receive-rows": {
             "cancelUrl": "string",
@@ -363,6 +392,7 @@
                         }
                     },
                     "last_remark": "null",
+                    "papers_url": "string",
                     "received_date": "string",
                     "registration_no": "string",
                     "settled": "number",
@@ -382,6 +412,7 @@
                     "works": "number"
                 }
             },
+            "pendencyKey": "string",
             "resetUrl": "string",
             "statuses": {
                 "approval_done": "string",
@@ -440,6 +471,7 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
+                "pending_papers:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -461,6 +493,7 @@
                     "handed_over": "null",
                     "id": "number",
                     "margin": "number",
+                    "pending_papers": "null",
                     "received": "string",
                     "received_raw": "string",
                     "registration_no": "string",
@@ -475,6 +508,74 @@
                     "works_approved_on": "string",
                     "works_done": "string",
                     "works_note": "null",
+                    "works_pending": "string"
+                }
+            },
+            "title": "string",
+            "totals": {
+                "charged": "string",
+                "cost": "string",
+                "expenses": "string",
+                "margin": "string"
+            }
+        }
+    },
+    "files-awaiting-audit": {
+        "vue-files-list": {
+            "columns": [
+                "file_no:link",
+                "registration_no:text",
+                "received:text",
+                "work_type:text",
+                "description:text",
+                "customer:link",
+                "charged:money",
+                "vendor:link",
+                "cost:money",
+                "expenses:money",
+                "margin:balance",
+                "status:badge",
+                "works_done:text",
+                "works_approved_on:text",
+                "works_pending:text",
+                "handed_over:text",
+                "pending_papers:text",
+                "action:link:no-export:no-sort"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rowClass": "string",
+            "rows": {
+                "list_of": {
+                    "action": "string",
+                    "charged": "number",
+                    "charged_was": "null",
+                    "cost": "null",
+                    "cost_was": "null",
+                    "customer": "string",
+                    "customer_url": "string",
+                    "description": "string",
+                    "edit_url": "string",
+                    "expenses": "null",
+                    "file_no": "string",
+                    "handed_over": "null",
+                    "id": "number",
+                    "margin": "number",
+                    "pending_papers": "null",
+                    "received": "string",
+                    "received_raw": "string",
+                    "registration_no": "string",
+                    "row_class": "string",
+                    "screenshot": "null",
+                    "screenshot_url": "null",
+                    "status": "string",
+                    "status_key": "string",
+                    "vendor": "string",
+                    "vendor_url": "null",
+                    "work_type": "string",
+                    "works_approved_on": "string",
+                    "works_done": "string",
+                    "works_note": "string",
                     "works_pending": "string"
                 }
             },
@@ -506,6 +607,7 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
+                "pending_papers:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -527,6 +629,7 @@
                     "handed_over": "null",
                     "id": "number",
                     "margin": "number",
+                    "pending_papers": "null",
                     "received": "string",
                     "received_raw": "string",
                     "registration_no": "string",
@@ -572,6 +675,7 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
+                "pending_papers:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -593,6 +697,7 @@
                     "handed_over": "null",
                     "id": "number",
                     "margin": "number",
+                    "pending_papers": "null",
                     "received": "string",
                     "received_raw": "string",
                     "registration_no": "string",
@@ -638,6 +743,7 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
+                "pending_papers:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -672,6 +778,7 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
+                "pending_papers:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -693,6 +800,7 @@
                     "handed_over": "null",
                     "id": "number",
                     "margin": "number",
+                    "pending_papers": "null",
                     "received": "string",
                     "received_raw": "string",
                     "registration_no": "string",
@@ -717,6 +825,61 @@
                 "expenses": "string",
                 "margin": "string"
             }
+        }
+    },
+    "files-papers-pending": {
+        "vue-files-list": {
+            "columns": [
+                "file_no:link",
+                "registration_no:text",
+                "received:text",
+                "work_type:text",
+                "description:text",
+                "customer:link",
+                "charged:money",
+                "vendor:link",
+                "cost:money",
+                "expenses:money",
+                "margin:balance",
+                "status:badge",
+                "works_done:text",
+                "works_approved_on:text",
+                "works_pending:text",
+                "handed_over:text",
+                "pending_papers:text",
+                "action:link:no-export:no-sort"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rowClass": "string",
+            "rows": "[]",
+            "title": "string",
+            "totals": {
+                "charged": "string",
+                "cost": "string",
+                "expenses": "string",
+                "margin": "string"
+            }
+        }
+    },
+    "paper-audit": {
+        "vue-paper-audit": {
+            "action": "string",
+            "csrf": "string",
+            "pending": "[]",
+            "search": "string",
+            "toCheck": {
+                "list_of": {
+                    "customer": "string",
+                    "file_no": "string",
+                    "id": "number",
+                    "papers_url": "string",
+                    "received_date": "string",
+                    "registration_no": "string",
+                    "work_type": "string"
+                }
+            },
+            "today": "string"
         }
     },
     "paper-types": {
@@ -1020,6 +1183,7 @@
         "vue-work-report": {
             "action": "string",
             "approvedKey": "string",
+            "cancelledKey": "string",
             "columns": [
                 "party_id:text:hidden",
                 "party_name:text",
@@ -1054,6 +1218,7 @@
                 "part_pesi_required": "string",
                 "under_verification": "string"
             },
+            "pendencyKey": "string",
             "perPage": "number",
             "reasonKeys": {
                 "list_of": "string"
@@ -1110,6 +1275,7 @@
         "vue-work-report": {
             "action": "string",
             "approvedKey": "string",
+            "cancelledKey": "string",
             "columns": [
                 "party_id:text:hidden",
                 "party_name:text",
@@ -1144,6 +1310,7 @@
                 "part_pesi_required": "string",
                 "under_verification": "string"
             },
+            "pendencyKey": "string",
             "perPage": "number",
             "reasonKeys": {
                 "list_of": "string"

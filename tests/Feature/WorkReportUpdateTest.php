@@ -80,7 +80,7 @@ class WorkReportUpdateTest extends TestCase
         $id = $item instanceof WorkFileItemModel ? $item->id : $item;
 
         return $this->actingAs($this->admin())->post('/admin/file/status', array_merge([
-            'statuses' => [$id => 'paper_pendency'],
+            'statuses' => [$id => 'part_pesi_required'],
             'remarks' => [$id => 'Chased the RTO'],
         ], $extra));
     }
@@ -100,7 +100,7 @@ class WorkReportUpdateTest extends TestCase
             'return_to' => '/admin/reports/files?party_id=7&status=open',
         ])->assertRedirect(url('/admin/reports/files?party_id=7&status=open'));
 
-        $this->assertSame('paper_pendency', $this->itemOf($file)->fresh()->status, 'and it saved');
+        $this->assertSame('part_pesi_required', $this->itemOf($file)->fresh()->status, 'and it saved');
     }
 
     /** The status board sends none, and still lands on itself as before. */

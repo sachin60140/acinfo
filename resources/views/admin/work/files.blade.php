@@ -101,6 +101,8 @@
                                     <option value="open" {{ $status === 'open' ? 'selected' : '' }}>Work in hand</option>
                                     {{-- A view rather than a status: approved, and the
                                          papers still here waiting to be collected. --}}
+                                    <option value="{{ \App\Models\WorkFileModel::AWAITING_AUDIT }}" {{ $status === \App\Models\WorkFileModel::AWAITING_AUDIT ? 'selected' : '' }}>Papers to check</option>
+                                    <option value="{{ \App\Models\WorkFileModel::PAPERS_PENDING }}" {{ $status === \App\Models\WorkFileModel::PAPERS_PENDING ? 'selected' : '' }}>Papers pending</option>
                                     <option value="{{ \App\Models\WorkFileModel::AWAITING_HANDOVER }}" {{ $status === \App\Models\WorkFileModel::AWAITING_HANDOVER ? 'selected' : '' }}>Approved, papers not handed over</option>
                                     @foreach (\App\Models\WorkFileModel::STATUSES as $key => $text)
                                         <option value="{{ $key }}" {{ $status === $key ? 'selected' : '' }}>{{ $text }}</option>
