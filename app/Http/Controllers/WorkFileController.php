@@ -603,6 +603,9 @@ class WorkFileController extends Controller
                 'amounts' => 'nullable|array',
                 'amounts.*' => 'nullable|numeric|gte:0|max:99999999',
                 'remark' => 'nullable|string|max:200',
+                // Why a file goes out with its papers not complete, by file id.
+                'overrides' => 'nullable|array',
+                'overrides.*' => 'nullable|string|max:200',
             ], [
                 'files.required' => 'Tick at least one file to give to the vendor.',
                 'amounts.*.numeric' => 'A vendor rate must be a number.',
@@ -610,7 +613,31 @@ class WorkFileController extends Controller
 
             $amounts = $req->input('amounts', []);
 
-            $assigned = DB::transaction(function () use ($req, $amounts) {
+            /*
+             * Step 3 follows step 2: a file goes to a vendor once its papers are
+             * checked and complete. Sometimes the RTO will take a paper later,
+             * so it can still go — with a reason, which is kept on the file's
+             * history. Asked of the database now, not of the page.
+             */
+            $overrides = collect((array) $req->input('overrides', []))
+                ->map(fn ($reason) => trim((string) $reason))
+                ->filter(fn ($reason) => $reason !== '');
+
+            $notReady = WorkFileModel::papersNotReady(array_map('intval', (array) $req->input('files')));
+
+            $unexplained = collect($notReady)->reject(fn ($why, $id) => $overrides->has($id));
+
+            if ($unexplained->isNotEmpty()) {
+                $names = WorkFileModel::whereIn('id', $unexplained->keys()->all())->pluck('file_no', 'id');
+
+                return back()->withInput()->with(
+                    'error',
+                    'These files\' papers are not ready. Complete them on Paper Audit, or give a reason to send them anyway: '
+                        .$unexplained->map(fn ($why, $id) => ($names[$id] ?? '#'.$id).' ('.$why.')')->implode(', ')
+                );
+            }
+
+            $assigned = DB::transaction(function () use ($req, $amounts, $notReady, $overrides) {
                 // Re-read under the same rules the form was built with, so a stale
                 // page cannot assign a file that has since been given away or
                 // cancelled, and unknown ids simply do not come back.
@@ -664,6 +691,19 @@ class WorkFileController extends Controller
                     $file->save();
                     $file->syncLedger();
                     $file->logStatus($from, trim(($req->remark ? $req->remark.' — ' : '').'Given to '.$vendorName));
+
+                    /*
+                     * Handing the folder over moved every work on it to File
+                     * Dispatch, including one still waiting on a paper. The
+                     * checklist puts that one back.
+                     */
+                    if ($file->syncPaperPendency()) {
+                        $file->refresh();
+                    }
+
+                    if (isset($notReady[$file->id])) {
+                        $file->logStatus($file->status, 'Went to the vendor before its papers were complete ('.$notReady[$file->id].'). Reason: '.$overrides[$file->id], null, WorkFileModel::PAPERS_OVERRIDE);
+                    }
                 }
 
                 return $files;
@@ -695,6 +735,7 @@ class WorkFileController extends Controller
             'vendorDateDisplay' => $vendorDateDisplay,
             'remark' => (string) old('remark'),
             'pickedFiles' => array_map('intval', (array) old('files', [])),
+            'oldOverrides' => (object) (array) old('overrides', []),
             'oldAmounts' => (object) (array) old('amounts', []),
             /*
              * What each of these works has been paid before.
@@ -727,6 +768,13 @@ class WorkFileController extends Controller
                 'description' => $file->description,
                 'customer' => $file->customer?->name,
                 'customer_amount' => (float) $file->customer_amount,
+
+                // Whether its papers are ready to go: ready, to_check or pending.
+                'papers' => $file->needs_audit ? 'to_check' : ($file->pending_papers ? 'pending' : 'ready'),
+                'papers_note' => $file->needs_audit
+                    ? 'Papers not checked yet'
+                    : ($file->pending_papers ? 'Papers pending: '.$file->pending_papers : null),
+                'papers_url' => route('workfile.papers', ['id' => $file->id, 'return_to' => route('workfile.assign')]),
 
                 /*
                  * A folder is handed over whole, but the rate is agreed per job:

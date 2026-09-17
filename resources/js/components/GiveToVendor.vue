@@ -34,7 +34,20 @@ const props = defineProps({
     // The last few rates agreed for each work, keyed by work type.
     rateHistory: { type: Array, default: () => [] },
     oldAmounts: { type: Object, default: () => ({}) },
+    // Reasons given for sending a file out before its papers are complete.
+    oldOverrides: { type: Object, default: () => ({}) },
 });
+
+/*
+ * Step 3 follows step 2: a file goes out once its papers are checked and
+ * complete. One that is not can still be ticked — the RTO sometimes takes a
+ * paper later — but then it needs a reason, which the office keeps.
+ */
+const ready = (file) => ! file.papers || file.papers === 'ready';
+
+const reasons = reactive(
+    Object.fromEntries(props.files.map((file) => [file.id, props.oldOverrides[file.id] ?? '']))
+);
 
 const chosen = ref(props.vendorId);
 const remarkText = ref(props.remark);
@@ -177,20 +190,28 @@ const hiddenPicked = computed(() =>
  * quietly dropping a file somebody ticked earlier is as wrong as quietly adding
  * one. The footer says how many are ticked but out of sight.
  */
+// Select all ticks what is ready. A file whose papers are not is ticked on
+// purpose, one at a time, with a reason — never swept in by a header box.
+const shownReady = computed(() => shown.value.filter(ready));
+
 const allPicked = computed({
-    get: () => shown.value.length > 0 && shown.value.every(isPicked),
+    get: () => shownReady.value.length > 0 && shownReady.value.every(isPicked),
     set: (on) => {
-        const ids = shown.value.map((file) => file.id);
+        const ids = (on ? shownReady.value : shown.value).map((file) => file.id);
 
         picked.value = on
             ? [...new Set([...picked.value, ...ids])]
             : picked.value.filter((id) => ! ids.includes(id));
 
         if (on) {
-            shown.value.forEach(onPick);
+            shownReady.value.forEach(onPick);
         }
     },
 });
+
+const needsReason = (file) => isPicked(file) && ! ready(file) && String(reasons[file.id] ?? '').trim() === '';
+
+const unexplained = computed(() => props.files.filter(needsReason).length);
 
 const pickedJobs = computed(() => props.files.filter(isPicked).flatMap(jobs));
 
@@ -239,6 +260,10 @@ const summary = computed(() => {
 
     if (blanks.value) {
         parts.push(`${blanks.value} without a price yet`);
+    }
+
+    if (unexplained.value) {
+        parts.push(`${unexplained.value} ${unexplained.value === 1 ? 'needs' : 'need'} a reason to go without complete papers`);
     }
 
     if (hiddenPicked.value) {
@@ -406,6 +431,21 @@ onMounted(() => {
 
                                 <td data-label="File No.">
                                     <span class="ui-lead">{{ file.file_no }}</span>
+                                    <!-- Why this one is not ready, and where to fix it. -->
+                                    <div v-if="! ready(file)" class="give-papers" :class="`give-papers--${file.papers}`">
+                                        <a :href="file.papers_url" class="ui-link">{{ file.papers_note }}</a>
+                                    </div>
+                                    <!-- Asked only once it is ticked, and posted only then. -->
+                                    <input
+                                        v-if="! ready(file) && isPicked(file)"
+                                        type="text"
+                                        class="ui-input give-reason"
+                                        :class="{ 'ui-input--invalid': needsReason(file) }"
+                                        :name="`overrides[${file.id}]`"
+                                        v-model="reasons[file.id]"
+                                        maxlength="200"
+                                        placeholder="Reason to send anyway"
+                                        :aria-label="`Reason to send ${file.file_no} before its papers are complete`">
                                 </td>
 
                                 <td data-label="Vehicle">
@@ -520,7 +560,7 @@ onMounted(() => {
                 <span class="ui-hint">{{ summary }}</span>
                 <div class="give-actions">
                     <a :href="cancelUrl" class="ui-btn">Cancel</a>
-                    <button type="submit" class="ui-btn ui-btn--primary">
+                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="unexplained > 0">
                         <i class="bi bi-check2-circle"></i> Give to Vendor
                     </button>
                 </div>
@@ -571,6 +611,28 @@ onMounted(() => {
     flex-wrap: wrap;
     gap: var(--s-2) var(--s-3);
     justify-content: flex-end;
+}
+
+/* A file whose papers are not ready: said under its number, in the colour the
+   rest of the application uses for Paper Pendency. */
+.give-papers {
+    font-size: var(--t-xs);
+    font-weight: 600;
+    margin-top: 0.15rem;
+}
+
+.give-papers--pending .ui-link {
+    color: var(--warn-600);
+}
+
+.give-papers--to_check .ui-link {
+    color: var(--n-600);
+}
+
+.give-reason {
+    font-size: var(--t-sm);
+    margin-top: var(--s-1);
+    min-width: 11rem;
 }
 
 .give-search {

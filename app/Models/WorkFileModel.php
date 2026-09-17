@@ -44,6 +44,12 @@ class WorkFileModel extends Model
     /** A checklist was saved or a paper came in. See the status log's event column. */
     public const PAPERS = 'papers';
 
+    /**
+     * A file given to a vendor before its papers were complete, and why.
+     * The office's record: kept off every customer page.
+     */
+    public const PAPERS_OVERRIDE = 'papers_override';
+
     /** The files list's views of the paper checklist. */
     public const AWAITING_AUDIT = 'awaiting_audit';
 
@@ -625,6 +631,35 @@ class WorkFileModel extends Model
     }
 
     /**
+     * Which of these files cannot go out yet, and why: file id => reason.
+     *
+     * Papers not yet checked, or checked and still waiting on something. Asked
+     * of the database rather than of the page, because the page may have been
+     * open since before a paper arrived — or went missing.
+     *
+     * @param  array<int, int>  $fileIds
+     * @return array<int, string>
+     */
+    public static function papersNotReady(array $fileIds): array
+    {
+        if (! $fileIds) {
+            return [];
+        }
+
+        return self::query()
+            ->whereIn('id', $fileIds)
+            ->where(fn ($q) => $q->whereRaw(self::NEEDS_AUDIT)->orWhereRaw(self::PENDING_PAPERS))
+            ->select('id')
+            ->selectRaw(self::NEEDS_AUDIT.' as needs_audit')
+            ->selectRaw(self::PENDING_PAPER_NAMES.' as pending_papers')
+            ->get()
+            ->mapWithKeys(fn ($file) => [$file->id => $file->needs_audit
+                ? 'papers not checked yet'
+                : 'papers pending: '.$file->pending_papers])
+            ->all();
+    }
+
+    /**
      * Move each unfinished work in or out of Paper Pendency to match its papers.
      *
      * A work with a paper pending is in Paper Pendency. A work in Paper
@@ -799,6 +834,11 @@ class WorkFileModel extends Model
 
         foreach ($rows as $row) {
             $file = $row->work_file_id;
+
+            // Why the office sent a file out early is the office's business.
+            if ($row->event === self::PAPERS_OVERRIDE) {
+                continue;
+            }
 
             if ($row->event === self::HANDOVER_UNDONE) {
                 if (isset($standing[$file])) {
@@ -1633,6 +1673,10 @@ class WorkFileModel extends Model
     {
         return self::query()
             ->with('workType', 'customer', 'items.workType')
+            // Whether its papers are ready to go with it; see assign().
+            ->select('work_file.*')
+            ->selectRaw(self::NEEDS_AUDIT.' as needs_audit')
+            ->selectRaw(self::PENDING_PAPER_NAMES.' as pending_papers')
             ->whereNull('vendor_id')
             // Only work still in hand can be given out. A file that is approved,
             // returned or cancelled has nothing left for a vendor to do.
