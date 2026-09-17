@@ -171,6 +171,12 @@ class CustomerPortalController extends Controller
         // added later counts as open rather than vanishing from the totals.
         $counts['open'] = max(0, (int) $byStatus->sum() - array_sum($counts));
 
+        // The one number on this page that asks the customer to do something.
+        $counts['papersNeeded'] = WorkFileModel::forCustomer($customer->id)
+            ->reorder()
+            ->whereRaw(WorkFileModel::PENDING_PAPERS)
+            ->count();
+
         return view('customer.dashboard', [
             'customerName' => $customer->name,
             'customerMobile' => $customer->mobile,
@@ -309,7 +315,11 @@ class CustomerPortalController extends Controller
                  * are all doing the same thing, and a line repeating what the
                  * badge already says is a line nobody reads.
                  */
-                'works_note' => WorkFileModel::workNote($works),
+                'works_note' => implode(' · ', array_filter([
+                    WorkFileModel::workNote($works),
+                    // What they have to bring in, where they will look for it.
+                    $file->pending_papers ? 'Papers needed: '.$file->pending_papers : null,
+                ])) ?: null,
 
                 'approved_on' => $approvedOn ? implode(', ', array_unique($approvedOn)) : null,
                 'charged' => $charged,
@@ -479,6 +489,8 @@ class CustomerPortalController extends Controller
             // When their papers came back to them. Who collected them is the
             // office's note and is not selected for this page at all.
             'handedOverOn' => $file->handed_over_on ? date('d-m-Y', strtotime($file->handed_over_on)) : null,
+            // What they still have to bring in, and what has come in.
+            'papers' => WorkFileModel::customerPapers($file->id),
             'fileScreenshot' => $fileScreenshot,
 
             /*

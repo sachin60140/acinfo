@@ -43,6 +43,59 @@
             margin-bottom: 0.15rem;
         }
 
+        /* What the customer still has to bring in. Amber, the colour their
+           status badge already uses for "documents pending from you". */
+        .file-need {
+            background: #fff8eb;
+            border: 1px solid #f5d9a8;
+            border-left: 3px solid #d97706;
+            border-radius: 4px;
+            padding: 0.6rem 0.85rem;
+        }
+
+        .file-need .label {
+            color: #92400e;
+            display: block;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            margin-bottom: 0.3rem;
+            text-transform: uppercase;
+        }
+
+        .file-need__list {
+            list-style: none;
+            margin: 0 0 0.35rem;
+            padding: 0;
+        }
+
+        .file-need__list li + li {
+            border-top: 1px solid #f5e3c3;
+            margin-top: 0.35rem;
+            padding-top: 0.35rem;
+        }
+
+        .file-need__for {
+            color: #6c757d;
+            font-size: 0.85rem;
+            margin-left: 0.35rem;
+        }
+
+        .file-need__note {
+            color: #92400e;
+            font-size: 0.9rem;
+        }
+
+        .file-have {
+            color: #4a5568;
+            font-size: 0.92rem;
+        }
+
+        .file-have__label {
+            color: #15803d;
+            font-weight: 600;
+        }
+
         /* The documents on the file: one row each, the name to recognise it by
            and the button to take it away, with the button dropping under the
            name on a phone rather than squeezing it to one word a line. */
@@ -246,6 +299,33 @@
                                 <span class="label">Remarks</span>
                                 {{ $remarks }}
                             </div>
+                        @endif
+
+                        @if (count($papers['needed']))
+                            {{-- The one thing on this page that asks the customer to
+                                 act, so it comes before the documents they can take. --}}
+                            <div class="file-need mb-3">
+                                <span class="label">Papers we still need from you</span>
+                                <ul class="file-need__list">
+                                    @foreach ($papers['needed'] as $paper)
+                                        <li>
+                                            <strong>{{ $paper['name'] }}</strong>
+                                            <span class="file-need__for">for {{ implode(', ', $paper['works']) }}</span>
+                                            @if ($paper['note'])
+                                                <div class="file-need__note">{{ $paper['note'] }}</div>
+                                            @endif
+                                        </li>
+                                    @endforeach
+                                </ul>
+                                <div class="statement-period">Please bring these to our office so your work can go ahead.</div>
+                            </div>
+                        @endif
+
+                        @if (count($papers['received']))
+                            <p class="file-have mb-3">
+                                <span class="file-have__label"><i class="bi bi-check2-circle"></i> Papers received:</span>
+                                {{ implode(', ', $papers['received']) }}
+                            </p>
                         @endif
 
                         @if (count($documents))

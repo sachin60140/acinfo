@@ -75,6 +75,16 @@
                                 </div>
                             </div>
 
+                            @if ($papersNeeded)
+                                {{-- The one figure here that asks them to do something. --}}
+                                <div class="alert alert-warning mt-3 mb-0 py-2">
+                                    <i class="bi bi-exclamation-circle"></i>
+                                    We need papers from you on
+                                    <strong>{{ $papersNeeded }} {{ \Illuminate\Support\Str::plural('file', $papersNeeded) }}</strong>.
+                                    Open the file to see which.
+                                </div>
+                            @endif
+
                             <a href="{{ route('customer.files') }}" class="btn btn-outline-primary mt-3">
                                 <i class="bi bi-folder2-open"></i> View All Files
                             </a>

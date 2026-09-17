@@ -515,6 +515,64 @@ class WorkFileModel extends Model
     }
 
     /**
+     * A file's papers, as its customer may read them.
+     *
+     * What is still needed — for work that is not finished, with the works it
+     * is for and the note written for the customer — and what has come in.
+     * The office note is not selected at all, so it cannot reach a customer's
+     * page by any route through this.
+     *
+     * @return array{needed: array<int, array{name: string, works: array<int, string>, note: ?string}>, received: array<int, string>}
+     */
+    public static function customerPapers(int $fileId): array
+    {
+        $live = fn ($q) => $q->select(DB::raw(1))
+            ->from('work_file_paper_item as cpi')
+            ->join('work_file_item as cpw', 'cpw.id', '=', 'cpi.work_file_item_id')
+            ->whereColumn('cpi.work_file_paper_id', 'cp.id')
+            ->where('cpw.status', '<>', self::CANCELLED);
+
+        $lines = DB::table('work_file_paper as cp')
+            ->join('paper_type as cpt', 'cpt.id', '=', 'cp.paper_type_id')
+            ->where('cp.work_file_id', $fileId)
+            ->whereIn('cp.state', [WorkFilePaperModel::PENDING, WorkFilePaperModel::RECEIVED])
+            ->whereExists($live)
+            ->orderBy('cpt.sort')
+            ->orderBy('cpt.name')
+            ->get(['cp.id', 'cp.state', 'cp.note', 'cpt.name']);
+
+        // Which unfinished works each pending paper is holding, in one query.
+        $pendingIds = $lines->where('state', WorkFilePaperModel::PENDING)->pluck('id')->all();
+
+        $holding = $pendingIds ? DB::table('work_file_paper_item as hpi')
+            ->join('work_file_item as hpw', 'hpw.id', '=', 'hpi.work_file_item_id')
+            ->leftJoin('work_type as hpt', 'hpt.id', '=', 'hpw.work_type_id')
+            ->whereIn('hpi.work_file_paper_id', $pendingIds)
+            ->whereNotIn('hpw.status', [self::APPROVED, self::RETURNED, self::CANCELLED])
+            ->orderBy('hpw.id')
+            ->get(['hpi.work_file_paper_id', 'hpt.name'])
+            ->groupBy('work_file_paper_id') : collect();
+
+        $needed = [];
+
+        foreach ($lines->where('state', WorkFilePaperModel::PENDING) as $line) {
+            $works = $holding->get($line->id, collect())->pluck('name')->filter()->unique()->values()->all();
+
+            // A paper pending only for work already finished holds nothing up.
+            if (! $works) {
+                continue;
+            }
+
+            $needed[] = ['name' => $line->name, 'works' => $works, 'note' => $line->note ?: null];
+        }
+
+        return [
+            'needed' => $needed,
+            'received' => $lines->where('state', WorkFilePaperModel::RECEIVED)->pluck('name')->values()->all(),
+        ];
+    }
+
+    /**
      * Mark pending papers received, across however many files they are on.
      *
      * The counter's quickest action: the customer walks in with Form 30 for one
@@ -2076,6 +2134,9 @@ class WorkFileModel extends Model
                 'work_file.returned_on',
                 'work_file.handed_over_on',
                 'work_file.approval_screenshot',
+                // Names only — the notes belong to the file page, and the
+                // office's own notes to nobody here.
+                DB::raw(self::PENDING_PAPER_NAMES.' as pending_papers'),
                 'work_type.name as work_type'
             )
             ->orderByDesc('work_file.received_date')
