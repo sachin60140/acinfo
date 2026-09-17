@@ -476,6 +476,9 @@ class CustomerPortalController extends Controller
             'statusTone' => WorkFileModel::customerTone($file->status),
             'charged' => WorkFileModel::netCustomer($file->status, $file->customer_amount, $file->returned_amount),
             'returnedOn' => $file->returned_on ? date('d-m-Y', strtotime($file->returned_on)) : null,
+            // When their papers came back to them. Who collected them is the
+            // office's note and is not selected for this page at all.
+            'handedOverOn' => $file->handed_over_on ? date('d-m-Y', strtotime($file->handed_over_on)) : null,
             'fileScreenshot' => $fileScreenshot,
 
             /*

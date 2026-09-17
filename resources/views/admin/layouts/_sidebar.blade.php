@@ -65,6 +65,9 @@
               ['label' => 'Give to Vendor', 'icon' => 'bi-truck', 'href' => route('workfile.assign'), 'active' => $req->routeIs('workfile.assign')],
               ['label' => 'Return from Vendor', 'icon' => 'bi-arrow-return-left', 'href' => route('workfile.vendorreturn'), 'active' => $req->routeIs('workfile.vendorreturn')],
               ['label' => 'Return to Customer', 'icon' => 'bi-arrow-counterclockwise', 'href' => route('workfile.customerreturn'), 'active' => $req->routeIs('workfile.customerreturn')],
+              // Beside Return to Customer and named apart from it: that one is a
+              // refund, this one is finished work going home.
+              ['label' => 'Hand Over Papers', 'icon' => 'bi-send-check', 'href' => route('workfile.handover'), 'active' => $req->routeIs('workfile.handover')],
               ['label' => 'Update Status', 'icon' => 'bi-flag', 'href' => route('workfile.status'), 'active' => $req->routeIs('workfile.status')],
               ['label' => 'Approved Files', 'icon' => 'bi-patch-check', 'href' => route('workfile.approved'), 'active' => $req->routeIs('workfile.approved')],
               // Editing one file belongs to the list it was opened from.

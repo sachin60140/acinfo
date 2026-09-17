@@ -57,7 +57,10 @@ class WorkFileController extends Controller
         $req->validate([
             // 'open' is a view of several statuses rather than one of them, so it
             // cannot be validated against the stored list.
-            'status' => ['nullable', Rule::in(array_merge(array_keys(WorkFileModel::STATUSES), ['open']))],
+            'status' => ['nullable', Rule::in(array_merge(
+                array_keys(WorkFileModel::STATUSES),
+                ['open', WorkFileModel::AWAITING_HANDOVER]
+            ))],
             'from' => 'nullable|date_format:Y-m-d',
             'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
             'pending' => ['nullable', Rule::in(array_keys(WorkFileModel::PENDING))],
@@ -260,7 +263,14 @@ class WorkFileController extends Controller
                 'status' => WorkFileModel::STATUSES[$f->status] ?? $f->status,
                 // The badge colours itself from the raw key, not the label.
                 'status_key' => $f->status,
-                'works_note' => WorkFileModel::workNote($breakdown[$f->id] ?? []),
+                // Which works are through, and — once they all are — whether the
+                // papers have gone back, which is the next thing asked of a file
+                // that is finished.
+                'works_note' => implode(' · ', array_filter([
+                    WorkFileModel::workNote($breakdown[$f->id] ?? []),
+                    WorkFileModel::handoverText($f->handed_over_on),
+                ])) ?: null,
+                'handed_over' => $f->handed_over_on ? date('d-m-Y', strtotime($f->handed_over_on)) : null,
 
                 /*
                  * The same answer as columns, for the export.
@@ -351,6 +361,12 @@ class WorkFileController extends Controller
                 ['key' => 'works_done', 'label' => 'Approved Works', 'exportOnly' => true, 'hidden' => $approvals],
                 ['key' => 'works_approved_on', 'label' => 'Approved On', 'exportOnly' => ! $approvals],
                 ['key' => 'works_pending', 'label' => 'Pending Works', 'exportOnly' => true],
+                /*
+                 * Drawn on the approved screen, where every file is finished and
+                 * whether its papers have gone back is the question left. On the
+                 * full list it is said in the status cell and exported here.
+                 */
+                ['key' => 'handed_over', 'label' => 'Handed Over', 'exportOnly' => ! $approvals],
                 // A column of the word "Edit" is noise in a spreadsheet, and in the
                 // search box it is worse: every row matches anyone typing "edit".
                 ['key' => 'action', 'label' => 'Action', 'type' => 'link', 'linkTo' => 'edit_url',
@@ -961,6 +977,119 @@ class WorkFileController extends Controller
             'fileCount' => $files->count(),
             'anyFiles' => WorkFileModel::exists(),
         ])->toResponse($req);
+    }
+
+    /**
+     * Approved papers going back to the customer.
+     *
+     * The counterpart to Return to Customer, and deliberately not part of it: a
+     * return is a refund and credits the customer, and approved work is finished
+     * work they pay for in full. Nothing here touches a ledger or a status. It
+     * records when the papers left, who recorded it, and — optionally — who took
+     * them, which is office-only.
+     */
+    public function handOver(Request $req)
+    {
+        if ($req->isMethod('POST')) {
+            $req->validate([
+                // Not in the future: this records something that has happened.
+                'handed_over_on' => 'required|date_format:Y-m-d|before_or_equal:today',
+                'files' => 'required|array|min:1',
+                'files.*' => 'integer',
+                'collected_by' => 'nullable|string|max:120',
+                // Optional, because no balance moves. Shown to the customer.
+                'remark' => 'nullable|string|max:200',
+            ], [
+                'files.required' => 'Tick at least one file to hand over.',
+                'handed_over_on.before_or_equal' => 'The handover date cannot be in the future.',
+            ]);
+
+            $done = DB::transaction(function () use ($req) {
+                /*
+                 * The same rule the screen listed by, asked again and locked. The
+                 * page may have been open since before a file was handed over by
+                 * someone else, or since before a work on it was cancelled.
+                 */
+                $files = WorkFileModel::whereIn('id', $req->input('files'))
+                    ->awaitingHandover()
+                    ->lockForUpdate()
+                    ->get();
+
+                foreach ($files as $file) {
+                    $file->handOver($req->input('handed_over_on'), $req->input('collected_by'), $req->input('remark'));
+                }
+
+                return $files;
+            });
+
+            if ($done->isEmpty()) {
+                return back()->withInput()->with(
+                    'error',
+                    'Those files are no longer waiting to be handed over — their papers may already have gone back, or a work on them is no longer approved.'
+                );
+            }
+
+            return redirect()->route('workfile.handover')
+                ->with('success', 'Papers handed over for '.$done->count().' '.Str::plural('file', $done->count())
+                    .': '.$done->pluck('file_no')->implode(', '));
+        }
+
+        $files = WorkFileModel::readyForHandover();
+
+        $props = [
+            'action' => route('workfile.handover'),
+            'csrf' => csrf_token(),
+            'cancelUrl' => route('workfile.approved'),
+            'handedOverOn' => old('handed_over_on', date('Y-m-d')),
+            'today' => date('Y-m-d'),
+            'oldCollectedBy' => old('collected_by', ''),
+            'oldRemark' => old('remark', ''),
+            'oldFiles' => array_values((array) old('files', [])),
+            // Arriving from one file's own screen: the list opens narrowed to it.
+            'search' => (string) $req->query('q', ''),
+            'files' => $files->map(fn ($file) => [
+                'id' => $file->id,
+                'file_no' => $file->file_no,
+                'received_date' => date('d-m-Y', strtotime($file->received_date)),
+                'approved_on' => ($on = $file->items->max('approved_on')) ? date('d-m-Y', strtotime($on)) : null,
+                'registration_no' => $file->registration_no,
+                'work_type' => $file->workLabel() ?: $file->workType?->name,
+                'description' => $file->description,
+                'customer' => $file->customer?->name,
+            ])->values(),
+        ];
+
+        return Screen::make('admin.work.hand-over', 'vue-hand-over', $props, [
+            'fileCount' => $files->count(),
+            'anyApproved' => WorkFileModel::where('status', WorkFileModel::APPROVED)->exists(),
+        ])->toResponse($req);
+    }
+
+    /**
+     * A handover recorded by mistake, taken back.
+     *
+     * A reason is required, and kept on the office's history: a record that
+     * silently changed is worse than one that says it was corrected.
+     */
+    public function undoHandover(Request $req, int $id)
+    {
+        $req->validate([
+            'undo_remark' => 'required|string|max:200',
+        ], [
+            'undo_remark.required' => 'Say why the handover is being taken back — it stays on the file\'s history.',
+        ]);
+
+        $file = WorkFileModel::findOrFail($id);
+
+        if (! $file->isHandedOver()) {
+            return redirect()->route('workfile.edit', $file->id)
+                ->with('error', 'The papers for '.$file->file_no.' are not recorded as handed over, so there is nothing to take back.');
+        }
+
+        DB::transaction(fn () => $file->undoHandover($req->input('undo_remark')));
+
+        return redirect()->route('workfile.edit', $file->id)
+            ->with('success', 'Handover taken back for '.$file->file_no.'. It is on the Hand Over Papers list again.');
     }
 
     /**
@@ -2039,6 +2168,22 @@ class WorkFileController extends Controller
             'screenshotUrl' => $isEdit && $file->approval_screenshot ? route('workfile.approval', $file->id) : '',
 
             /*
+             * Whether the papers have gone back, and the way to take that back.
+             * Offered as a link to the screen when the file is ready and they
+             * have not: the screen is where the date and the collector are
+             * asked for, and one place to do it is enough.
+             */
+            'handover' => $isEdit && $file->isHandedOver() ? [
+                'on' => date('d-m-Y', strtotime($file->handed_over_on)),
+                'by' => $file->handedOverBy?->name,
+                'collectedBy' => $file->collected_by,
+                'undoUrl' => route('workfile.handover.undo', $file->id),
+            ] : null,
+            'handoverUrl' => $isEdit && ! $file->isHandedOver() && $file->status === WorkFileModel::APPROVED
+                ? route('workfile.handover', ['q' => $file->file_no])
+                : null,
+
+            /*
              * The works this file is for.
              *
              * Each carries its own approval and the document it arrived with,
@@ -2136,7 +2281,7 @@ class WorkFileController extends Controller
             'timeline' => $isEdit
                 ? collect($timeline)->map(fn ($entry) => [
                     'id' => $entry->id,
-                    'kind' => $entry->isOpening() ? 'opening' : ($entry->isNoteOnly() ? 'note' : 'move'),
+                    'kind' => $entry->kind(),
                     'from' => $entry->fromLabel(),
                     'to' => $entry->toLabel(),
                     'remark' => $entry->remark,

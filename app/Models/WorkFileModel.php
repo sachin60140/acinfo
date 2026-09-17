@@ -29,6 +29,18 @@ class WorkFileModel extends Model
 
     public const RETURNED = 'paper_returned';
 
+    /*
+     * Events on the status log that are not moves. See the migration that added
+     * the column: a handover changes no status, and telling one apart from a
+     * note by its wording would make the history depend on nobody rewording it.
+     */
+    public const HANDED_OVER = 'handed_over';
+
+    public const HANDOVER_UNDONE = 'handover_undone';
+
+    /** The files list's view of approved work whose papers are still here. */
+    public const AWAITING_HANDOVER = 'awaiting_handover';
+
     public const IN_OFFICE = 'in_office';
 
     public const DISPATCHED = 'file_dispatch';
@@ -279,7 +291,7 @@ class WorkFileModel extends Model
      * @param  string|null  $from  the status before the change; null when the file
      *                             was just received
      */
-    public function logStatus(?string $from, ?string $remark = null, ?int $itemId = null): WorkFileStatusLogModel
+    public function logStatus(?string $from, ?string $remark = null, ?int $itemId = null, ?string $event = null): WorkFileStatusLogModel
     {
         $log = new WorkFileStatusLogModel;
         $log->work_file_id = $this->id;
@@ -289,10 +301,130 @@ class WorkFileModel extends Model
         $log->from_status = $from;
         $log->to_status = $this->status;
         $log->remark = $remark ?: null;
+        // Set only for something that happened without a move: a handover.
+        $log->event = $event;
         $log->user_id = Auth::id();
         $log->save();
 
         return $log;
+    }
+
+    // ------------------------------------------------------------- handing over
+
+    public function handedOverBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'handed_over_by');
+    }
+
+    /** Whether the papers have gone back to the customer. */
+    public function isHandedOver(): bool
+    {
+        return $this->handed_over_on !== null;
+    }
+
+    /**
+     * Approved files whose papers are still in the office.
+     *
+     * Fully approved only. On a partly approved file the work still pending
+     * usually still needs the papers, and handing them over would be recording
+     * that the office no longer has what it is working from.
+     */
+    public function scopeAwaitingHandover($query)
+    {
+        return $query
+            ->where('work_file.status', self::APPROVED)
+            ->whereNull('work_file.handed_over_on');
+    }
+
+    /** For the Hand Over Papers screen: longest-waiting first, like any list of things to chase. */
+    public static function readyForHandover()
+    {
+        return self::query()
+            ->with('workType', 'customer', 'items.workType')
+            ->awaitingHandover()
+            ->orderBy('received_date', 'asc')
+            ->orderBy('id', 'asc')
+            ->get();
+    }
+
+    /**
+     * Record the papers going back to the customer.
+     *
+     * No money moves and no status changes. Approved work is finished work the
+     * customer pays for in full; handing back what it was done on is a
+     * delivery, not a refund — which is the whole reason this is not Return to
+     * Customer. So there is no ledger call here, and a test holds it to that.
+     */
+    public function handOver(string $on, ?string $collectedBy = null, ?string $remark = null): void
+    {
+        $this->handed_over_on = $on;
+        $this->handed_over_by = Auth::id();
+        $this->collected_by = ($collectedBy = trim((string) $collectedBy)) !== '' ? $collectedBy : null;
+        $this->save();
+
+        $this->logStatus($this->status, $remark, null, self::HANDED_OVER);
+    }
+
+    /**
+     * Take back a handover recorded by mistake.
+     *
+     * Kept on the office's history, with the reason, because a record that
+     * silently changed is worse than one that says it was corrected. The
+     * customer's history drops both — see withoutUndoneHandovers().
+     */
+    public function undoHandover(string $remark): void
+    {
+        $this->handed_over_on = null;
+        $this->handed_over_by = null;
+        $this->collected_by = null;
+        $this->save();
+
+        $this->logStatus($this->status, $remark, null, self::HANDOVER_UNDONE);
+    }
+
+    /** "Papers handed over 16-09-2026", or null. */
+    public static function handoverText($handedOverOn): ?string
+    {
+        return $handedOverOn ? 'Papers handed over '.date('d-m-Y', strtotime($handedOverOn)) : null;
+    }
+
+    /**
+     * Log rows as the customer should read them.
+     *
+     * A handover recorded by mistake and taken back never happened, as far as
+     * the customer is concerned — so the handover goes, and so does the entry
+     * taking it back, whose reason ("wrong file") is the office's business.
+     * Paired per file, in order: handed over, undone, handed over again leaves
+     * the second standing.
+     *
+     * @param  iterable<object>  $rows  each with work_file_id and event, oldest first
+     * @return array<int, object>
+     */
+    private static function withoutUndoneHandovers(iterable $rows): array
+    {
+        $kept = [];
+        $standing = [];
+
+        foreach ($rows as $row) {
+            $file = $row->work_file_id;
+
+            if ($row->event === self::HANDOVER_UNDONE) {
+                if (isset($standing[$file])) {
+                    unset($kept[$standing[$file]]);
+                    unset($standing[$file]);
+                }
+
+                continue;
+            }
+
+            $kept[] = $row;
+
+            if ($row->event === self::HANDED_OVER) {
+                $standing[$file] = array_key_last($kept);
+            }
+        }
+
+        return array_values($kept);
     }
 
     /**
@@ -1608,6 +1740,7 @@ class WorkFileModel extends Model
                 'work_file.customer_amount',
                 'work_file.returned_amount',
                 'work_file.returned_on',
+                'work_file.handed_over_on',
                 'work_file.approval_screenshot',
                 'work_type.name as work_type'
             )
@@ -1669,9 +1802,11 @@ class WorkFileModel extends Model
             ->orderBy('work_file_status_log.id')
             ->select(
                 'work_file_status_log.id',
+                'work_file_status_log.work_file_id',
                 'work_file_status_log.from_status',
                 'work_file_status_log.to_status',
                 'work_file_status_log.remark',
+                'work_file_status_log.event',
                 'work_file_status_log.created_at',
                 // Which work it was about, on a folder holding several. The
                 // user who made the change is not selected: who in the office
@@ -1682,14 +1817,18 @@ class WorkFileModel extends Model
 
         $out = [];
 
-        foreach ($rows as $row) {
+        foreach (self::withoutUndoneHandovers($rows) as $row) {
+            $handover = $row->event === self::HANDED_OVER;
+
             $out[] = [
                 'id' => (int) $row->id,
                 'date' => date('d-m-Y', strtotime($row->created_at)),
                 'time' => date('h:i A', strtotime($row->created_at)),
                 'from' => $row->from_status ? self::customerStatus($row->from_status) : null,
-                'to' => self::customerStatus($row->to_status),
-                'tone' => self::customerTone($row->to_status),
+                // A handover moves nothing, so said as what happened rather than
+                // as the status the file was already at.
+                'to' => $handover ? 'Papers handed over to you' : self::customerStatus($row->to_status),
+                'tone' => $handover ? 'approved' : self::customerTone($row->to_status),
                 // Null when the entry is a note that did not move anything, so
                 // the line can read as a note rather than as a move to where it
                 // already was.
@@ -1726,12 +1865,14 @@ class WorkFileModel extends Model
             ->whereIn('work_file_id', $fileIds)
             ->orderBy('created_at')
             ->orderBy('id')
-            ->select('work_file_id', 'remark', 'created_at')
+            ->select('work_file_id', 'remark', 'event', 'created_at')
             ->get();
 
         $out = [];
 
-        foreach ($rows as $row) {
+        // A handover taken back is neither the customer's latest news nor the
+        // last time their file moved.
+        foreach (self::withoutUndoneHandovers($rows) as $row) {
             $out[$row->work_file_id] ??= ['remark' => null, 'remark_on' => null, 'updated_on' => null];
 
             // Anything at all counts as the file having moved.
@@ -2414,6 +2555,7 @@ class WorkFileModel extends Model
                 'work_file.vendor_returned_on',
                 'work_file.returned_amount',
                 'work_file.vendor_returned_amount',
+                'work_file.handed_over_on',
                 self::workLabelColumn(),
                 self::unpricedWorksColumn(),
                 self::unbilledWorksColumn(),
@@ -2429,6 +2571,11 @@ class WorkFileModel extends Model
         if ($status === 'open') {
             // Work still in hand, the same set the dashboard counts.
             $query->whereIn('work_file.status', self::OPEN_STATUSES);
+        } elseif ($status === self::AWAITING_HANDOVER) {
+            // Finished work whose papers the customer has not collected — the
+            // list the counter works through.
+            $query->where('work_file.status', self::APPROVED)
+                ->whereNull('work_file.handed_over_on');
         } elseif ($status) {
             $query->where('work_file.status', $status);
         }

@@ -129,11 +129,13 @@ class ScreenPropsTest extends TestCase
              */
             'files-filtered' => 'admin/files?status=cancelled',
             'files-open' => 'admin/files?status=open',
+            'files-awaiting-handover' => 'admin/files?status=awaiting_handover',
             'files-dated' => 'admin/files?from=2026-01-01&to=2026-12-31',
             'file-receive' => 'admin/file/receive',
             'file-assign' => 'admin/file/assign',
             'file-vendor-return' => 'admin/file/vendor-return',
             'file-customer-return' => 'admin/file/customer-return',
+            'file-hand-over' => 'admin/file/handover',
             'file-status' => 'admin/file/status',
             'file-edit' => $file ? 'admin/file/edit/'.$file->id : null,
             'work-types' => 'admin/work-types',

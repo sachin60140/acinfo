@@ -56,7 +56,19 @@ const props = defineProps({
 
     // Papers scanned against this file, newest first.
     documents: { type: Array, default: () => [] },
+
+    /*
+     * Whether the papers have gone back to the customer: { on, by,
+     * collectedBy, undoUrl } once they have, and null until then. handoverUrl
+     * is the Hand Over Papers screen, offered only when the file is approved
+     * and its papers are still here.
+     */
+    handover: { type: Object, default: null },
+    handoverUrl: { type: String, default: null },
 });
+
+// Asked for only when taking a handover back, which has to say why.
+const undoing = ref(Boolean(props.errors && props.errors.undo_remark));
 
 /*
  * A status the list does not offer cannot be chosen, and an unmatched one would
@@ -1307,6 +1319,75 @@ onMounted(() => {
             </div>
 
             <template v-if="isEdit">
+                <!--
+                    Where the papers are. Outside the main form on purpose: taking
+                    a handover back is its own request with its own reason, and a
+                    form cannot sit inside another.
+                -->
+                <div v-if="handover || handoverUrl" class="ui-card wf-papers">
+                    <div class="ui-card__body">
+                        <h2 class="ui-card__title wf-effect__title">Papers</h2>
+
+                        <template v-if="handover">
+                            <p class="wf-papers__state">
+                                <i class="bi bi-send-check"></i>
+                                Handed over to the customer on <strong>{{ handover.on }}</strong>
+                            </p>
+                            <dl class="wf-papers__facts">
+                                <template v-if="handover.collectedBy">
+                                    <dt>Collected by</dt>
+                                    <dd>{{ handover.collectedBy }}</dd>
+                                </template>
+                                <template v-if="handover.by">
+                                    <dt>Recorded by</dt>
+                                    <dd>{{ handover.by }}</dd>
+                                </template>
+                            </dl>
+
+                            <button
+                                v-if="! undoing"
+                                type="button"
+                                class="ui-btn ui-btn--sm"
+                                @click="undoing = true">
+                                <i class="bi bi-arrow-counterclockwise"></i> Recorded by mistake?
+                            </button>
+
+                            <form v-else :action="handover.undoUrl" method="POST" class="wf-papers__undo">
+                                <input type="hidden" name="_token" :value="csrf">
+                                <label class="ui-label" for="undo_remark">
+                                    Why is this being taken back? <span class="ui-label__req">*</span>
+                                </label>
+                                <input
+                                    id="undo_remark"
+                                    type="text"
+                                    name="undo_remark"
+                                    class="ui-input"
+                                    :class="{ 'ui-input--invalid': errors.undo_remark }"
+                                    maxlength="200"
+                                    placeholder="e.g. Wrong file ticked"
+                                    required>
+                                <div class="ui-hint" :class="{ 'ui-hint--error': errors.undo_remark }">
+                                    {{ errors.undo_remark || 'Kept on this file\'s history. The customer will no longer see the handover.' }}
+                                </div>
+                                <div class="wf-papers__actions">
+                                    <button type="button" class="ui-btn ui-btn--sm" @click="undoing = false">Keep it</button>
+                                    <button type="submit" class="ui-btn ui-btn--sm ui-btn--danger">Take back the handover</button>
+                                </div>
+                            </form>
+                        </template>
+
+                        <template v-else>
+                            <p class="wf-papers__state">
+                                <i class="bi bi-folder-check"></i>
+                                Every work is approved and the papers are still here.
+                            </p>
+                            <a :href="handoverUrl" class="ui-btn ui-btn--sm ui-btn--primary">
+                                <i class="bi bi-send-check"></i> Hand Over Papers
+                            </a>
+                        </template>
+                    </div>
+                </div>
+
                 <div class="ui-note ui-note--warn">
                     <i class="bi bi-info-circle"></i>
                     Changing an amount, party or date here rewrites this file's existing ledger entries
@@ -1325,6 +1406,12 @@ onMounted(() => {
                                     </template>
                                     <template v-else-if="entry.kind === 'note'">
                                         Note &mdash; <strong>{{ entry.to }}</strong>
+                                    </template>
+                                    <template v-else-if="entry.kind === 'handover'">
+                                        <strong>Papers handed over</strong>
+                                    </template>
+                                    <template v-else-if="entry.kind === 'handover_undone'">
+                                        <strong>Handover taken back</strong>
                                     </template>
                                     <template v-else>
                                         {{ entry.from }} &rarr; <strong>{{ entry.to }}</strong>
@@ -1756,6 +1843,65 @@ onMounted(() => {
 .wf-tl__head {
     color: var(--n-700);
     font-size: var(--t-sm);
+}
+
+/* ---- Where the papers are ---------------------------------------------- */
+
+.wf-papers__state {
+    align-items: baseline;
+    color: var(--n-700);
+    display: flex;
+    font-size: var(--t-sm);
+    gap: var(--s-2);
+    margin: 0 0 var(--s-2);
+}
+
+.wf-papers__state .bi {
+    color: var(--dr-600);
+}
+
+.wf-papers__facts {
+    display: grid;
+    font-size: var(--t-sm);
+    gap: var(--s-1) var(--s-3);
+    grid-template-columns: auto minmax(0, 1fr);
+    margin: 0 0 var(--s-3);
+}
+
+.wf-papers__facts dt {
+    color: var(--n-500);
+    font-weight: 600;
+}
+
+.wf-papers__facts dd {
+    color: var(--n-800);
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.wf-papers__undo {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+}
+
+.wf-papers__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    justify-content: flex-end;
+}
+
+/* On a phone each fact sits under its label rather than beside it, where a
+   long name would push the value to one word a line. */
+@media (max-width: 575.98px) {
+    .wf-papers__facts {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .wf-papers__facts dd {
+        margin-bottom: var(--s-2);
+    }
 }
 
 .wf-tl__remark {

@@ -11,6 +11,7 @@ import { createApp } from 'vue';
 import ClientForm from './components/ClientForm.vue';
 import ClientPassword from './components/ClientPassword.vue';
 import CustomerReturn from './components/CustomerReturn.vue';
+import HandOver from './components/HandOver.vue';
 import DataGrid from './components/DataGrid.vue';
 import Dashboard from './components/Dashboard.vue';
 import FileForm from './components/FileForm.vue';
@@ -42,6 +43,8 @@ export const components = {
     'vue-receive-rows': ReceiveFileRows,
     'vue-give-to-vendor': GiveToVendor,
     'vue-customer-return': CustomerReturn,
+    // Approved papers going back. A delivery, not a return: no amounts.
+    'vue-hand-over': HandOver,
     'vue-vendor-return': VendorReturn,
     'vue-status-board': StatusBoard,
 

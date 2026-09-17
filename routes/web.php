@@ -112,6 +112,13 @@ Route::group(['middleware' => 'admin'], function () {
 
     Route::match(['get', 'post'], 'admin/file/customer-return', [WorkFileController::class, 'customerReturn'])->name('workfile.customerreturn');
 
+    // Approved papers going back to the customer. Not a return: nothing is
+    // refunded, because nothing is owed back on finished work.
+    Route::match(['get', 'post'], 'admin/file/handover', [WorkFileController::class, 'handOver'])->name('workfile.handover');
+
+    Route::post('admin/file/{id}/handover/undo', [WorkFileController::class, 'undoHandover'])
+        ->whereNumber('id')->name('workfile.handover.undo');
+
     Route::match(['get', 'post'], 'admin/file/status', [WorkFileController::class, 'status'])->name('workfile.status');
 
     Route::match(['get', 'post'], 'admin/file/edit/{id}', [WorkFileController::class, 'edit'])->name('workfile.edit');

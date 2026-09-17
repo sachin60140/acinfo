@@ -24,10 +24,37 @@ class WorkFileStatusLogModel extends Model
 
     /**
      * A note added without moving the file along.
+     *
+     * Not a handover, which also moves nothing but is something that happened
+     * rather than something somebody said.
      */
     public function isNoteOnly(): bool
     {
-        return $this->from_status === $this->to_status;
+        return $this->from_status === $this->to_status && $this->event === null;
+    }
+
+    /** The papers went back to the customer. */
+    public function isHandover(): bool
+    {
+        return $this->event === WorkFileModel::HANDED_OVER;
+    }
+
+    /** A handover recorded by mistake, taken back. */
+    public function isHandoverUndone(): bool
+    {
+        return $this->event === WorkFileModel::HANDOVER_UNDONE;
+    }
+
+    /** What the office history calls this entry: a move, a note, a receipt or a handover. */
+    public function kind(): string
+    {
+        return match (true) {
+            $this->isOpening() => 'opening',
+            $this->isHandover() => 'handover',
+            $this->isHandoverUndone() => 'handover_undone',
+            $this->isNoteOnly() => 'note',
+            default => 'move',
+        };
     }
 
     /**

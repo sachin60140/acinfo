@@ -99,6 +99,9 @@
                                 <select class="form-select" id="status" name="status">
                                     <option value="">All</option>
                                     <option value="open" {{ $status === 'open' ? 'selected' : '' }}>Work in hand</option>
+                                    {{-- A view rather than a status: approved, and the
+                                         papers still here waiting to be collected. --}}
+                                    <option value="{{ \App\Models\WorkFileModel::AWAITING_HANDOVER }}" {{ $status === \App\Models\WorkFileModel::AWAITING_HANDOVER ? 'selected' : '' }}>Approved, papers not handed over</option>
                                     @foreach (\App\Models\WorkFileModel::STATUSES as $key => $text)
                                         <option value="{{ $key }}" {{ $status === $key ? 'selected' : '' }}>{{ $text }}</option>
                                     @endforeach

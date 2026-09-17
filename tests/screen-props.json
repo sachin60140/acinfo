@@ -210,6 +210,8 @@
                 }
             },
             "expenses": "[]",
+            "handover": "null",
+            "handoverUrl": "null",
             "indexUrl": "string",
             "isEdit": "bool",
             "items": {
@@ -281,6 +283,31 @@
                     "rate": "null"
                 }
             }
+        }
+    },
+    "file-hand-over": {
+        "vue-hand-over": {
+            "action": "string",
+            "cancelUrl": "string",
+            "csrf": "string",
+            "files": {
+                "list_of": {
+                    "approved_on": "string",
+                    "customer": "string",
+                    "description": "string",
+                    "file_no": "string",
+                    "id": "number",
+                    "received_date": "string",
+                    "registration_no": "string",
+                    "work_type": "string"
+                }
+            },
+            "handedOverOn": "string",
+            "oldCollectedBy": "string",
+            "oldFiles": "[]",
+            "oldRemark": "string",
+            "search": "string",
+            "today": "string"
         }
     },
     "file-receive": {
@@ -412,6 +439,7 @@
                 "works_done:text",
                 "works_approved_on:text",
                 "works_pending:text",
+                "handed_over:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -430,6 +458,7 @@
                     "edit_url": "string",
                     "expenses": "null",
                     "file_no": "string",
+                    "handed_over": "null",
                     "id": "number",
                     "margin": "number",
                     "received": "string",
@@ -442,6 +471,72 @@
                     "status_key": "string",
                     "vendor": "string",
                     "vendor_url": "string",
+                    "work_type": "string",
+                    "works_approved_on": "string",
+                    "works_done": "string",
+                    "works_note": "null",
+                    "works_pending": "string"
+                }
+            },
+            "title": "string",
+            "totals": {
+                "charged": "string",
+                "cost": "string",
+                "expenses": "string",
+                "margin": "string"
+            }
+        }
+    },
+    "files-awaiting-handover": {
+        "vue-files-list": {
+            "columns": [
+                "file_no:link",
+                "registration_no:text",
+                "received:text",
+                "work_type:text",
+                "description:text",
+                "customer:link",
+                "charged:money",
+                "vendor:link",
+                "cost:money",
+                "expenses:money",
+                "margin:balance",
+                "status:badge",
+                "works_done:text",
+                "works_approved_on:text",
+                "works_pending:text",
+                "handed_over:text",
+                "action:link:no-export:no-sort"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rowClass": "string",
+            "rows": {
+                "list_of": {
+                    "action": "string",
+                    "charged": "number",
+                    "charged_was": "null",
+                    "cost": "null",
+                    "cost_was": "null",
+                    "customer": "string",
+                    "customer_url": "string",
+                    "description": "string",
+                    "edit_url": "string",
+                    "expenses": "null",
+                    "file_no": "string",
+                    "handed_over": "null",
+                    "id": "number",
+                    "margin": "number",
+                    "received": "string",
+                    "received_raw": "string",
+                    "registration_no": "string",
+                    "row_class": "string",
+                    "screenshot": "string",
+                    "screenshot_url": "string",
+                    "status": "string",
+                    "status_key": "string",
+                    "vendor": "string",
+                    "vendor_url": "null",
                     "work_type": "string",
                     "works_approved_on": "string",
                     "works_done": "string",
@@ -476,6 +571,7 @@
                 "works_done:text",
                 "works_approved_on:text",
                 "works_pending:text",
+                "handed_over:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -494,6 +590,7 @@
                     "edit_url": "string",
                     "expenses": "null",
                     "file_no": "string",
+                    "handed_over": "null",
                     "id": "number",
                     "margin": "number",
                     "received": "string",
@@ -540,6 +637,7 @@
                 "works_done:text",
                 "works_approved_on:text",
                 "works_pending:text",
+                "handed_over:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -573,6 +671,7 @@
                 "works_done:text",
                 "works_approved_on:text",
                 "works_pending:text",
+                "handed_over:text",
                 "action:link:no-export:no-sort"
             ],
             "emptyText": "string",
@@ -591,6 +690,7 @@
                     "edit_url": "string",
                     "expenses": "null",
                     "file_no": "string",
+                    "handed_over": "null",
                     "id": "number",
                     "margin": "number",
                     "received": "string",

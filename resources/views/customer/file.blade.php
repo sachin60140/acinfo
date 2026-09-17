@@ -231,6 +231,14 @@
                                     <span class="value">{{ $returnedOn }}</span>
                                 </div>
                             @endif
+                            @if ($handedOverOn)
+                                {{-- Finished work, and the papers it was done on back
+                                     with them. Not a return: nothing was refunded. --}}
+                                <div>
+                                    <span class="label">Papers Handed Over</span>
+                                    <span class="value">{{ $handedOverOn }}</span>
+                                </div>
+                            @endif
                         </div>
 
                         @if ($remarks)
