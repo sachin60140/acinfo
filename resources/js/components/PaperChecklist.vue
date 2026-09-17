@@ -108,6 +108,10 @@ const STATE_ICONS = { received: 'bi-check2', pending: 'bi-hourglass-split', not_
                         <span v-if="file.registration_no" class="pck-plate">{{ file.registration_no }}</span>
                         <span class="ui-badge" :data-state="file.status_key">{{ file.status }}</span>
                     </div>
+                    <div v-if="file.description || file.last_remark" class="pck-before">
+                        <span v-if="file.description"><strong>Details:</strong> {{ file.description }}</span>
+                        <span v-if="file.last_remark"><strong>Last remark:</strong> {{ file.last_remark }}</span>
+                    </div>
                     <div class="ui-hint">
                         {{ file.customer || 'No customer' }} · received {{ file.received }}
                         <template v-if="lastCheck"> · last checked {{ lastCheck.on }}<template v-if="lastCheck.by"> by {{ lastCheck.by }}</template></template>
@@ -254,6 +258,15 @@ const STATE_ICONS = { received: 'bi-check2', pending: 'bi-hourglass-split', not_
     flex-wrap: wrap;
     font-size: var(--t-lg);
     gap: var(--s-2);
+}
+
+/* What was noted before the checklist — often which papers were missing. */
+.pck-before {
+    color: var(--n-700);
+    display: flex;
+    flex-wrap: wrap;
+    font-size: var(--t-sm);
+    gap: 0.1rem var(--s-4);
 }
 
 /* The vehicle, in the shape a number plate is read in. */

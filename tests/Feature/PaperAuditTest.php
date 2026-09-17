@@ -170,6 +170,28 @@ class PaperAuditTest extends TestCase
         $this->assertStringContainsString('Papers to check', $row['works_note']);
     }
 
+    /**
+     * A file already in Paper Pendency before checklists existed carries its
+     * missing papers in a remark and in Details. Whoever checks it sees both.
+     */
+    public function test_what_was_noted_before_the_checklist_is_shown(): void
+    {
+        $file = $this->file([$this->hpt], ['description' => 'Without Challan & Affidavit']);
+        $this->actingAs($this->admin);
+        $file->logStatus($file->status, 'NOC awaited from Mannapuram');
+
+        $row = collect($this->actingAs($this->admin)->getJson(route('workfile.paperaudit'))->json('props.toCheck'))
+            ->firstWhere('id', $file->id);
+
+        $this->assertSame('Without Challan & Affidavit', $row['description']);
+        $this->assertSame('NOC awaited from Mannapuram', $row['last_remark']);
+
+        $header = $this->actingAs($this->admin)->getJson(route('workfile.papers', $file->id))->json('props.file');
+
+        $this->assertSame('Without Challan & Affidavit', $header['description']);
+        $this->assertSame('NOC awaited from Mannapuram', $header['last_remark']);
+    }
+
     /** One RC for both works, marked with both; each work's own papers once. */
     public function test_the_checklist_is_every_paper_once_with_the_works_that_need_it(): void
     {

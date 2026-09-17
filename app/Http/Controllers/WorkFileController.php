@@ -1077,6 +1077,14 @@ class WorkFileController extends Controller
             ->orderBy('id')
             ->get();
 
+        /*
+         * What was written about each file before it had a checklist. For a
+         * file that was already in Paper Pendency, the remark — and the Details
+         * box, where "Without Challan" used to go — is the only record of which
+         * papers were missing, and the person checking it needs to see that.
+         */
+        $lastRemarks = WorkFileModel::latestRemarks($toCheck->pluck('id')->all());
+
         $pending = DB::table('work_file_paper as p')
             ->join('paper_type as pt', 'pt.id', '=', 'p.paper_type_id')
             ->join('work_file as f', 'f.id', '=', 'p.work_file_id')
@@ -1115,6 +1123,8 @@ class WorkFileController extends Controller
                 'customer' => $file->customer?->name,
                 'work_type' => $file->workLabel() ?: $file->workType?->name,
                 'received_date' => date('d-m-Y', strtotime($file->received_date)),
+                'description' => $file->description ?: null,
+                'last_remark' => $lastRemarks[$file->id] ?? null,
                 'papers_url' => route('workfile.papers', ['id' => $file->id, 'return_to' => $back]),
             ])->values(),
             'pending' => $pending->map(fn ($line) => [
@@ -1218,6 +1228,9 @@ class WorkFileController extends Controller
                 'received' => date('d-m-Y', strtotime($file->received_date)),
                 'status' => WorkFileModel::STATUSES[$file->status] ?? $file->status,
                 'status_key' => $file->status,
+                // What was noted before this checklist — see paperAudit().
+                'description' => $file->description ?: null,
+                'last_remark' => WorkFileModel::latestRemarks([$file->id])[$file->id] ?? null,
                 'works' => $file->items->reject(fn ($item) => $item->isSettled())
                     ->map(fn ($item) => $item->workType?->name)->filter()->values()->all(),
             ],

@@ -34,6 +34,8 @@ const haystack = (row) => [
     row.paper,
     row.work_type,
     ...(row.works || []),
+    row.description,
+    row.last_remark,
 ].filter(Boolean).join(' ').toLowerCase();
 
 // Every word must appear somewhere on the row, so "car4sales form 30" is that
@@ -135,7 +137,13 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                             <td data-label="File No."><span class="ui-lead">{{ file.file_no }}</span></td>
                             <td data-label="Vehicle">{{ file.registration_no || '—' }}</td>
                             <td data-label="Customer">{{ file.customer || '—' }}</td>
-                            <td data-label="Work">{{ file.work_type || '—' }}</td>
+                            <td data-label="Work">
+                                {{ file.work_type || '—' }}
+                                <!-- What was noted before the checklist existed: often the
+                                     only record of which papers were missing. -->
+                                <div v-if="file.description" class="ui-sub">{{ file.description }}</div>
+                                <div v-if="file.last_remark" class="ui-sub">Last remark: {{ file.last_remark }}</div>
+                            </td>
                             <td data-label="Received">{{ file.received_date }}</td>
                             <td data-label="" class="pau-go">
                                 <a :href="file.papers_url" class="ui-btn ui-btn--sm ui-btn--primary">
