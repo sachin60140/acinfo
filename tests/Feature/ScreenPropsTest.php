@@ -139,6 +139,7 @@ class ScreenPropsTest extends TestCase
             'file-status' => 'admin/file/status',
             'file-edit' => $file ? 'admin/file/edit/'.$file->id : null,
             'work-types' => 'admin/work-types',
+            'paper-types' => 'admin/paper-types',
             'report-customer' => 'admin/reports/files?party_type=customer',
             'report-vendor' => 'admin/reports/files?party_type=vendor',
             'client-list' => 'admin/view-clients',

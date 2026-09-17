@@ -83,6 +83,7 @@ class SidebarTest extends TestCase
             'approved files' => ['admin/files/approved', 'Approved Files'],
             'all files' => ['admin/files', 'All Work Files'],
             'work types' => ['admin/work-types', 'Work Types'],
+            'paper types' => ['admin/paper-types', 'Paper Types'],
             'profit report' => ['admin/reports/profit', 'Profit Report'],
             'work report' => ['admin/reports/files', 'Work Report'],
         ];
@@ -306,7 +307,7 @@ class SidebarTest extends TestCase
             'Dashboard', 'Add Client Ledger', 'View Client', 'Receipt', 'Payment',
             'Vendor Ledger', 'Customer Ledger',
             'Receive Files', 'Give to Vendor', 'Return from Vendor', 'Return to Customer', 'Hand Over Papers',
-            'Update Status', 'Approved Files', 'All Work Files', 'Work Types', 'Expense Types',
+            'Update Status', 'Approved Files', 'All Work Files', 'Work Types', 'Expense Types', 'Paper Types',
             'Profit Report', 'Work Report', 'Expense Report',
         ] as $item) {
             $this->assertStringContainsString('<span>'.$item.'</span>', $body, "$item is not on the menu");

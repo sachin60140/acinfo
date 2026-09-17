@@ -719,6 +719,33 @@
             }
         }
     },
+    "paper-types": {
+        "vue-paper-types": {
+            "columns": [
+                "name:text",
+                "needed_for:text",
+                "used:count",
+                "sort:count",
+                "action:link:no-export:no-sort"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "action": "string",
+                    "edit_url": "string",
+                    "id": "number",
+                    "name": "string",
+                    "needed_for": "string",
+                    "retired": "null",
+                    "sort": "number",
+                    "used": "number"
+                }
+            },
+            "sortable": "bool",
+            "title": "string"
+        }
+    },
     "party-add": {
         "vue-party-form": {
             "action": "string",

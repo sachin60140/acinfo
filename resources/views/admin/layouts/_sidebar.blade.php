@@ -74,6 +74,7 @@
               ['label' => 'All Work Files', 'icon' => 'bi-folder2-open', 'href' => route('workfile.index'), 'active' => $req->routeIs('workfile.index', 'workfile.edit')],
               ['label' => 'Work Types', 'icon' => 'bi-briefcase', 'href' => route('worktype.index'), 'active' => $req->routeIs('worktype.index', 'worktype.edit')],
               ['label' => 'Expense Types', 'icon' => 'bi-cash-stack', 'href' => route('expensetype.index'), 'active' => $req->routeIs('expensetype.index', 'expensetype.edit')],
+              ['label' => 'Paper Types', 'icon' => 'bi-card-checklist', 'href' => route('papertype.index'), 'active' => $req->routeIs('papertype.index', 'papertype.edit')],
           ],
       ],
       'reports' => [

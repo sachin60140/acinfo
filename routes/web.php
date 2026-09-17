@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\WorkFileApiController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CustomerPortalController;
 use App\Http\Controllers\ExpenseTypeController;
+use App\Http\Controllers\PaperTypeController;
 use App\Http\Controllers\PartyController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\UserController;
@@ -95,6 +96,14 @@ Route::group(['middleware' => 'admin'], function () {
     Route::match(['get', 'post'], 'admin/expense-types', [ExpenseTypeController::class, 'index'])->name('expensetype.index');
     Route::post('admin/expense-types/{id}/delete', [ExpenseTypeController::class, 'destroy'])->name('expensetype.delete');
     Route::match(['get', 'post'], 'admin/expense-types/{id}', [ExpenseTypeController::class, 'index'])->name('expensetype.edit');
+
+    /*
+     * The papers the office deals in, and which works need each. Same shape as
+     * the two lists above: the literal segment comes second.
+     */
+    Route::match(['get', 'post'], 'admin/paper-types', [PaperTypeController::class, 'index'])->name('papertype.index');
+    Route::post('admin/paper-types/{id}/delete', [PaperTypeController::class, 'destroy'])->whereNumber('id')->name('papertype.delete');
+    Route::match(['get', 'post'], 'admin/paper-types/{id}', [PaperTypeController::class, 'index'])->whereNumber('id')->name('papertype.edit');
 
     Route::match(['get', 'post'], 'admin/work-types/{id}', [WorkTypeController::class, 'index'])->name('worktype.edit');
 
