@@ -121,6 +121,86 @@ const works = reactive(
     }))
 );
 
+/*
+ * A price that was already agreed, moving.
+ *
+ * Changing one rewrites this file's entries on a statement somebody has already
+ * seen, so it says why — and the reason is the office's, never the customer's.
+ *
+ * Filling in a blank, or a nought, is agreeing a price for the first time and
+ * asks nothing: that is a file being priced, not a price being changed.
+ */
+const wasAgreed = (value) => value !== null && value !== undefined && value !== '' && Number(value) > 0;
+
+const moved = (was, now) => {
+    if (! wasAgreed(was)) {
+        return false;
+    }
+
+    const typed = String(now ?? '').trim();
+
+    return typed === '' || Math.abs(Number(was) - Number(typed)) > 0.005;
+};
+
+const priceRemark = ref('');
+
+const priceChanges = computed(() => {
+    const said = [];
+
+    if (props.isEdit && multiWork.value) {
+        works.forEach((work, index) => {
+            if (going(work)) {
+                return;
+            }
+
+            const was = props.items[index] ?? {};
+
+            if (moved(was.customer_amount, work.customer_amount)) {
+                said.push(`${work.work_type || 'work'} charged`);
+            }
+
+            if (moved(was.vendor_amount, work.vendor_amount)) {
+                said.push(`${work.work_type || 'work'} vendor rate`);
+            }
+        });
+    } else if (props.isEdit) {
+        if (moved(props.values.customer_amount, form.customer_amount)) {
+            said.push('the charge');
+        }
+
+        if (moved(props.values.vendor_amount, form.vendor_amount)) {
+            said.push('the vendor rate');
+        }
+    }
+
+    return said;
+});
+
+/*
+ * A refusal coming back from the server.
+ *
+ * The screen is filled from what was typed, so by then the price on it and the
+ * price it is being compared against are the same figure and nothing looks
+ * changed. Without this the box the refusal asks for would not be on the page.
+ */
+const serverAsked = computed(() => Boolean(props.errors.price_remark));
+
+const askingWhy = computed(() => priceChanges.value.length > 0 || serverAsked.value);
+
+const needsPriceReason = computed(() => askingWhy.value && priceRemark.value.trim() === '');
+
+/*
+ * The button bar is stuck to the bottom of the screen and the box is at the end
+ * of a long form, so the office types a new price, sees Save go dead, and has
+ * to go looking. This takes them there instead.
+ */
+const priceRemarkBox = ref(null);
+
+function askWhy() {
+    priceRemarkBox.value?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    priceRemarkBox.value?.focus();
+}
+
 const worksCharged = computed(() =>
     keeping.value.reduce((sum, work) => sum + (Number(work.customer_amount) || 0), 0)
         + newWorks.reduce((sum, work) => sum + (Number(work.amount) || 0), 0)
@@ -1258,13 +1338,52 @@ onMounted(() => {
                     </div>
                 </div>
 
+                <!-- Asked only when a price that was already agreed has moved,
+                     and kept for the office: see WorkFileModel::PRICE. -->
+                <div v-if="askingWhy" class="ui-card wf-why">
+                    <div class="ui-card__body">
+                        <h2 class="ui-card__title wf-effect__title">Why is the price changing?</h2>
+                        <p v-if="priceChanges.length" class="wf-why__what">
+                            You are changing <strong>{{ priceChanges.join(', ') }}</strong> on a file that was
+                            already priced.
+                        </p>
+                        <p v-else class="wf-why__what">
+                            You are changing a price on a file that was already priced.
+                        </p>
+                        <label class="ui-label" for="price_remark">
+                            Internal remark <span class="ui-label__req">*</span>
+                        </label>
+                        <input
+                            id="price_remark"
+                            ref="priceRemarkBox"
+                            type="text"
+                            name="price_remark"
+                            class="ui-input"
+                            :class="{ 'ui-input--invalid': needsPriceReason || errors.price_remark }"
+                            v-model="priceRemark"
+                            maxlength="200"
+                            placeholder="e.g. Vendor agreed a lower rate for this office">
+                        <div class="ui-hint" :class="{ 'ui-hint--error': errors.price_remark }">
+                            {{ errors.price_remark || 'Kept on this file\'s history for the office. The customer never sees it.' }}
+                        </div>
+                    </div>
+                </div>
+
                 <div class="ui-card__foot">
-                    <span class="ui-hint">
-                        Saving rewrites this file's entries on both statements.
+                    <span class="ui-hint" :class="{ 'ui-hint--error': needsPriceReason }">
+                        <template v-if="needsPriceReason">
+                            <button type="button" class="wf-why__jump" @click="askWhy">
+                                Say why the price is changing
+                            </button>
+                            before saving.
+                        </template>
+                        <template v-else>
+                            Saving rewrites this file's entries on both statements.
+                        </template>
                     </span>
                     <div class="wf-actions">
                         <a :href="indexUrl" class="ui-btn">Cancel</a>
-                        <button type="submit" class="ui-btn ui-btn--primary">
+                        <button type="submit" class="ui-btn ui-btn--primary" :disabled="needsPriceReason">
                             <i class="bi bi-check2-circle"></i> {{ isEdit ? 'Update File' : 'Receive File' }}
                         </button>
                     </div>
@@ -1436,6 +1555,10 @@ onMounted(() => {
                                     </template>
                                     <template v-else-if="entry.kind === 'note'">
                                         Note &mdash; <strong>{{ entry.to }}</strong>
+                                    </template>
+                                    <template v-else-if="entry.kind === 'price'">
+                                        <strong>Price changed</strong>
+                                        <span class="wf-tl__office">office only</span>
                                     </template>
                                     <template v-else-if="entry.kind === 'papers'">
                                         <strong>Papers checked</strong>
@@ -1877,6 +2000,43 @@ onMounted(() => {
 .wf-tl__head {
     color: var(--n-700);
     font-size: var(--t-sm);
+}
+
+/* Said on the entry itself, so nobody has to remember which of these the
+   customer can read. */
+.wf-tl__office {
+    background: var(--n-100);
+    border-radius: var(--r-sm);
+    color: var(--n-600);
+    font-size: var(--t-xs);
+    font-weight: 700;
+    margin-left: var(--s-2);
+    padding: 0.05rem 0.35rem;
+}
+
+/* The reason a price moved, asked beside the money it is about. Tinted, so it
+   reads as a question among the white cards rather than another box to fill. */
+.wf-why {
+    background: var(--warn-050);
+    border-color: var(--warn-500);
+}
+
+/* A sentence in the button bar, not a button-looking thing: it goes to the box
+   rather than doing anything to the file. */
+.wf-why__jump {
+    background: none;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+    text-decoration: underline;
+}
+
+.wf-why__what {
+    color: var(--n-700);
+    font-size: var(--t-sm);
+    margin: 0 0 var(--s-2);
 }
 
 /* ---- Where the papers are ---------------------------------------------- */

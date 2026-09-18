@@ -251,7 +251,7 @@ class WorkFileTest extends TestCase
     public function test_correcting_an_amount_rewrites_the_entry_rather_than_adding_one(): void
     {
         $file = $this->receive();
-        $this->update($file, ['customer_amount' => '6000']);
+        $this->update($file, ['customer_amount' => '6000', 'price_remark' => 'Charge agreed again at 6,000']);
 
         $this->assertSame(1, PartyLedgerModel::where('work_file_id', $file->id)->count());
         $this->assertSame(6000.0, PartyLedgerModel::currentBalance($this->customer->id));
@@ -272,7 +272,8 @@ class WorkFileTest extends TestCase
     public function test_taking_a_file_back_in_house_removes_the_vendor_entry(): void
     {
         $file = $this->receive(['vendor_id' => $this->vendor->id, 'vendor_amount' => '3500']);
-        $this->update($file);
+        // Taking the file back drops the rate that vendor had agreed, which says why.
+        $this->update($file, ['price_remark' => 'Brought back in house before the vendor started']);
 
         $this->assertSame(0.0, PartyLedgerModel::currentBalance($this->vendor->id));
         $this->assertSame(1, PartyLedgerModel::where('work_file_id', $file->id)->count());

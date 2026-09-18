@@ -2033,6 +2033,9 @@ class WorkFileController extends Controller
                 'items.*.work_type_id' => 'required|integer|exists:work_type,id',
                 'items.*.customer_amount' => 'required|numeric|gte:0|max:99999999',
                 'items.*.vendor_amount' => 'nullable|numeric|gte:0|max:99999999',
+                // Why a price that was already agreed has moved. Office-only;
+                // see the check below.
+                'price_remark' => 'nullable|string|max:200',
 
                 /*
                  * Work added to a file that already exists: papers turning up
@@ -2205,6 +2208,27 @@ class WorkFileController extends Controller
                 }
             }
 
+            /*
+             * A price that was agreed and has now moved says why.
+             *
+             * Changing one rewrites this file's entries on a statement somebody
+             * has already seen, and "why is this file 6,000 now" is asked weeks
+             * later, by which time nobody remembers. The reason is kept for the
+             * office: the customer's page shows what they are charged, never the
+             * reasoning behind it.
+             */
+            $priceChanges = $file->priceChanges(
+                $req->input('items', []),
+                $req->input('customer_amount'),
+                $req->input('vendor_amount')
+            );
+
+            if ($priceChanges && trim((string) $req->input('price_remark')) === '') {
+                return back()->withInput()->withErrors([
+                    'price_remark' => 'Say why the price is changing — it is kept for the office and the customer never sees it.',
+                ])->with('error', 'This changes a price that was already agreed: '.implode('; ', $priceChanges));
+            }
+
             // Both the credit and its reversal are tied to one vendor, so moving
             // the file elsewhere afterwards would drag that vendor's history onto
             // someone else's statement. Undo the return first.
@@ -2219,7 +2243,7 @@ class WorkFileController extends Controller
                 return back()->withInput()->with('error', 'Approval Done needs a screenshot of the approval. Attach one and save again.');
             }
 
-            DB::transaction(function () use ($file, $req, $removing) {
+            DB::transaction(function () use ($file, $req, $removing, $priceChanges) {
                 if ($req->hasFile('approval_screenshot')) {
                     $file->storeScreenshot($req->file('approval_screenshot'));
                 }
@@ -2483,6 +2507,17 @@ class WorkFileController extends Controller
                 // for corrections, and most of them leave the status alone.
                 if ($from !== $file->status) {
                     $file->logStatus($from, 'Changed on the file edit screen');
+                }
+
+                // What moved and why, on its own entry, under an event no
+                // customer page reads.
+                if ($priceChanges) {
+                    $file->logStatus(
+                        $file->status,
+                        implode('; ', $priceChanges).' — '.trim((string) $req->input('price_remark')),
+                        null,
+                        WorkFileModel::PRICE
+                    );
                 }
             });
 

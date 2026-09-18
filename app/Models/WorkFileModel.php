@@ -50,6 +50,18 @@ class WorkFileModel extends Model
      */
     public const PAPERS_OVERRIDE = 'papers_override';
 
+    /**
+     * A price that was already agreed, changed, and why.
+     *
+     * The office's own note. Why a rate moved is between the office and its
+     * vendor — or its own margin — and the customer's page shows what they are
+     * charged, never the reasoning behind it.
+     */
+    public const PRICE = 'price';
+
+    /** Events a customer never reads, whatever they say. */
+    public const OFFICE_ONLY_EVENTS = [self::PAPERS_OVERRIDE, self::PRICE];
+
     /** The files list's views of the paper checklist. */
     public const AWAITING_AUDIT = 'awaiting_audit';
 
@@ -810,6 +822,75 @@ class WorkFileModel extends Model
     }
 
     /**
+     * Prices on this file that the form would change, written out.
+     *
+     * Only figures already agreed count. Filling in a blank — or a nought,
+     * which is how this application says "not priced yet" — is agreeing a
+     * price for the first time, not changing one, and asking the office to
+     * justify it would make the box noise to be clicked past.
+     *
+     * @param  array<int|string, array<string, mixed>>  $corrections  items[<id>] from the form
+     * @return array<int, string>  "TR charged 5,000.00 → 6,000.00"
+     */
+    public function priceChanges(array $corrections, $customerAmount = null, $vendorAmount = null): array
+    {
+        $said = [];
+
+        $moved = function ($was, $now): bool {
+            // Not agreed yet: a blank or a nought is not a price to change.
+            if ($was === null || (float) $was <= 0) {
+                return false;
+            }
+
+            $now = ($now === '' || $now === null) ? null : (float) $now;
+
+            return $now === null || abs((float) $was - $now) > 0.005;
+        };
+
+        $written = fn ($value) => ($value === '' || $value === null)
+            ? 'nothing'
+            : number_format((float) $value, 2, '.', ',');
+
+        $items = $this->items()->with('workType')->get();
+
+        if ($corrections) {
+            foreach ($items as $item) {
+                $correction = $corrections[$item->id] ?? null;
+
+                if (! $correction) {
+                    continue;
+                }
+
+                $work = $item->workType?->name ?? 'work';
+
+                if ($moved($item->customer_amount, $correction['customer_amount'] ?? null)) {
+                    $said[] = $work.' charged '.$written($item->customer_amount).' → '.$written($correction['customer_amount'] ?? null);
+                }
+
+                if ($moved($item->vendor_amount, $correction['vendor_amount'] ?? null)) {
+                    $said[] = $work.' vendor rate '.$written($item->vendor_amount).' → '.$written($correction['vendor_amount'] ?? null);
+                }
+            }
+
+            return $said;
+        }
+
+        /*
+         * A file of one work is priced in the boxes above the table, which write
+         * through to it. The same two questions, asked of the folder.
+         */
+        if ($moved($this->customer_amount, $customerAmount)) {
+            $said[] = 'Charged '.$written($this->customer_amount).' → '.$written($customerAmount);
+        }
+
+        if ($moved($this->vendor_amount, $vendorAmount)) {
+            $said[] = 'Vendor rate '.$written($this->vendor_amount).' → '.$written($vendorAmount);
+        }
+
+        return $said;
+    }
+
+    /**
      * How long a file has been out, counted from the day it was given to the
      * vendor — the question the office asks of anything sitting at the RTO.
      *
@@ -868,8 +949,9 @@ class WorkFileModel extends Model
         foreach ($rows as $row) {
             $file = $row->work_file_id;
 
-            // Why the office sent a file out early is the office's business.
-            if ($row->event === self::PAPERS_OVERRIDE) {
+            // Why the office sent a file out early, or moved a price, is the
+            // office's business.
+            if (in_array($row->event, self::OFFICE_ONLY_EVENTS, true)) {
                 continue;
             }
 

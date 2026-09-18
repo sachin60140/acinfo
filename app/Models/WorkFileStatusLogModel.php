@@ -53,6 +53,7 @@ class WorkFileStatusLogModel extends Model
             $this->isHandover() => 'handover',
             $this->isHandoverUndone() => 'handover_undone',
             $this->event === WorkFileModel::PAPERS => 'papers',
+            $this->event === WorkFileModel::PRICE => 'price',
             $this->isNoteOnly() => 'note',
             default => 'move',
         };

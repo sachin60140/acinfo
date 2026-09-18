@@ -128,6 +128,8 @@ class WorkFileItemTest extends TestCase
             'customer_id' => $this->customer->id,
             'customer_amount' => '7500',
             'status' => 'under_verification',
+            // The charge moves with the work type, so it says why: PriceRemarkTest.
+            'price_remark' => 'Retyped as the other work, at its rate',
         ])->assertRedirect();
 
         $item = $file->items()->first();
@@ -515,6 +517,8 @@ class WorkFileItemTest extends TestCase
                 $first->id => ['work_type_id' => $first->work_type_id, 'customer_amount' => '2500'],
                 $second->id => ['work_type_id' => $second->work_type_id, 'customer_amount' => '3000'],
             ],
+            // A charge that was agreed and is being corrected says why: PriceRemarkTest.
+            'price_remark' => 'Transfer was typed at 2,000 and agreed at 2,500',
         ])->assertRedirect();
 
         $this->assertEquals(2500, $first->refresh()->customer_amount, 'the work that was wrong');
