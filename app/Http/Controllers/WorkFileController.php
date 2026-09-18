@@ -202,6 +202,12 @@ class WorkFileController extends Controller
                 'edit_url' => route('workfile.edit', $f->id),
                 'registration_no' => $f->registration_no,
                 'received' => date('d-m-Y', strtotime($f->received_date)),
+
+                // The day it went to the vendor, and how long it has been there.
+                'dispatched' => $f->vendor_date ? date('d-m-Y', strtotime($f->vendor_date)) : null,
+                // Sorted on rather than shown, for the reason 'received' is.
+                'dispatched_raw' => $f->vendor_date ? date('Y-m-d', strtotime($f->vendor_date)) : null,
+                'days_out' => WorkFileModel::daysOutText($f->vendor_date, $f->status),
                 // Sorted on rather than shown: dd-mm-yyyy compared as text orders
                 // by day of the month, putting 02-03 above 01-12.
                 'received_raw' => $f->received_date,
@@ -326,6 +332,13 @@ class WorkFileController extends Controller
                 // Shown dd-mm-yyyy, sorted on the raw Y-m-d each row also carries,
                 // so oldest-first and newest-first both mean what they say.
                 ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_raw'],
+                /*
+                 * When it went to the vendor, with how long it has been there
+                 * beneath it. Newest first on the first click: what a reader
+                 * asks of a dispatch date is what went out lately.
+                 */
+                ['key' => 'dispatched', 'label' => 'Dispatched', 'sortBy' => 'dispatched_raw',
+                    'sortDesc' => true, 'sub' => 'days_out'],
                 ['key' => 'work_type', 'label' => 'Work Type'],
                 ['key' => 'description', 'label' => 'Details'],
                 // A party statement is opened to be read against this list, and
@@ -1504,6 +1517,8 @@ class WorkFileController extends Controller
                 'file_no' => $file->file_no,
                 'vendor' => $file->vendor?->name,
                 'vendor_date' => $file->vendor_date ? date('d-m-Y', strtotime($file->vendor_date)) : null,
+                // How long the vendor has had it, which is why this list is read.
+                'days_out' => WorkFileModel::daysOutText($file->vendor_date, $file->status),
                 'registration_no' => $file->registration_no,
                 // Every work on the file, not the first of them: a folder
                 // for a transfer and a hypothecation addition is both.
@@ -1841,6 +1856,9 @@ class WorkFileController extends Controller
                 'id' => $file->id,
                 'file_no' => $file->file_no,
                 'received_date' => date('d-m-Y', strtotime($file->received_date)),
+                // When it went to the vendor, and how long it has been there.
+                'dispatched' => $file->vendor_date ? date('d-m-Y', strtotime($file->vendor_date)) : null,
+                'days_out' => WorkFileModel::daysOutText($file->vendor_date, $file->status),
                 'registration_no' => $file->registration_no,
                 'description' => $file->description,
                 'customer' => $file->customer?->name,

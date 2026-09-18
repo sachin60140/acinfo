@@ -416,6 +416,11 @@ class ReportController extends Controller
                     // text orders by day of the month, putting the 2nd of March
                     // above the 1st of December.
                     'received_sort' => date('Y-m-d', strtotime($row->received_date)),
+
+                    // The day it went to the vendor, and how long it has been there.
+                    'dispatched' => $row->vendor_date ? date('d-m-Y', strtotime($row->vendor_date)) : null,
+                    'dispatched_sort' => $row->vendor_date ? date('Y-m-d', strtotime($row->vendor_date)) : null,
+                    'days_out' => WorkFileModel::daysOutText($row->vendor_date, $row->status),
                     'work_type' => $row->work_type,
                     'description' => $row->description,
                     'counterparty' => $partyType === 'vendor' ? $row->customer_name : ($row->vendor_name ?: 'In-house'),
@@ -523,6 +528,10 @@ class ReportController extends Controller
                 // Sorted on the ISO date carried alongside it, so the order is
                 // chronological rather than by day of the month.
                 ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_sort'],
+                // When it went out, and how long it has been out. Newest first
+                // on the first click; see the files list.
+                ['key' => 'dispatched', 'label' => 'Dispatched', 'sortBy' => 'dispatched_sort',
+                    'sortDesc' => true, 'sub' => 'days_out'],
                 ['key' => 'work_type', 'label' => 'Work Type', 'note' => 'works_note'],
                 ['key' => 'description', 'label' => 'Details'],
                 ['key' => 'counterparty', 'label' => $counterpartyLabel],

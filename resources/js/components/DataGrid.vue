@@ -74,6 +74,9 @@ const props = defineProps({
      * type: text | money | balance | count | badge | link
      * sortBy   sort this column on another field's value — a date shown as
      *          dd-mm-yyyy sorts by day of the month unless pointed at the ISO one
+     * sortDesc  the first click sorts this column downwards. For a date whose
+     *          question is "what happened lately": ascending would open on the
+     *          oldest row, which nobody asked for
      * note     a second quiet line of plain text, above sub — for a cell that
      *          has something to say as well as something to open
      * subPreview  the sub link is a document rather than a page, so it opens over
@@ -311,7 +314,9 @@ function toggleSort(column) {
         sortAsc.value = !sortAsc.value;
     } else {
         sortKey.value = column.key;
-        sortAsc.value = true;
+        // Most columns open upwards: A before B, 1 before 2. A date column that
+        // asks "what lately" opens the other way — see sortDesc above.
+        sortAsc.value = ! column.sortDesc;
     }
 
     reordered.value = true;

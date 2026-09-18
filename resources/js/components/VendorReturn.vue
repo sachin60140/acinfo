@@ -294,7 +294,12 @@ const summary = computed(() => {
 
                                     <td data-label="Vendor">{{ row.vendor || '—' }}</td>
 
-                                    <td data-label="Given On">{{ row.vendor_date || '—' }}</td>
+                                    <td data-label="Given On">
+                                        {{ row.vendor_date || '—' }}
+                                        <!-- The reason this list is read: which files
+                                             the vendor has been sitting on. -->
+                                        <div v-if="row.days_out" class="ui-sub">{{ row.days_out }} out</div>
+                                    </td>
 
                                     <td data-label="Work Type">{{ row.work_type || '—' }}</td>
 

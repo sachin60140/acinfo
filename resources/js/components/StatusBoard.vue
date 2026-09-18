@@ -281,6 +281,9 @@ function onScreenshot(row, event) {
                                         </span>
                                         <span class="board__meta">{{ row.file.customer }}</span>
                                         <span class="board__meta">&rarr; {{ row.file.vendor || 'In-house' }}</span>
+                                        <span v-if="row.file.dispatched" class="board__meta">
+                                            Dispatched {{ row.file.dispatched }}<template v-if="row.file.days_out"> · {{ row.file.days_out }} out</template>
+                                        </span>
                                         <span class="board__meta board__meta--end">{{ row.file.received_date }}</span>
                                     </div>
                                     <!-- Work that is finished is off the list below,

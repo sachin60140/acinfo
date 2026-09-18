@@ -809,6 +809,39 @@ class WorkFileModel extends Model
         $this->logStatus($this->status, $remark, null, self::HANDOVER_UNDONE);
     }
 
+    /**
+     * How long a file has been out, counted from the day it was given to the
+     * vendor — the question the office asks of anything sitting at the RTO.
+     *
+     * Counted only while the work is still out. On a file that is approved,
+     * returned or cancelled the number would keep climbing after the thing it
+     * measured had finished, which is not an age but a mistake waiting to be
+     * read as one.
+     */
+    public static function daysOut($vendorDate, ?string $status = null): ?int
+    {
+        if (! $vendorDate || in_array($status, [self::APPROVED, self::RETURNED, self::CANCELLED], true)) {
+            return null;
+        }
+
+        $days = (int) floor((strtotime('today') - strtotime(date('Y-m-d', strtotime($vendorDate)))) / 86400);
+
+        return max(0, $days);
+    }
+
+    /** The same, said: "6 days", "1 day", "today". */
+    public static function daysOutText($vendorDate, ?string $status = null): ?string
+    {
+        $days = self::daysOut($vendorDate, $status);
+
+        return match (true) {
+            $days === null => null,
+            $days === 0 => 'today',
+            $days === 1 => '1 day',
+            default => $days.' days',
+        };
+    }
+
     /** "Papers handed over 16-09-2026", or null. */
     public static function handoverText($handedOverOn): ?string
     {
@@ -1304,8 +1337,13 @@ class WorkFileModel extends Model
              * their way there, so they came back from the vendor first.
              */
             ->whereNotIn('status', [self::CANCELLED, self::RETURNED])
-            ->orderBy('vendor_date', 'asc')
-            ->orderBy('id', 'asc')
+            /*
+             * Newest out first, at the office's request. It was the oldest —
+             * the one the vendor has had longest — and the days beside each
+             * date now say that outright, which is what the order stood for.
+             */
+            ->orderBy('vendor_date', 'desc')
+            ->orderBy('id', 'desc')
             ->get();
     }
 
@@ -2595,6 +2633,8 @@ class WorkFileModel extends Model
                 'work_file.vendor_amount',
                 'work_file.vendor_returned_on',
                 'work_file.vendor_returned_amount',
+                // The day it went out, for the days-out figure beside it.
+                'work_file.vendor_date',
                 self::workLabelColumn(),
                 self::unpricedWorksColumn(),
                 self::unbilledWorksColumn(),
@@ -3005,6 +3045,8 @@ class WorkFileModel extends Model
                 'work_file.vendor_id',
                 'work_file.vendor_amount',
                 'work_file.vendor_returned_on',
+                // The day it went out, and what the days since are counted from.
+                'work_file.vendor_date',
                 'work_file.returned_amount',
                 'work_file.vendor_returned_amount',
                 'work_file.handed_over_on',
