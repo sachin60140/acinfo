@@ -142,6 +142,101 @@ class PartyLedgerModel extends Model
     }
 
     /**
+     * What is still owed, file by file.
+     *
+     * Money arrives against the account, not against a file: a customer pays
+     * 40,000 on a Tuesday for whatever is outstanding, and nothing on that
+     * receipt says which files it covers. So the oldest charge is treated as
+     * settled first, which is how the office reads its own statement and the
+     * only rule that does not need a conversation to apply.
+     *
+     * Two things are exact rather than in that queue. A refund sits against the
+     * file it belongs to and reduces that file and no other. And a charge
+     * somebody typed straight into the ledger, belonging to no file, still
+     * takes its turn in the queue — leaving it out would make every file look
+     * better paid than it is.
+     *
+     * @param  array<int, int>  $partyIds
+     * @return array<int, array<int, float>>  party id => [file id => still owed]
+     */
+    public static function outstandingByFile(array $partyIds): array
+    {
+        if (! $partyIds) {
+            return [];
+        }
+
+        $entries = DB::table('party_ledger')
+            ->whereIn('party_id', $partyIds)
+            ->orderBy('txn_date')
+            ->orderBy('id')
+            ->get(['party_id', 'work_file_id', 'file_role', 'entry_type', 'amount']);
+
+        $owed = [];
+
+        foreach ($entries->groupBy('party_id') as $partyId => $rows) {
+            $charges = [];
+            $paid = 0.0;
+
+            foreach ($rows as $row) {
+                $amount = (float) $row->amount;
+
+                if ($row->entry_type === 'debit') {
+                    // Keyed by position, not by file: one file can carry more
+                    // than one charge, and a charge belonging to no file still
+                    // has to hold its place in the queue.
+                    $charges[] = ['file_id' => $row->work_file_id ? (int) $row->work_file_id : null, 'left' => $amount];
+
+                    continue;
+                }
+
+                if ($row->work_file_id) {
+                    // A refund knows its file. Against that file only, and only
+                    // as far as what that file was charged.
+                    foreach ($charges as $i => $charge) {
+                        if ($charge['file_id'] === (int) $row->work_file_id && $charge['left'] > 0) {
+                            $taken = min($charge['left'], $amount);
+                            $charges[$i]['left'] -= $taken;
+                            $amount -= $taken;
+
+                            if ($amount <= 0) {
+                                break;
+                            }
+                        }
+                    }
+
+                    // Anything left of it is money back on account like any other.
+                    $paid += max(0, $amount);
+
+                    continue;
+                }
+
+                $paid += $amount;
+            }
+
+            // Oldest first, which is the order they were read in.
+            foreach ($charges as $i => $charge) {
+                if ($paid <= 0) {
+                    break;
+                }
+
+                $taken = min($charge['left'], $paid);
+                $charges[$i]['left'] -= $taken;
+                $paid -= $taken;
+            }
+
+            foreach ($charges as $charge) {
+                if ($charge['file_id'] === null || $charge['left'] <= 0.005) {
+                    continue;
+                }
+
+                $owed[(int) $partyId][$charge['file_id']] =
+                    round(($owed[(int) $partyId][$charge['file_id']] ?? 0) + $charge['left'], 2);
+            }
+        }
+
+        return $owed;
+    }
+    /**
      * Everything a statement page needs: the rows, the balance brought forward,
      * period totals and the closing balance.
      */

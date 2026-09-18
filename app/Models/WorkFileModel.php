@@ -911,6 +911,94 @@ class WorkFileModel extends Model
     }
 
     /**
+     * Files that are done and not paid for, oldest first.
+     *
+     * The rows behind a customer's outstanding balance. Which files a payment
+     * covered is nowhere on the receipt, so PartyLedgerModel::outstandingByFile
+     * settles the oldest charge first and this reads the answer back against
+     * the files themselves.
+     *
+     * Finished work only unless asked for everything: a file received
+     * yesterday is not money nobody collected, it is work in progress. A
+     * cancelled file is charged nothing and never appears.
+     */
+    public static function uncollected($customerId = null, bool $includeRunning = false)
+    {
+        $customers = PartyModel::where('party_type', 'customer')
+            ->when($customerId, fn ($q) => $q->where('id', $customerId))
+            ->pluck('id')
+            ->all();
+
+        $owed = PartyLedgerModel::outstandingByFile($customers);
+
+        $fileIds = [];
+
+        foreach ($owed as $files) {
+            $fileIds = array_merge($fileIds, array_keys($files));
+        }
+
+        if (! $fileIds) {
+            return collect();
+        }
+
+        $files = DB::table('work_file')
+            ->join('party as customer', 'customer.id', '=', 'work_file.customer_id')
+            ->whereIn('work_file.id', $fileIds)
+            ->when(! $includeRunning, fn ($q) => $q->whereIn('work_file.status', [self::APPROVED, self::RETURNED]))
+            ->select(
+                'work_file.id',
+                'work_file.file_no',
+                'work_file.registration_no',
+                'work_file.status',
+                'work_file.customer_amount',
+                'work_file.received_date',
+                'work_file.handed_over_on',
+                DB::raw(self::FINISHED_ON.' as finished_on'),
+                'customer.id as customer_id',
+                'customer.name as customer_name'
+            )
+            ->get();
+
+        return $files->map(function ($file) use ($owed) {
+            $outstanding = (float) ($owed[$file->customer_id][$file->id] ?? 0);
+
+            /*
+             * Counted from the day the work finished, which is when the office
+             * can fairly ask to be paid. Work still running is counted from the
+             * day the papers came in, because nothing else has happened yet.
+             */
+            $since = $file->finished_on ?: $file->received_date;
+            $days = max(0, (int) floor((strtotime('today') - strtotime(date('Y-m-d', strtotime($since)))) / 86400));
+
+            return [
+                'id' => (int) $file->id,
+                'file_no' => $file->file_no,
+                'edit_url' => route('workfile.edit', $file->id),
+                'registration_no' => $file->registration_no,
+                'customer' => $file->customer_name,
+                'customer_id' => (int) $file->customer_id,
+                'customer_url' => route('party.statement', $file->customer_id),
+                'finished' => $file->finished_on ? date('d-m-Y', strtotime($file->finished_on)) : null,
+                // Sorted on rather than shown, for the reason every date is.
+                'finished_raw' => $file->finished_on ? date('Y-m-d', strtotime($file->finished_on)) : null,
+                'days' => $days,
+                'days_text' => $days === 0 ? 'today' : ($days === 1 ? '1 day' : $days.' days'),
+                'handed_over' => $file->handed_over_on ? date('d-m-Y', strtotime($file->handed_over_on)) : 'With the office',
+                'handed_over_raw' => $file->handed_over_on ? date('Y-m-d', strtotime($file->handed_over_on)) : '',
+                'charged' => (float) $file->customer_amount,
+                'outstanding' => $outstanding,
+                // A file half paid for reads as unpaid unless the row says so.
+                'part_paid' => $outstanding < (float) $file->customer_amount - 0.005
+                    ? 'part paid'
+                    : null,
+                'status' => $file->status,
+            ];
+        })
+            // Longest owed first: the list is read to decide who to ring.
+            ->sortByDesc('days')
+            ->values();
+    }
+    /**
      * Each vendor, and how long their work takes.
      *
      * The office hands a batch of files to whoever it trusts to be quick, and

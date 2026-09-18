@@ -695,4 +695,76 @@ class ReportController extends Controller
             'base' => route('report.vendors'),
         ])->toResponse($req);
     }
+    /**
+     * Work that is done and not paid for.
+     *
+     * The ledger says what each customer owes in one figure. What it does not
+     * say is which jobs that figure is made of, and "you owe 62,000" is an
+     * argument where "these four files, the oldest from July" is a
+     * conversation. Money arrives against the account rather than against a
+     * file, so the oldest charge is treated as settled first — said on the
+     * screen, because it is a convention and not a fact.
+     *
+     * Finished work only, unless asked otherwise: a file that came in
+     * yesterday is not money nobody collected, it is work in progress.
+     */
+    public function uncollected(Request $req)
+    {
+        $req->validate([
+            'party_id' => 'nullable|integer|exists:party,id',
+            'show' => ['nullable', Rule::in(['finished', 'all'])],
+        ]);
+
+        $partyId = $req->query('party_id');
+        $show = $req->query('show', 'finished');
+
+        $rows = WorkFileModel::uncollected($partyId, $show === 'all');
+
+        $totals = [
+            'files' => $rows->count(),
+            'customers' => $rows->pluck('customer_id')->unique()->count(),
+            'outstanding' => (float) $rows->sum('outstanding'),
+            'oldest' => (int) $rows->max('days'),
+        ];
+
+        $props = [
+            'title' => 'Not Yet Collected'.($show === 'all' ? ' — every file with something owing' : ''),
+            'perPage' => 100,
+            'emptyText' => $show === 'all'
+                ? 'Nothing is owed on any file. Every charge on the ledger has been paid.'
+                : 'Nothing finished is waiting to be paid for.',
+            'totals' => ['charged' => 'sum', 'outstanding' => 'sum'],
+            'columns' => [
+                ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
+                ['key' => 'registration_no', 'label' => 'Vehicle'],
+                ['key' => 'customer', 'label' => 'Customer', 'type' => 'link', 'linkTo' => 'customer_url'],
+                // The day the work finished, and how long the money has been
+                // outstanding since — sorted on the ISO date beside it.
+                ['key' => 'finished', 'label' => 'Finished', 'sortBy' => 'finished_raw', 'sortDesc' => true,
+                    'sub' => 'days_text'],
+                /*
+                 * Papers already handed back are the ones to chase first: the
+                 * customer has what they came for and the office has nothing
+                 * left to hold.
+                 */
+                ['key' => 'handed_over', 'label' => 'Papers', 'sortBy' => 'handed_over_raw'],
+                ['key' => 'charged', 'label' => 'Charged', 'type' => 'money'],
+                ['key' => 'outstanding', 'label' => 'Outstanding', 'type' => 'money', 'class' => 'dr fw-bold',
+                    'sub' => 'part_paid'],
+            ],
+            'rows' => $rows->values(),
+        ];
+
+        return Screen::make('admin.reports.uncollected', 'vue-uncollected-report', $props, [
+            'show' => $show,
+            'partyId' => $partyId ? (int) $partyId : null,
+            'parties' => PartyModel::selectList('customer', $partyId),
+            'totals' => $totals,
+            'base' => route('report.uncollected'),
+            'showUrls' => [
+                'finished' => route('report.uncollected', array_filter(['party_id' => $partyId])),
+                'all' => route('report.uncollected', array_filter(['party_id' => $partyId, 'show' => 'all'])),
+            ],
+        ])->toResponse($req);
+    }
 }

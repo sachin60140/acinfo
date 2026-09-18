@@ -87,6 +87,7 @@ export const components = {
     'vue-profit-report': DataGrid,
     'vue-expense-report': DataGrid,
     'vue-vendor-report': DataGrid,
+    'vue-uncollected-report': DataGrid,
     'vue-expense-types': DataGrid,
     'vue-paper-types': DataGrid,
     'vue-client-list': DataGrid,
