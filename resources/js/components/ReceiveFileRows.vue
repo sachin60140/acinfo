@@ -36,6 +36,9 @@ function blankRow() {
         registration_no: '',
         description: '',
         works: [blankWork()],
+        // Ticked when the same work really is coming in again on purpose. The
+        // server reads it; see the check in WorkFileController::receive().
+        duplicate_ok: false,
         // Lookup state, never submitted.
         history: null,
         looking: false,
@@ -282,6 +285,43 @@ async function lookup(row) {
     }
 }
 
+/*
+ * The same work, already here.
+ *
+ * The counter's mistake worth catching: one envelope entered twice, which
+ * charges the customer twice and sends two files for one job. So a work being
+ * typed is matched against what the vehicle already has.
+ *
+ * Work still in hand is the warning. Work finished long ago is not — a second
+ * transfer on the same vehicle years later is ordinary, and a screen that cried
+ * duplicate at it would be ignored the third time it did.
+ */
+function clashesFor(row, open) {
+    const wanted = new Set(row.works.map((work) => Number(work.work_type_id)).filter(Boolean));
+    const files = (row.history && row.history.files) || [];
+    const found = [];
+
+    for (const past of files) {
+        if (Boolean(past.open) !== open) {
+            continue;
+        }
+
+        for (const work of past.works || []) {
+            if (wanted.has(Number(work.work_type_id))) {
+                found.push({ ...work, file_no: past.file_no, status_label: past.status_label, received_date: past.received_date });
+            }
+        }
+    }
+
+    return found;
+}
+
+const inHand = (row) => clashesFor(row, true);
+const doneBefore = (row) => clashesFor(row, false);
+
+/** Rows with work already in hand that nobody has said is deliberate. */
+const unconfirmed = computed(() => rows.filter((row) => inHand(row).length && ! row.duplicate_ok));
+
 // Typing is debounced so the lookup runs when the number settles, not on every
 // keystroke.
 const timers = new WeakMap();
@@ -484,6 +524,42 @@ watch(total, (value) => {
                             Could not check this registration number. The file can still be saved.
                         </div>
 
+                        <!-- The same work, already open for this vehicle. Said
+                             before the price is typed, because this is the file
+                             that should not be written at all. -->
+                        <div v-if="inHand(row).length" class="rcv-clash">
+                            <div class="rcv-clash__head">
+                                <i class="bi bi-exclamation-octagon-fill"></i>
+                                <span>
+                                    <strong>{{ row.history.registration_no }}</strong> already has this work in hand.
+                                </span>
+                            </div>
+                            <ul class="rcv-clash__list">
+                                <li v-for="clash in inHand(row)" :key="`${clash.file_no}-${clash.work_type_id}`">
+                                    <strong>{{ clash.work_type }}</strong> on {{ clash.file_no }}
+                                    ({{ clash.status_label }}, received {{ clash.received_date }})
+                                </li>
+                            </ul>
+                            <label class="rcv-clash__ok">
+                                <input type="checkbox" v-model="row.duplicate_ok">
+                                Take it in anyway — this is a second file on purpose
+                            </label>
+                            <!-- Only sent when ticked: an unticked box posts nothing,
+                                 and the server refuses the file without it. -->
+                            <input v-if="row.duplicate_ok" type="hidden" :name="`rows[${index}][duplicate_ok]`" value="1">
+                        </div>
+
+                        <!-- Done and finished before. Worth saying, never worth
+                             stopping: the same work again is ordinary. -->
+                        <div v-else-if="doneBefore(row).length" class="rcv-again">
+                            <i class="bi bi-arrow-repeat"></i>
+                            <span>
+                                This vehicle has had
+                                <strong>{{ doneBefore(row).map((c) => c.work_type).join(', ') }}</strong>
+                                done before ({{ doneBefore(row).map((c) => c.file_no).join(', ') }}).
+                            </span>
+                        </div>
+
                         <div v-else-if="row.history && row.history.count === 0" class="rcv-past rcv-past--new">
                             <i class="bi bi-patch-check"></i>
                             No earlier files against <strong>{{ row.history.registration_no }}</strong> — this is its first.
@@ -541,6 +617,10 @@ watch(total, (value) => {
             <div class="ui-card__foot" :class="{ 'ui-card__foot--dirty': total > 0 && ! unpriced }">
                 <div class="rcv-foot">
                     <span class="ui-hint" :class="{ 'rcv-foot__wait': summary.tone === 'wait' }">{{ summary.text }}</span>
+                    <span v-if="unconfirmed.length" class="rcv-foot__warn">
+                        {{ unconfirmed.length === 1 ? 'A file is' : `${unconfirmed.length} files are` }}
+                        already in hand for this vehicle and work. Tick to take it in anyway.
+                    </span>
                     <span class="rcv-foot__total">
                         <span class="rcv-foot__label">Total debit to customer</span>
                         <span class="ui-money ui-money--dr rcv-foot__value">{{ money(total) }}</span>
@@ -549,7 +629,7 @@ watch(total, (value) => {
 
                 <div class="rcv-actions">
                     <a v-if="cancelUrl" :href="cancelUrl" class="ui-btn">Cancel</a>
-                    <button type="submit" class="ui-btn ui-btn--primary">
+                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="unconfirmed.length > 0">
                         <i class="bi bi-check2-circle"></i> Receive Files
                     </button>
                 </div>
@@ -966,6 +1046,63 @@ watch(total, (value) => {
     align-items: baseline;
     display: flex;
     gap: var(--s-3);
+}
+
+/* The same work already open for this vehicle: the one thing on this screen
+   that should stop a hand mid-air, so it is the loudest thing on the card. */
+.rcv-clash {
+    background: var(--cr-050);
+    border: 1px solid var(--cr-600);
+    border-radius: var(--r-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    padding: var(--s-3);
+}
+
+.rcv-clash__head {
+    align-items: baseline;
+    color: var(--cr-700);
+    display: flex;
+    font-weight: 700;
+    gap: var(--s-2);
+}
+
+.rcv-clash__list {
+    color: var(--ink-800);
+    font-size: var(--t-sm);
+    margin: 0;
+    padding-left: 1.6rem;
+}
+
+.rcv-clash__ok {
+    align-items: center;
+    color: var(--ink-800);
+    cursor: pointer;
+    display: flex;
+    font-size: var(--t-sm);
+    font-weight: 600;
+    gap: var(--s-2);
+    margin: 0;
+}
+
+/* Done before and finished. Said once, quietly: the same work again is ordinary. */
+.rcv-again {
+    align-items: baseline;
+    background: var(--n-050);
+    border-left: 3px solid var(--n-300);
+    border-radius: var(--r-sm);
+    color: var(--n-700);
+    display: flex;
+    font-size: var(--t-sm);
+    gap: var(--s-2);
+    padding: var(--s-2) var(--s-3);
+}
+
+.rcv-foot__warn {
+    color: var(--cr-700);
+    font-size: var(--t-sm);
+    font-weight: 600;
 }
 
 .rcv-foot__label {

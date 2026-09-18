@@ -96,6 +96,19 @@ class WorkFileApiController extends Controller
                     'vendor' => $file->vendor_name,
                     'status' => $file->status,
                     'status_label' => WorkFileModel::STATUSES[$file->status] ?? $file->status,
+                    /*
+                     * The works on it, so the screen can say "this vehicle
+                     * already has a transfer in hand" rather than only "it has
+                     * been here before". The folder's own work type names one
+                     * of them and hides the rest.
+                     */
+                    'works' => collect($file->works ?? [])->map(fn ($work) => [
+                        'work_type_id' => (int) $work->id,
+                        'work_type' => $work->name,
+                    ])->values(),
+                    // Whether it is still in hand, which is what makes the same
+                    // work arriving again a file entered twice.
+                    'open' => (bool) ($file->open ?? false),
                     'status_badge' => WorkFileModel::STATUS_BADGES[$file->status] ?? 'bg-secondary',
                     // What was charged, and what it actually came to once any
                     // return is taken into account — the second is the one to

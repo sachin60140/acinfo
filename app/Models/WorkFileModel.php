@@ -2127,10 +2127,73 @@ class WorkFileModel extends Model
             $query->where('work_file.id', '!=', $excludeId);
         }
 
-        return $query->orderBy('work_file.received_date', 'desc')
+        $files = $query->orderBy('work_file.received_date', 'desc')
             ->orderBy('work_file.id', 'desc')
             ->limit(25)
             ->get();
+
+        /*
+         * The works on each, rather than the folder's own type.
+         *
+         * A folder holding a transfer and a hypothecation addition has one
+         * work_type_id and two works, so "has this vehicle had a transfer
+         * before" cannot be answered from the column joined above.
+         */
+        $works = $files->isEmpty() ? collect() : DB::table('work_file_item')
+            ->join('work_type', 'work_type.id', '=', 'work_file_item.work_type_id')
+            ->whereIn('work_file_item.work_file_id', $files->pluck('id')->all())
+            ->where('work_file_item.status', '<>', self::CANCELLED)
+            ->orderBy('work_file_item.id')
+            ->get(['work_file_item.work_file_id', 'work_file_item.status', 'work_type.id', 'work_type.name'])
+            ->groupBy('work_file_id');
+
+        foreach ($files as $file) {
+            $file->works = $works->get($file->id, collect())->values();
+            // Still in hand: the state that makes the same work arriving again
+            // a file entered twice rather than a job done again.
+            $file->open = ! in_array($file->status, [self::APPROVED, self::RETURNED, self::CANCELLED], true);
+        }
+
+        return $files;
+    }
+
+    /**
+     * Work already in hand for this vehicle, of the kinds about to be taken in.
+     *
+     * The counter's mistake this catches: the same papers entered twice, which
+     * charges the customer twice and sends two files for one job. A vehicle
+     * whose transfer was done and finished last year is not this — that is the
+     * same work again, which is ordinary — so only unfinished work counts.
+     *
+     * @param  array<int, int>  $workTypeIds
+     * @return array<int, object>  one per clash: work_type_id, work_type, file_no, status
+     */
+    public static function workAlreadyInHand(?string $registrationNo, array $workTypeIds): array
+    {
+        $normalised = self::normaliseRegistration($registrationNo);
+        $workTypeIds = array_values(array_filter(array_map('intval', $workTypeIds)));
+
+        if ($normalised === '' || ! $workTypeIds) {
+            return [];
+        }
+
+        return DB::table('work_file_item')
+            ->join('work_file', 'work_file.id', '=', 'work_file_item.work_file_id')
+            ->join('work_type', 'work_type.id', '=', 'work_file_item.work_type_id')
+            ->where('work_file.registration_no', $normalised)
+            ->whereIn('work_file_item.work_type_id', $workTypeIds)
+            // Neither the file nor the work itself is finished with.
+            ->whereNotIn('work_file.status', [self::APPROVED, self::RETURNED, self::CANCELLED])
+            ->whereNotIn('work_file_item.status', [self::APPROVED, self::RETURNED, self::CANCELLED])
+            ->orderBy('work_file.id')
+            ->get([
+                'work_file.id as file_id',
+                'work_file.file_no',
+                'work_file.status',
+                'work_type.id as work_type_id',
+                'work_type.name as work_type',
+            ])
+            ->all();
     }
 
     /**

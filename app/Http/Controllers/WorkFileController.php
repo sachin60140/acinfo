@@ -461,6 +461,9 @@ class WorkFileController extends Controller
                 'rows.*.works' => 'required|array|min:1|max:10',
                 'rows.*.works.*.work_type_id' => 'required|integer|exists:work_type,id',
                 'rows.*.works.*.amount' => 'required|numeric|gte:0|max:99999999',
+                // Ticked by the operator when the same work really is coming in
+                // again on purpose. See the check below.
+                'rows.*.duplicate_ok' => 'nullable|boolean',
                 'remarks' => 'nullable|string|max:255',
             ], [
                 'rows.required' => 'Add at least one file.',
@@ -494,6 +497,73 @@ class WorkFileController extends Controller
                 return back()->withInput()->with(
                     'error',
                     'A file cannot be received for the same work twice. Check: '.$repeated->implode(', ')
+                );
+            }
+
+            /*
+             * The same vehicle and the same work, twice in one batch. Always a
+             * slip: two envelopes for one job, charged twice, sent twice.
+             */
+            $seen = [];
+            $twiceHere = [];
+
+            foreach ($req->input('rows') as $index => $row) {
+                $plate = WorkFileModel::normaliseRegistration($row['registration_no'] ?? null);
+
+                if ($plate === '') {
+                    continue;
+                }
+
+                foreach ($row['works'] ?? [] as $work) {
+                    $key = $plate.'|'.($work['work_type_id'] ?? '');
+
+                    if (isset($seen[$key])) {
+                        $twiceHere[] = $plate.' ('.(WorkTypeModel::whereKey($work['work_type_id'])->value('name') ?? 'work')
+                            .') on files '.($seen[$key] + 1).' and '.($index + 1);
+                    }
+
+                    $seen[$key] ??= $index;
+                }
+            }
+
+            if ($twiceHere) {
+                return back()->withInput()->with(
+                    'error',
+                    'The same vehicle and work are on this page twice: '.implode('; ', array_unique($twiceHere))
+                );
+            }
+
+            /*
+             * And the same work already in hand from before — the counter's
+             * real mistake, which is the same papers entered a second time.
+             * Refused unless the row says it is deliberate: work finished long
+             * ago does not count, so what is left is a file already open for
+             * this vehicle and this job.
+             */
+            $inHand = [];
+
+            foreach ($req->input('rows') as $index => $row) {
+                if (filter_var($row['duplicate_ok'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                    continue;
+                }
+
+                $clashes = WorkFileModel::workAlreadyInHand(
+                    $row['registration_no'] ?? null,
+                    collect($row['works'] ?? [])->pluck('work_type_id')->all()
+                );
+
+                foreach ($clashes as $clash) {
+                    $inHand[] = WorkFileModel::normaliseRegistration($row['registration_no'] ?? null)
+                        .' — '.$clash->work_type.' is already in hand on '.$clash->file_no
+                        .' ('.(WorkFileModel::STATUSES[$clash->status] ?? $clash->status).')';
+                }
+            }
+
+            if ($inHand) {
+                return back()->withInput()->with(
+                    'error',
+                    'This work is already open for this vehicle: '.implode('; ', array_unique($inHand))
+                        .'. Tick "take it in anyway" on that file if it really is coming in again.'
                 );
             }
 
