@@ -911,6 +911,73 @@ class WorkFileModel extends Model
     }
 
     /**
+     * Each vendor, and how long their work takes.
+     *
+     * The office hands a batch of files to whoever it trusts to be quick, and
+     * until now "who is quick" was whatever somebody remembered. This counts
+     * it: how much of their work is still out, how long the oldest of it has
+     * been waiting, and how long the work they finished actually took.
+     *
+     * The period is the day the work was given out, so a row follows one batch
+     * of work through rather than mixing files sent this month with files
+     * finished this month.
+     *
+     * Cancelled work is in the file count and in neither of the others: it
+     * never finished, and it is not waiting either. In-house work has no vendor
+     * to judge and is left out altogether.
+     */
+    public static function vendorPerformance(?string $from = null, ?string $to = null)
+    {
+        $files = DB::table('work_file')
+            ->join('party as vendor', 'vendor.id', '=', 'work_file.vendor_id')
+            ->whereNotNull('work_file.vendor_date')
+            ->select(
+                'work_file.vendor_id',
+                'vendor.name as vendor_name',
+                'work_file.status',
+                'work_file.vendor_date',
+                DB::raw(self::FINISHED_ON.' as finished_on')
+            );
+
+        if ($from) {
+            $files->whereDate('work_file.vendor_date', '>=', $from);
+        }
+
+        if ($to) {
+            $files->whereDate('work_file.vendor_date', '<=', $to);
+        }
+
+        $open = "'".implode("','", self::OPEN_STATUSES)."'";
+
+        /*
+         * Counted from the finishing day where there is one, and never where it
+         * falls before the day the file went out — papers dated backwards are a
+         * typo, and averaging one in would quietly drag a vendor's figure down.
+         */
+        $took = 'CASE WHEN f.finished_on IS NOT NULL AND DATEDIFF(f.finished_on, f.vendor_date) >= 0
+            THEN DATEDIFF(f.finished_on, f.vendor_date) END';
+
+        $stillOut = "CASE WHEN f.status IN ($open) THEN DATEDIFF(CURDATE(), f.vendor_date) END";
+
+        return DB::query()
+            ->fromSub($files, 'f')
+            ->select(
+                'f.vendor_id',
+                'f.vendor_name',
+                DB::raw('COUNT(*) as files'),
+                DB::raw("SUM(CASE WHEN f.status IN ($open) THEN 1 ELSE 0 END) as out_now"),
+                DB::raw("MAX($stillOut) as longest_out"),
+                DB::raw("COUNT($took) as finished"),
+                DB::raw("ROUND(AVG($took)) as average_days"),
+                DB::raw("MAX($took) as slowest")
+            )
+            ->groupBy('f.vendor_id', 'f.vendor_name')
+            // Whoever has most still out is who the office is waiting on.
+            ->orderByDesc(DB::raw('MAX('.$stillOut.')'))
+            ->orderBy('f.vendor_name')
+            ->get();
+    }
+    /**
      * The day this file's work finished, worked out in PHP.
      *
      * The twin of FINISHED_ON, for the screens that hold Eloquent rows rather

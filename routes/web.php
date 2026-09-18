@@ -160,6 +160,9 @@ Route::group(['middleware' => 'admin'], function () {
     // Where the money went that nobody was tracking until now.
     Route::get('admin/reports/expenses', [ReportController::class, 'expenses'])->name('report.expenses');
 
+    // Who is holding what, and who gets it back quickest.
+    Route::get('admin/reports/vendors', [ReportController::class, 'vendors'])->name('report.vendors');
+
     /*
      * JSON for the browser-side screens. Inside the admin group on purpose: a
      * vehicle's history and prices are not public just because they are JSON.

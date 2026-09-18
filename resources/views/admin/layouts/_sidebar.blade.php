@@ -85,6 +85,7 @@
               ['label' => 'Profit Report', 'icon' => 'bi-graph-up-arrow', 'href' => route('report.profit'), 'active' => $req->routeIs('report.profit')],
               ['label' => 'Work Report', 'icon' => 'bi-file-earmark-bar-graph', 'href' => route('report.files'), 'active' => $req->routeIs('report.files')],
               ['label' => 'Expense Report', 'icon' => 'bi-cash-coin', 'href' => route('report.expenses'), 'active' => $req->routeIs('report.expenses')],
+              ['label' => 'Vendor Report', 'icon' => 'bi-truck', 'href' => route('report.vendors'), 'active' => $req->routeIs('report.vendors')],
           ],
       ],
   ];

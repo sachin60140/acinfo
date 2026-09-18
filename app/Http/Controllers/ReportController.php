@@ -608,4 +608,91 @@ class ReportController extends Controller
             'groupCount' => count($groups),
         ])->toResponse($req);
     }
+    /**
+     * How long each vendor takes.
+     *
+     * Batches are handed out on a memory of who was quick last time. This is
+     * the same judgement with the numbers behind it: what each vendor is
+     * sitting on now, how long the oldest of it has waited, and how long the
+     * work they did finish actually took.
+     *
+     * The period is the day the work was given out, so a row follows one batch
+     * through instead of mixing what went out this month with what came back.
+     */
+    public function vendors(Request $req)
+    {
+        $req->validate([
+            'from' => 'nullable|date_format:Y-m-d',
+            'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
+        ]);
+
+        $from = $req->query('from');
+        $to = $req->query('to');
+
+        $rows = WorkFileModel::vendorPerformance($from, $to);
+
+        $periodText = ($from || $to)
+            ? 'Given out '.($from ? date('d-m-Y', strtotime($from)) : 'from the beginning')
+                .' to '.($to ? date('d-m-Y', strtotime($to)) : date('d-m-Y'))
+            : 'All work ever given out';
+
+        $totals = [
+            'vendors' => $rows->count(),
+            'out_now' => (int) $rows->sum('out_now'),
+            'oldest' => (int) $rows->max('longest_out'),
+            'finished' => (int) $rows->sum('finished'),
+        ];
+
+        $props = [
+            'title' => 'Vendors — '.$periodText,
+            'perPage' => 100,
+            'emptyText' => ($from || $to)
+                ? 'No work went out to a vendor in this period. Try widening the dates.'
+                : 'No work has been given to a vendor yet.',
+            'totals' => ['files' => 'sum', 'out_now' => 'sum', 'finished' => 'sum'],
+            'columns' => [
+                // The statement is where the money side of the same vendor is.
+                ['key' => 'vendor', 'label' => 'Vendor', 'type' => 'link', 'linkTo' => 'vendor_url'],
+                ['key' => 'files', 'label' => 'Files', 'type' => 'count'],
+                ['key' => 'out_now', 'label' => 'Out Now', 'type' => 'count', 'sub' => 'out_now_note'],
+                /*
+                 * The one figure to act on: the oldest thing this vendor is
+                 * still holding. Everything else on the row is history.
+                 */
+                ['key' => 'longest_out', 'label' => 'Waiting', 'type' => 'count', 'class' => 'fw-bold'],
+                ['key' => 'finished', 'label' => 'Finished', 'type' => 'count'],
+                ['key' => 'average_days', 'label' => 'Average', 'type' => 'count', 'sub' => 'average_note'],
+                ['key' => 'slowest', 'label' => 'Slowest', 'type' => 'count'],
+            ],
+            'rows' => $rows->map(fn ($row) => [
+                'id' => (int) $row->vendor_id,
+                'vendor' => $row->vendor_name,
+                'vendor_url' => route('party.statement', $row->vendor_id),
+                'files' => (int) $row->files,
+                'out_now' => (int) $row->out_now,
+                // Days, said once under the count rather than in every cell.
+                'out_now_note' => (int) $row->out_now ? 'still with them' : null,
+                'longest_out' => $row->longest_out === null ? null : (int) $row->longest_out,
+                'finished' => (int) $row->finished,
+                'average_days' => $row->average_days === null ? null : (int) $row->average_days,
+                /*
+                 * An average over two files is not a record. Said on the row,
+                 * because a vendor judged on one lucky week is judged wrongly.
+                 */
+                'average_note' => (int) $row->finished > 0 && (int) $row->finished < 3
+                    ? 'on '.$row->finished.' '.($row->finished == 1 ? 'file' : 'files')
+                    : null,
+                'slowest' => $row->slowest === null ? null : (int) $row->slowest,
+            ])->values(),
+        ];
+
+        return Screen::make('admin.reports.vendors', 'vue-vendor-report', $props, [
+            'from' => $from,
+            'to' => $to,
+            'periodText' => $periodText,
+            'totals' => $totals,
+            'maxDate' => now()->toDateString(),
+            'base' => route('report.vendors'),
+        ])->toResponse($req);
+    }
 }
