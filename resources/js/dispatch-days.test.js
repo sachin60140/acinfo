@@ -55,6 +55,20 @@ const column = (host, label) => {
 };
 
 describe('the dispatch date on a grid', () => {
+    /** A file that is over says how long it took, in the same place. */
+    it('shows a turnaround where a finished file used to show nothing', () => {
+        const host = mount(DataGrid, {
+            columns: COLUMNS,
+            rows: [{ id: 9, file_no: 'F-00009', received: '01-08-2026', received_raw: '2026-08-01',
+                dispatched: '02-08-2026', dispatched_raw: '2026-08-02', days_out: 'took 12 days', status: 'Approval Done' }],
+        });
+
+        const cell = column(host, 'Dispatched')[0];
+
+        expect(cell).toContain('02-08-2026');
+        expect(cell).toContain('took 12 days');
+    });
+
     it('shows the days under the date, and nothing for a file never sent out', () => {
         const host = mount(DataGrid, { columns: COLUMNS, rows: ROWS });
 
@@ -93,8 +107,44 @@ describe('the dispatch date on a grid', () => {
         heading(host, 'Dispatched').click();
         await nextTick();
 
-        // Ascending now: the file with no dispatch date sorts before the dates.
-        expect(column(host, 'File No.')[2]).toBe('F-00002');
+        // Ascending now: oldest dispatch first.
+        expect(column(host, 'File No.')[0]).toBe('F-00001');
+    });
+
+    /*
+     * A blank is "not yet", not "before everything". A file still in the office
+     * has not gone out, and floating those to the top of an oldest-first sort
+     * buries the file the sort was for.
+     */
+    it('keeps the files that never went out at the end, both ways round', async () => {
+        const host = mount(DataGrid, { columns: COLUMNS, rows: ROWS });
+
+        heading(host, 'Dispatched').click();
+        await nextTick();
+
+        expect(column(host, 'File No.')[2]).toBe('F-00003');
+
+        heading(host, 'Dispatched').click();
+        await nextTick();
+
+        expect(column(host, 'File No.')[2]).toBe('F-00003');
+    });
+
+    /** The same rule on any column: a missing figure is not a small one. */
+    it('keeps blanks at the end of other columns too', async () => {
+        const host = mount(DataGrid, {
+            columns: [{ key: 'file_no', label: 'File No.' }, { key: 'status', label: 'Status' }],
+            rows: [
+                { id: 1, file_no: 'F-00001', status: 'File Dispatch' },
+                { id: 2, file_no: 'F-00002', status: null },
+                { id: 3, file_no: 'F-00003', status: 'Approval Done' },
+            ],
+        });
+
+        heading(host, 'Status').click();
+        await nextTick();
+
+        expect(column(host, 'File No.')).toEqual(['F-00003', 'F-00001', 'F-00002']);
     });
 
     it('puts the date in the exports', () => {

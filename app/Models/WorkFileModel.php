@@ -910,13 +910,73 @@ class WorkFileModel extends Model
         return max(0, $days);
     }
 
-    /** The same, said: "6 days", "1 day", "today". */
-    public static function daysOutText($vendorDate, ?string $status = null): ?string
+    /**
+     * The day this file's work finished, worked out in PHP.
+     *
+     * The twin of FINISHED_ON, for the screens that hold Eloquent rows rather
+     * than a listing query. It reads the jobs already loaded with the file
+     * where it can, so a board of fifty files is still one query.
+     */
+    public function finishedOn(): ?string
+    {
+        if ($this->status === self::RETURNED) {
+            return $this->returned_on;
+        }
+
+        if ($this->status !== self::APPROVED) {
+            return null;
+        }
+
+        $items = $this->relationLoaded('items') ? $this->items : $this->items()->get();
+
+        return $items->max('approved_on');
+    }
+
+    /**
+     * How long the work took, for a file that is over.
+     *
+     * The same span the office watches while a file is out, stopped on the day
+     * it finished. It is the number a vendor is judged on, and it is the reason
+     * these columns stop being blank once the work is done.
+     */
+    public static function turnaround($vendorDate, $finishedOn): ?int
+    {
+        if (! $vendorDate || ! $finishedOn) {
+            return null;
+        }
+
+        $days = (int) floor((strtotime(date('Y-m-d', strtotime($finishedOn)))
+            - strtotime(date('Y-m-d', strtotime($vendorDate)))) / 86400);
+
+        // Papers dated before they were sent are a typo, not a negative
+        // turnaround. Nothing is claimed about a file that says so.
+        return $days < 0 ? null : $days;
+    }
+
+    /**
+     * The days line under a dispatch date: how long it has been out, or how
+     * long it took.
+     *
+     * Both are the same span and both belong in the same place, so the reader
+     * is told which one they are looking at rather than being left to work it
+     * out from the status: "6 days" is still running, "took 6 days" is done.
+     */
+    public static function daysOutText($vendorDate, ?string $status = null, $finishedOn = null): ?string
     {
         $days = self::daysOut($vendorDate, $status);
 
+        if ($days === null) {
+            $took = self::turnaround($vendorDate, $finishedOn);
+
+            return match (true) {
+                $took === null => null,
+                $took === 0 => 'took the same day',
+                $took === 1 => 'took 1 day',
+                default => 'took '.$took.' days',
+            };
+        }
+
         return match (true) {
-            $days === null => null,
             $days === 0 => 'today',
             $days === 1 => '1 day',
             default => $days.' days',
@@ -1500,6 +1560,21 @@ class WorkFileModel extends Model
     public const PAID_OUT = "COALESCE((SELECT SUM(work_file_expense.amount)
         FROM work_file_expense
         WHERE work_file_expense.work_file_id = work_file.id), 0)";
+
+    /**
+     * The day the work on a file finished, or null while it is still running.
+     *
+     * An approved file finished on the day its last job was approved — a folder
+     * of three is not through until the third one is. A returned file finished
+     * when it came back. A cancelled one has no such day: it stopped rather
+     * than finished, and dressing that up as a turnaround would put a number
+     * against work nobody did.
+     */
+    public const FINISHED_ON = "(CASE
+        WHEN work_file.status = 'paper_returned' THEN work_file.returned_on
+        WHEN work_file.status = 'approval_done' THEN (SELECT MAX(fin.approved_on)
+            FROM work_file_item fin WHERE fin.work_file_id = work_file.id)
+        ELSE NULL END)";
 
     /** And what it cost, mirroring netVendor() the same way. */
     public const SPENT = "(CASE
@@ -2778,8 +2853,10 @@ class WorkFileModel extends Model
                 'work_file.vendor_amount',
                 'work_file.vendor_returned_on',
                 'work_file.vendor_returned_amount',
-                // The day it went out, for the days-out figure beside it.
+                // The day it went out, for the days-out figure beside it —
+                // and the day it finished, for the same figure once it is over.
                 'work_file.vendor_date',
+                DB::raw(self::FINISHED_ON.' as finished_on'),
                 self::workLabelColumn(),
                 self::unpricedWorksColumn(),
                 self::unbilledWorksColumn(),
@@ -3190,8 +3267,10 @@ class WorkFileModel extends Model
                 'work_file.vendor_id',
                 'work_file.vendor_amount',
                 'work_file.vendor_returned_on',
-                // The day it went out, and what the days since are counted from.
+                // The day it went out, what the days since are counted from,
+                // and the day the work on it finished — see FINISHED_ON.
                 'work_file.vendor_date',
+                DB::raw(self::FINISHED_ON.' as finished_on'),
                 'work_file.returned_amount',
                 'work_file.vendor_returned_amount',
                 'work_file.handed_over_on',
@@ -3248,6 +3327,25 @@ class WorkFileModel extends Model
              * the bottom, which is where it has been all along.
              */
             return $query
+                ->orderBy('work_file.received_date', 'asc')
+                ->orderBy('work_file.id', 'asc')
+                ->get();
+        }
+
+        if ($status === 'open' || $status === self::DISPATCHED) {
+            /*
+             * Longest out first, for the same reason the chase lists above are
+             * oldest first.
+             *
+             * A list of work still in hand is read to find what is overdue, and
+             * the file that has been with a vendor three weeks is the one to ask
+             * about — newest-first puts it on the last page, which is where it
+             * would stay. Work that has not gone anywhere has no age to be
+             * judged on and follows behind, oldest of those first.
+             */
+            return $query
+                ->orderByRaw('work_file.vendor_date IS NULL')
+                ->orderBy('work_file.vendor_date', 'asc')
                 ->orderBy('work_file.received_date', 'asc')
                 ->orderBy('work_file.id', 'asc')
                 ->get();

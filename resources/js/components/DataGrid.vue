@@ -222,7 +222,20 @@ const sorted = computed(() => {
             return ((Number(left) || 0) - (Number(right) || 0)) * direction;
         }
 
-        return String(left ?? '').localeCompare(String(right ?? ''), 'en-IN', { numeric: true }) * direction;
+        const l = String(left ?? '');
+        const r = String(right ?? '');
+
+        /*
+         * A blank is "not yet", not "before everything". A file with no
+         * dispatch date has not gone out, and putting those at the top of an
+         * oldest-first sort buries the thing the sort was for — so they sit at
+         * the end whichever way the column is pointing.
+         */
+        if (l === '' || r === '') {
+            return l === r ? 0 : (l === '' ? 1 : -1);
+        }
+
+        return l.localeCompare(r, 'en-IN', { numeric: true }) * direction;
     });
 });
 

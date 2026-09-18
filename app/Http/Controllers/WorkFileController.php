@@ -207,7 +207,7 @@ class WorkFileController extends Controller
                 'dispatched' => $f->vendor_date ? date('d-m-Y', strtotime($f->vendor_date)) : null,
                 // Sorted on rather than shown, for the reason 'received' is.
                 'dispatched_raw' => $f->vendor_date ? date('Y-m-d', strtotime($f->vendor_date)) : null,
-                'days_out' => WorkFileModel::daysOutText($f->vendor_date, $f->status),
+                'days_out' => WorkFileModel::daysOutText($f->vendor_date, $f->status, $f->finished_on),
                 // Sorted on rather than shown: dd-mm-yyyy compared as text orders
                 // by day of the month, putting 02-03 above 01-12.
                 'received_raw' => $f->received_date,
@@ -1928,7 +1928,7 @@ class WorkFileController extends Controller
                 'received_date' => date('d-m-Y', strtotime($file->received_date)),
                 // When it went to the vendor, and how long it has been there.
                 'dispatched' => $file->vendor_date ? date('d-m-Y', strtotime($file->vendor_date)) : null,
-                'days_out' => WorkFileModel::daysOutText($file->vendor_date, $file->status),
+                'days_out' => WorkFileModel::daysOutText($file->vendor_date, $file->status, $file->finishedOn()),
                 'registration_no' => $file->registration_no,
                 'description' => $file->description,
                 'customer' => $file->customer?->name,

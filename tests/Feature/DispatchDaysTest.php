@@ -21,7 +21,11 @@ use Tests\TestCase;
  *
  * The count stops when the work does. On a file that is approved, returned or
  * cancelled it would otherwise keep climbing after the thing it measures has
- * finished.
+ * finished — so it stops, and says instead how long the whole thing took,
+ * which is the number a vendor is judged on.
+ *
+ * And a list of work still in hand opens on the file that has been out longest,
+ * because that is the one to ask about.
  *
  * See the note in PartyLedgerTest: DatabaseTransactions, never RefreshDatabase.
  */
@@ -107,6 +111,13 @@ class DispatchDaysTest extends TestCase
         return collect($this->actingAs($this->admin)->getJson($url)->assertOk()->json('props.rows'))->keyBy('id');
     }
 
+    /** The finishing day as the listing query works it out, or null. */
+    private function finishedOn(WorkFileModel $file): ?string
+    {
+        $row = WorkFileModel::listing()->firstWhere('id', $file->id);
+
+        return $row?->finished_on ? date('Y-m-d', strtotime($row->finished_on)) : null;
+    }
     private function column(string $url, string $key): ?array
     {
         return collect($this->actingAs($this->admin)->getJson($url)->json('props.columns'))->firstWhere('key', $key);
@@ -127,7 +138,7 @@ class DispatchDaysTest extends TestCase
         $this->assertNull(WorkFileModel::daysOutText(null, WorkFileModel::IN_OFFICE));
     }
 
-    /** The count stops when the work does. */
+    /** The count stops when the work does, with nothing to count to. */
     public function test_finished_work_stops_counting(): void
     {
         $out = now()->subDays(9)->toDateString();
@@ -156,9 +167,9 @@ class DispatchDaysTest extends TestCase
         $this->assertNull($rows[$inOffice->id]['dispatched'], 'never sent out');
         $this->assertNull($rows[$inOffice->id]['days_out']);
 
-        // Finished: the date stands, the count stops.
+        // Finished: the date stands, and the count becomes how long it took.
         $this->assertSame(now()->subDays(30)->format('d-m-Y'), $rows[$done->id]['dispatched']);
-        $this->assertNull($rows[$done->id]['days_out']);
+        $this->assertSame('took 30 days', $rows[$done->id]['days_out']);
     }
 
     public function test_the_work_report_shows_them_too(): void
@@ -228,5 +239,203 @@ class DispatchDaysTest extends TestCase
 
         $this->assertSame(now()->subDays(7)->format('d-m-Y'), $file['dispatched']);
         $this->assertSame('7 days', $file['days_out']);
+    }
+    // ----------------------------------------------------------- once it is over
+
+    /**
+     * A file that finished says how long it took.
+     *
+     * Blank was the honest answer to "how long has this been out" and a wasted
+     * column: the span is the vendor's record, and it is what the office looks
+     * back over when deciding who gets the next batch.
+     */
+    public function test_a_file_that_is_over_says_how_long_it_took(): void
+    {
+        $file = $this->file(30, WorkFileModel::APPROVED);
+
+        $this->assertSame('took 30 days', $this->rowsOf(route('workfile.index'))[$file->id]['days_out']);
+    }
+
+    /** Said, like the days beside it: "took 1 day", "took the same day". */
+    public function test_the_short_ones_read_as_sentences(): void
+    {
+        $out = now()->subDays(4)->toDateString();
+
+        $this->assertSame('took the same day', WorkFileModel::daysOutText($out, WorkFileModel::APPROVED, $out));
+        $this->assertSame('took 1 day', WorkFileModel::daysOutText($out, WorkFileModel::APPROVED, now()->subDays(3)->toDateString()));
+        $this->assertSame('took 4 days', WorkFileModel::daysOutText($out, WorkFileModel::APPROVED, now()->toDateString()));
+    }
+
+    /** A folder of three is not through until the third one is. */
+    public function test_a_folder_is_counted_to_its_last_approval(): void
+    {
+        $file = $this->file(10, WorkFileModel::APPROVED);
+
+        $second = new WorkFileItemModel;
+        $second->work_file_id = $file->id;
+        $second->work_type_id = $this->type->id;
+        $second->customer_amount = 2000;
+        $second->vendor_amount = 1000;
+        $second->status = WorkFileModel::APPROVED;
+        $second->approved_on = now()->subDays(6)->toDateString();
+        $second->save();
+
+        // The first job was approved today, the second six days ago: ten days.
+        $this->assertSame(now()->toDateString(), $file->fresh()->finishedOn());
+        $this->assertSame('took 10 days', $this->rowsOf(route('workfile.index'))[$file->id]['days_out']);
+    }
+
+    /** A file that came back counts to the day it came back, not to today. */
+    public function test_a_returned_file_counts_to_the_day_it_came_back(): void
+    {
+        $file = $this->file(20, WorkFileModel::RETURNED);
+        $file->returned_on = now()->subDays(5)->toDateString();
+        $file->save();
+
+        $this->assertSame('took 15 days', $this->rowsOf(route('workfile.index'))[$file->id]['days_out']);
+    }
+
+    /**
+     * Cancelled work stopped rather than finished. A turnaround against it
+     * would be a number for work nobody did.
+     */
+    public function test_a_cancelled_file_claims_no_turnaround(): void
+    {
+        $file = $this->file(12, WorkFileModel::CANCELLED);
+
+        $this->assertNull($file->fresh()->finishedOn());
+        $this->assertNull($this->finishedOn($file), 'the query gave a cancelled file a finishing day');
+        $this->assertNull($this->rowsOf(route('workfile.index'))[$file->id]['days_out']);
+    }
+
+    /**
+     * The day itself, as the listing query works it out.
+     *
+     * Asserted apart from the sentence above it because the two are worked out
+     * twice — once in SQL for the lists, once in PHP for the board — and a
+     * wrong day in one of them is hidden by the guard against backwards dates.
+     */
+    public function test_the_query_and_the_model_agree_on_the_day_it_finished(): void
+    {
+        $approved = $this->file(10, WorkFileModel::APPROVED);
+
+        $returned = $this->file(20, WorkFileModel::RETURNED);
+        $returned->returned_on = now()->subDays(5)->toDateString();
+        $returned->save();
+
+        $running = $this->file(3);
+
+        $this->assertSame(now()->toDateString(), $this->finishedOn($approved));
+        $this->assertSame(now()->subDays(5)->toDateString(), $this->finishedOn($returned));
+        $this->assertNull($this->finishedOn($running), 'work still running has no finishing day');
+
+        foreach ([$approved, $returned, $running] as $file) {
+            $this->assertSame($this->finishedOn($file), $file->fresh()->finishedOn(), "$file->file_no disagrees");
+        }
+    }
+
+    public function test_work_that_never_went_out_has_no_turnaround_either(): void
+    {
+        $file = $this->file(null, WorkFileModel::APPROVED);
+
+        $this->assertNull($this->rowsOf(route('workfile.index'))[$file->id]['days_out']);
+    }
+
+    /** Papers dated before they were sent are a typo, not a negative span. */
+    public function test_a_date_before_the_dispatch_claims_nothing(): void
+    {
+        $this->assertNull(WorkFileModel::turnaround(now()->toDateString(), now()->subDays(3)->toDateString()));
+        $this->assertNull(WorkFileModel::daysOutText(now()->toDateString(), WorkFileModel::APPROVED, now()->subDays(3)->toDateString()));
+    }
+
+    public function test_the_party_report_says_how_long_it_took_too(): void
+    {
+        $file = $this->file(9, WorkFileModel::APPROVED);
+
+        $row = collect($this->actingAs($this->admin)
+            ->getJson(route('report.files', ['party_type' => 'customer', 'party_id' => $this->customer->id]))
+            ->assertOk()->json('props.rows'))->firstWhere('file_no', $file->file_no);
+
+        $this->assertSame('took 9 days', $row['days_out']);
+    }
+
+    public function test_the_status_board_says_it_as_well(): void
+    {
+        $file = $this->file(14, WorkFileModel::APPROVED);
+
+        $row = collect($this->actingAs($this->admin)->getJson(route('workfile.status', ['status' => WorkFileModel::APPROVED]))
+            ->assertOk()->json('props.files'))->firstWhere('id', $file->id);
+
+        $this->assertNotNull($row, 'the board does not show this file');
+        $this->assertSame('took 14 days', $row['days_out']);
+    }
+
+    /**
+     * A folder with one job through and one still at the RTO is not over.
+     *
+     * The board holds these: a transfer approved on Tuesday and a hypothecation
+     * addition still waiting. Reading the approved job as the folder's finish
+     * would stop the clock on a file that is still out — and that clock is the
+     * whole reason the office looks at the board.
+     */
+    public function test_a_folder_with_work_still_out_keeps_counting(): void
+    {
+        $file = $this->file(8, WorkFileModel::PARTLY_APPROVED);
+
+        $through = new WorkFileItemModel;
+        $through->work_file_id = $file->id;
+        $through->work_type_id = $this->type->id;
+        $through->customer_amount = 2000;
+        $through->vendor_amount = 1000;
+        $through->status = WorkFileModel::APPROVED;
+        $through->approved_on = now()->subDays(2)->toDateString();
+        $through->save();
+
+        $file = $file->fresh();
+
+        $this->assertNull($file->finishedOn(), 'a part-approved folder was read as finished');
+        $this->assertNull($this->finishedOn($file));
+
+        $row = collect($this->actingAs($this->admin)->getJson(route('workfile.status', ['status' => WorkFileModel::PARTLY_APPROVED]))
+            ->assertOk()->json('props.files'))->firstWhere('id', $file->id);
+
+        $this->assertNotNull($row, 'the board does not show this file');
+        $this->assertSame('8 days', $row['days_out'], 'the clock stopped on a file that is still out');
+    }
+    // -------------------------------------------------------- what to chase first
+
+    /**
+     * Work still in hand opens on what has been out longest.
+     *
+     * The list is read to find what is overdue. Newest-first puts the file that
+     * has been with a vendor three weeks on the last page, which is where it
+     * has been all along.
+     */
+    public function test_the_open_list_puts_the_longest_out_first(): void
+    {
+        $recent = $this->file(2);
+        $ancient = $this->file(25);
+        $middle = $this->file(9);
+        $inOffice = $this->file(null, WorkFileModel::IN_OFFICE);
+
+        $ids = collect($this->actingAs($this->admin)->getJson(route('workfile.index', ['status' => 'open']))
+            ->assertOk()->json('props.rows'))->pluck('id')
+            ->intersect([$recent->id, $ancient->id, $middle->id, $inOffice->id])->values();
+
+        $this->assertSame([$ancient->id, $middle->id, $recent->id, $inOffice->id], $ids->all());
+    }
+
+    /** Everything else still opens with the newest file at the top. */
+    public function test_the_whole_list_is_left_alone(): void
+    {
+        $older = $this->file(25);
+        $newer = $this->file(2);
+
+        $ids = collect($this->actingAs($this->admin)->getJson(route('workfile.index'))
+            ->assertOk()->json('props.rows'))->pluck('id')
+            ->intersect([$older->id, $newer->id])->values();
+
+        // Received dates follow the dispatch dates in file(): newer went out later.
+        $this->assertSame([$newer->id, $older->id], $ids->all());
     }
 }

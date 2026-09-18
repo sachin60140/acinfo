@@ -420,7 +420,7 @@ class ReportController extends Controller
                     // The day it went to the vendor, and how long it has been there.
                     'dispatched' => $row->vendor_date ? date('d-m-Y', strtotime($row->vendor_date)) : null,
                     'dispatched_sort' => $row->vendor_date ? date('Y-m-d', strtotime($row->vendor_date)) : null,
-                    'days_out' => WorkFileModel::daysOutText($row->vendor_date, $row->status),
+                    'days_out' => WorkFileModel::daysOutText($row->vendor_date, $row->status, $row->finished_on),
                     'work_type' => $row->work_type,
                     'description' => $row->description,
                     'counterparty' => $partyType === 'vendor' ? $row->customer_name : ($row->vendor_name ?: 'In-house'),
