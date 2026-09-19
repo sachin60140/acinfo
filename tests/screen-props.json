@@ -401,6 +401,7 @@
                     },
                     "last_remark": "null",
                     "papers_url": "string",
+                    "pending_papers": "null",
                     "received_date": "string",
                     "registration_no": "string",
                     "settled": "number",
@@ -899,6 +900,7 @@
             "csrf": "string",
             "pending": "[]",
             "search": "string",
+            "stuck": "[]",
             "toCheck": {
                 "list_of": {
                     "customer": "string",

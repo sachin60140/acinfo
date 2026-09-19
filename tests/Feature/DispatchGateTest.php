@@ -252,9 +252,23 @@ class DispatchGateTest extends TestCase
         $file->refresh();
 
         $this->assertSame($this->vendor->id, (int) $file->vendor_id);
+
+        /*
+         * The whole folder went, including the work whose paper is still to
+         * come — that is what the override decides. Holding that work back in
+         * Paper Pendency said the file was on the desk when it was at the RTO,
+         * and then froze it there: see PaperPendencyStuckTest.
+         */
         $this->assertSame(WorkFileModel::DISPATCHED, $this->statusOf($file, $this->hpt));
-        $this->assertSame(WorkFileModel::PAPER_PENDENCY, $this->statusOf($file, $this->tr));
-        $this->assertSame(WorkFileModel::PAPER_PENDENCY, $file->status, 'the folder says what is holding it');
+        $this->assertSame(WorkFileModel::DISPATCHED, $this->statusOf($file, $this->tr));
+        $this->assertSame(WorkFileModel::DISPATCHED, $file->status);
+
+        // The paper is still missing, and the checklist still says which.
+        $this->assertStringContainsString(
+            $this->form30->name,
+            WorkFileModel::papersNotReady([$file->id])[$file->id] ?? '',
+            'the pending paper was forgotten once the file went out'
+        );
 
         $override = $file->statusLog()->where('event', WorkFileModel::PAPERS_OVERRIDE)->first();
 

@@ -447,7 +447,15 @@ class PaperAuditTest extends TestCase
         $this->assertSame(WorkFileModel::IN_OFFICE, $item->fresh()->status);
     }
 
-    public function test_work_in_paper_pendency_moves_out_by_hand_only_to_cancelled(): void
+    /**
+     * Work in Paper Pendency moves like any other work.
+     *
+     * It used to be held there until the papers were ticked, which trapped
+     * every file whose work has no paper list and every file sent out on an
+     * override — see PaperPendencyStuckTest. The paper stays pending on the
+     * checklist either way; what moves is the work.
+     */
+    public function test_work_in_paper_pendency_moves_like_any_other(): void
     {
         $file = $this->file([$this->tr]);
         $this->check($file, ['Form 30' => 'pending'] + $this->allIn());
@@ -455,9 +463,11 @@ class PaperAuditTest extends TestCase
 
         $this->actingAs($this->admin)->post(route('workfile.status'), [
             'statuses' => [$item->id => WorkFileModel::DISPATCHED],
-        ])->assertSessionHas('error');
+            'remarks' => [$item->id => 'Vendor took it without Form 30'],
+        ])->assertSessionHasNoErrors();
 
-        $this->assertSame(WorkFileModel::PAPER_PENDENCY, $item->fresh()->status);
+        $this->assertSame(WorkFileModel::DISPATCHED, $item->fresh()->status);
+        $this->assertNotEmpty(WorkFileModel::papersNotReady([$file->id]), 'moving the work marked the paper as in');
 
         $this->actingAs($this->admin)->post(route('workfile.status'), [
             'statuses' => [$item->id => WorkFileModel::CANCELLED],

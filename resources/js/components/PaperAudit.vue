@@ -20,6 +20,8 @@ const props = defineProps({
     search: { type: String, default: '' },
     toCheck: { type: Array, default: () => [] },
     pending: { type: Array, default: () => [] },
+    // Files in Paper Pendency this screen can do nothing for, and why.
+    stuck: { type: Array, default: () => [] },
 });
 
 const query = ref(props.search ?? '');
@@ -36,6 +38,7 @@ const haystack = (row) => [
     ...(row.works || []),
     row.description,
     row.last_remark,
+    row.why,
 ].filter(Boolean).join(' ').toLowerCase();
 
 // Every word must appear somewhere on the row, so "car4sales form 30" is that
@@ -44,6 +47,7 @@ const matches = (row) => terms.value.every((term) => haystack(row).includes(term
 
 const shownCheck = computed(() => props.toCheck.filter(matches));
 const shownPending = computed(() => props.pending.filter(matches));
+const shownStuck = computed(() => props.stuck.filter(matches));
 
 const isPicked = (row) => picked.value.includes(row.id);
 
@@ -268,12 +272,78 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                 </div>
             </template>
         </form>
+
+        <!-- ---- Stuck in Paper Pendency ---------------------------------------- -->
+        <!--
+            Outside the form: there is nothing here to tick. These files are in
+            Paper Pendency and this screen cannot help them — named because
+            otherwise they appear on no screen at all, which is how one came to
+            sit there for weeks.
+        -->
+        <div v-if="stuck.length" class="ui-card pau-stuck">
+            <div class="ui-card__head">
+                <div>
+                    <h2 class="ui-card__title">
+                        Stuck in Paper Pendency
+                        <span class="pau-count pau-count--warn">{{ stuck.length }}</span>
+                    </h2>
+                    <p class="ui-hint">
+                        Waiting on papers, with no checklist behind them. Give the work a paper list,
+                        or move the file on from the status board.
+                    </p>
+                </div>
+            </div>
+
+            <div class="ui-table-wrap">
+                <table class="ui-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Vehicle</th>
+                            <th>Customer</th>
+                            <th>Work</th>
+                            <th>Received</th>
+                            <th>Why</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="file in stuck" v-show="matches(file)" :key="file.id">
+                            <td data-label="File"><strong>{{ file.file_no }}</strong></td>
+                            <td data-label="Vehicle">{{ file.registration_no || '—' }}</td>
+                            <td data-label="Customer">{{ file.customer || '—' }}</td>
+                            <td data-label="Work">{{ file.work_type || '—' }}</td>
+                            <td data-label="Received">{{ file.received_date }}</td>
+                            <td data-label="Why" class="pau-why">{{ file.why }}</td>
+                            <td data-label="">
+                                <a :href="file.work_type_url" class="ui-btn ui-btn--sm">Paper lists</a>
+                                <a :href="file.board_url" class="ui-btn ui-btn--sm">Status board</a>
+                            </td>
+                        </tr>
+                        <tr v-if="! shownStuck.length">
+                            <td colspan="7" class="pau-none">No stuck file matches that search.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 </template>
 
 <style>
 /* Every class carries the pau- prefix: a short unscoped name in a component's
    style block is global. See StylesheetTest. */
+
+/* The last card on the page: nothing to do here, only something to explain. */
+.pau-stuck {
+    border-color: var(--warn-500);
+    margin-top: var(--s-4);
+}
+
+.pau-why {
+    color: var(--n-700);
+    font-size: var(--t-sm);
+}
 
 .pau-search {
     align-items: center;

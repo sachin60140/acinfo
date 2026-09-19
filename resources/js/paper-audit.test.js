@@ -265,3 +265,52 @@ describe('the paper audit screen', () => {
         expect(host.querySelector('form button[type="submit"]')).toBeNull();
     });
 });
+
+describe('files this screen cannot help with', () => {
+    /*
+     * A file in Paper Pendency whose work has no paper list can never be
+     * audited and never gets a checklist, so it is in neither list above. It
+     * was on no screen at all, which is how one came to sit there for weeks.
+     */
+    const stuck = [{
+        id: 61,
+        file_no: 'F-00061',
+        registration_no: 'BR05AS6323',
+        customer: 'Kuwy Technology Service Pvt Ltd',
+        work_type: 'HPT + TR + HPA',
+        received_date: '15-09-2026',
+        why: 'HPT + TR + HPA has no papers set up, so this file cannot be audited',
+        work_type_url: '/admin/work-types',
+        board_url: '/admin/file/status?status=paper_pendency',
+        papers_url: '/admin/file/61/papers',
+    }];
+
+    it('names the file, the reason, and where to go next', () => {
+        const host = audit({ stuck });
+
+        const card = host.querySelector('.pau-stuck');
+
+        expect(card).not.toBeNull();
+        expect(card.textContent).toContain('F-00061');
+        expect(card.textContent).toContain('HPT + TR + HPA has no papers set up');
+
+        const links = [...card.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+
+        expect(links).toContain('/admin/work-types');
+        expect(links).toContain('/admin/file/status?status=paper_pendency');
+    });
+
+    it('says nothing when nothing is stuck', () => {
+        expect(audit({ stuck: [] }).querySelector('.pau-stuck')).toBeNull();
+    });
+
+    it('is searched with the rest of the screen', async () => {
+        const host = audit({ stuck });
+
+        await search(host, 'BR05AS6323');
+        expect(host.querySelector('.pau-stuck tbody tr').style.display).not.toBe('none');
+
+        await search(host, 'something else');
+        expect(host.querySelector('.pau-stuck tbody tr').style.display).toBe('none');
+    });
+});

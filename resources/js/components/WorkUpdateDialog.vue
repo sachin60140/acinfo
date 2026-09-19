@@ -45,8 +45,7 @@ function checklistOnly(current, key) {
         return false;
     }
 
-    return key === props.pendencyKey
-        || (current === props.pendencyKey && key !== props.cancelledKey);
+    return key === props.pendencyKey;
 }
 
 const open = computed(() => Boolean(props.file));

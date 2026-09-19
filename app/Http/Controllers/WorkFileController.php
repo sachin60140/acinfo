@@ -749,8 +749,16 @@ class WorkFileController extends Controller
                     $file->vendor_id = $req->vendor_id;
                     $file->vendor_date = $req->vendor_date;
 
-                    // Handing a file over is the moment it leaves the office.
-                    if ($file->status === WorkFileModel::IN_OFFICE) {
+                    /*
+                     * Handing a file over is the moment it leaves the office.
+                     *
+                     * Waiting on a paper is one of the ways a file sits on the
+                     * desk, so Paper Pendency leaves with In Office. Left out,
+                     * a file sent on an override stayed in Paper Pendency for
+                     * good while the vendor had it — which is what the board
+                     * and every list then showed.
+                     */
+                    if (in_array($file->status, [WorkFileModel::IN_OFFICE, WorkFileModel::PAPER_PENDENCY], true)) {
                         $file->status = WorkFileModel::DISPATCHED;
                         // The jobs move with the folder: the file leaving the office is true of
                         // every work on it, and the folder's own status is derived from
@@ -774,15 +782,6 @@ class WorkFileController extends Controller
                     $file->save();
                     $file->syncLedger();
                     $file->logStatus($from, trim(($req->remark ? $req->remark.' — ' : '').'Given to '.$vendorName));
-
-                    /*
-                     * Handing the folder over moved every work on it to File
-                     * Dispatch, including one still waiting on a paper. The
-                     * checklist puts that one back.
-                     */
-                    if ($file->syncPaperPendency()) {
-                        $file->refresh();
-                    }
 
                     if (isset($notReady[$file->id])) {
                         $file->logStatus($file->status, 'Went to the vendor before its papers were complete ('.$notReady[$file->id].'). Reason: '.$overrides[$file->id], null, WorkFileModel::PAPERS_OVERRIDE);
@@ -1194,10 +1193,64 @@ class WorkFileController extends Controller
             ->get(['pi.work_file_paper_id', 't.name'])
             ->groupBy('work_file_paper_id');
 
+        /*
+         * Files sitting in Paper Pendency that this screen cannot help with.
+         *
+         * Work booked under one of the retired combination types has no list of
+         * papers behind it, so it can never be audited and never gets a
+         * checklist — and a file in Paper Pendency with no checklist appears in
+         * neither list above. It was on no screen at all, which is how one came
+         * to sit there for weeks. It is named here, with the reason, because
+         * the answer is either to give that work a paper list or to move the
+         * file on from the board.
+         */
+        $stuck = WorkFileModel::query()
+            ->with('workType', 'customer', 'items.workType')
+            ->where('status', WorkFileModel::PAPER_PENDENCY)
+            ->whereRaw('NOT '.WorkFileModel::NEEDS_AUDIT)
+            ->whereNotExists(fn ($q) => $q->select(DB::raw(1))
+                ->from('work_file_paper')
+                ->whereColumn('work_file_paper.work_file_id', 'work_file.id')
+                ->where('work_file_paper.state', WorkFilePaperModel::PENDING))
+            ->orderBy('received_date')
+            ->orderBy('id')
+            ->get();
+
+        $unmapped = $stuck->isEmpty() ? collect() : DB::table('work_file_item as i')
+            ->join('work_type as t', 't.id', '=', 'i.work_type_id')
+            ->whereIn('i.work_file_id', $stuck->pluck('id')->all())
+            ->whereNotIn('i.status', [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED])
+            ->whereNotExists(fn ($q) => $q->select(DB::raw(1))
+                ->from('work_type_paper')
+                ->join('paper_type', 'paper_type.id', '=', 'work_type_paper.paper_type_id')
+                ->whereColumn('work_type_paper.work_type_id', 'i.work_type_id')
+                ->where('paper_type.is_active', 1))
+            ->get(['i.work_file_id', 't.name'])
+            ->groupBy('work_file_id');
+
         $props = [
             'action' => route('workfile.paperaudit'),
             'csrf' => csrf_token(),
             'today' => date('Y-m-d'),
+            'stuck' => $stuck->map(function ($file) use ($unmapped, $back) {
+                $works = $unmapped->get($file->id, collect())->pluck('name')->filter()->unique()->values();
+
+                return [
+                    'id' => $file->id,
+                    'file_no' => $file->file_no,
+                    'registration_no' => $file->registration_no,
+                    'customer' => $file->customer?->name,
+                    'work_type' => $file->workLabel() ?: $file->workType?->name,
+                    'received_date' => date('d-m-Y', strtotime($file->received_date)),
+                    // Said plainly, because the two cases need different answers.
+                    'why' => $works->isNotEmpty()
+                        ? $works->implode(', ').' has no papers set up, so this file cannot be audited'
+                        : 'Nothing is pending on its checklist, so it is in Paper Pendency for no reason on record',
+                    'work_type_url' => route('worktype.index'),
+                    'board_url' => route('workfile.status', ['status' => WorkFileModel::PAPER_PENDENCY]),
+                    'papers_url' => route('workfile.papers', ['id' => $file->id, 'return_to' => $back]),
+                ];
+            })->values(),
             'search' => (string) $req->query('q', ''),
             'toCheck' => $toCheck->map(fn ($file) => [
                 'id' => $file->id,
@@ -1228,6 +1281,7 @@ class WorkFileController extends Controller
         return Screen::make('admin.work.paper-audit', 'vue-paper-audit', $props, [
             'toCheckCount' => $toCheck->count(),
             'pendingCount' => $pending->count(),
+            'stuckCount' => $stuck->count(),
         ])->toResponse($req);
     }
 
@@ -1646,11 +1700,16 @@ class WorkFileController extends Controller
             $name = fn ($item) => $item->file->file_no.' · '.($item->workType?->name ?? 'work');
 
             /*
-             * Paper Pendency is set and cleared by the paper checklist. Chosen
-             * here by hand it would say papers are missing with no list of
-             * which; cleared here by hand it would say they are in while the
-             * list says they are not. Cancelling is the one move out that stays
-             * open, because it is not a claim about papers.
+             * Paper Pendency is set by the paper checklist. Chosen here by hand
+             * it would say papers are missing with no list of which.
+             *
+             * Moving a work out of it is not refused. The status says where the
+             * work has got to; the checklist says which papers are in, and it
+             * keeps saying so — to the office on Paper Audit and to the
+             * customer on their own page — whatever the work does next. Files
+             * booked under the retired combination types have no paper list at
+             * all, and refusing the move left them with nowhere to go but
+             * Cancelled.
              */
             $byHand = $items->filter(function ($item) use ($wanted) {
                 $to = $wanted[$item->id];
@@ -1659,14 +1718,13 @@ class WorkFileController extends Controller
                     return false;
                 }
 
-                return $to === WorkFileModel::PAPER_PENDENCY
-                    || ($item->status === WorkFileModel::PAPER_PENDENCY && $to !== WorkFileModel::CANCELLED);
+                return $to === WorkFileModel::PAPER_PENDENCY;
             })->map($name);
 
             if ($byHand->isNotEmpty()) {
                 return back()->withInput()->with(
                     'error',
-                    'Paper Pendency follows the paper checklist. Mark the papers on Paper Audit instead for: '.$byHand->implode(', ')
+                    'Paper Pendency is set by the paper checklist, not chosen here. Mark the papers on Paper Audit for: '.$byHand->implode(', ')
                 );
             }
 
@@ -1896,6 +1954,7 @@ class WorkFileController extends Controller
 
         // Fetched for the whole board in one query rather than per row.
         $lastRemarks = WorkFileModel::latestRemarks($files->pluck('id')->all());
+        $pendingPapers = WorkFileModel::pendingPaperNames($files->pluck('id')->all());
 
         /*
          * The field names are the ones status() already validates, so the form
@@ -1939,8 +1998,19 @@ class WorkFileController extends Controller
                 'status' => $file->status,
                 'status_label' => WorkFileModel::STATUSES[$file->status] ?? $file->status,
                 'edit_url' => route('workfile.edit', $file->id),
-                // Where a work in Paper Pendency is taken out of it.
+                // Where a paper still to come is marked in.
                 'papers_url' => route('workfile.papers', ['id' => $file->id, 'return_to' => route('workfile.status')]),
+                /*
+                 * Which papers are still missing, whatever the work is doing.
+                 *
+                 * The board used to read this off the status, so a file given
+                 * to a vendor on an override — which no longer sits in Paper
+                 * Pendency, because it is not on the desk any more — would have
+                 * stopped saying anything at all. It is the checklist's answer,
+                 * and it is worth having on a file that is out: it is what the
+                 * office owes the RTO.
+                 */
+                'pending_papers' => $pendingPapers[$file->id] ?? null,
                 'last_remark' => $lastRemarks[$file->id] ?? null,
                 'statuses' => WorkFileModel::jobStatusesFor($file->items->count()),
 

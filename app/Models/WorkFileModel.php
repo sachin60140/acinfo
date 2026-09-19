@@ -652,6 +652,34 @@ class WorkFileModel extends Model
      * @param  array<int, int>  $fileIds
      * @return array<int, string>
      */
+    /**
+     * The papers still to come on each file, named and nothing else.
+     *
+     * papersNotReady() answers the dispatch gate's question — may this file go
+     * out — and says "papers not checked yet" about one nobody has audited,
+     * which is an answer to that question and not a list of papers. Screens
+     * that want to name what is missing ask this instead.
+     *
+     * @param  array<int, int>  $fileIds
+     * @return array<int, string>  "Form 30, NOC"
+     */
+    public static function pendingPaperNames(array $fileIds): array
+    {
+        if (! $fileIds) {
+            return [];
+        }
+
+        return self::query()
+            ->whereIn('id', $fileIds)
+            ->whereRaw(self::PENDING_PAPERS)
+            ->select('id')
+            ->selectRaw(self::PENDING_PAPER_NAMES.' as pending_papers')
+            ->get()
+            ->mapWithKeys(fn ($file) => [$file->id => $file->pending_papers])
+            ->filter()
+            ->all();
+    }
+
     public static function papersNotReady(array $fileIds): array
     {
         if (! $fileIds) {
@@ -699,7 +727,18 @@ class WorkFileModel extends Model
 
             $pending = $pendingFor->contains($item->id);
 
-            if ($pending && $item->status !== self::PAPER_PENDENCY) {
+            /*
+             * Only work still on the desk is moved into pendency.
+             *
+             * A missing paper is a reason not to send a file out. It is not a
+             * description of a file that has already gone: work given to a
+             * vendor on an override was being dragged straight back out of File
+             * Dispatch, and work at the RTO would have been pulled back from
+             * under verification by a paper ticked in the office. Where the
+             * work has got to and which papers are in are two different
+             * questions, and the checklist only answers the second.
+             */
+            if ($pending && $item->status === self::IN_OFFICE) {
                 $item->status = self::PAPER_PENDENCY;
             } elseif (! $pending && $item->status === self::PAPER_PENDENCY) {
                 $item->status = $this->vendor_id ? self::DISPATCHED : self::IN_OFFICE;

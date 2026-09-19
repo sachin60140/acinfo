@@ -49,18 +49,18 @@ const props = defineProps({
  * belongs to, for the heading above it.
  */
 /*
- * Paper Pendency follows the paper checklist. It is not offered as a move, and
- * a work already in it moves out only by being cancelled — anything else is
- * done by marking its papers. The server refuses both regardless; this is so
- * the choice is not offered in the first place.
+ * Paper Pendency is set by the paper checklist, so it is not offered as a move
+ * — a work is put into it by papers being marked, not by being chosen. Moving
+ * out of it is an ordinary move: the status says where the work is, and the
+ * checklist goes on saying which papers are still missing. The server refuses
+ * the same one; this is so it is not offered in the first place.
  */
 function checklistOnly(current, key) {
     if (key === current) {
         return false;
     }
 
-    return key === props.pendencyKey
-        || (current === props.pendencyKey && key !== props.cancelledKey);
+    return key === props.pendencyKey;
 }
 
 const rows = reactive(
@@ -327,9 +327,13 @@ function onScreenshot(row, event) {
                                         </option>
                                     </select>
 
-                                    <div v-if="row.status === pendencyKey" class="ui-hint board__papers">
-                                        Waiting on papers.
-                                        <a v-if="row.file.papers_url" :href="row.file.papers_url" class="ui-link">Mark them on the checklist</a>
+                                    <!-- The checklist's answer, not the status's:
+                                         a file out with a vendor on an override
+                                         is still waiting on a paper, and this is
+                                         where the office is reminded of it. -->
+                                    <div v-if="row.file.pending_papers" class="ui-hint board__papers">
+                                        Waiting on {{ row.file.pending_papers }}.
+                                        <a v-if="row.file.papers_url" :href="row.file.papers_url" class="ui-link">Mark it on the checklist</a>
                                     </div>
 
                                     <!-- An approval happened on a day and came with
