@@ -520,9 +520,36 @@ class ReportController extends Controller
             'emptyText' => ($partyId || $status || $from || $to)
                 ? 'No work files match this report. Try widening the dates, or clearing the status.'
                 : 'No work files yet. Receive one and it will appear here.',
+            /*
+             * What else this report can say, offered rather than shown.
+             *
+             * Fifteen columns wide, it answered the question it is opened for —
+             * what this party's work was, and what it billed — underneath four
+             * columns of free text and derived figures that nobody reads on the
+             * way past. Those are grouped by the question they answer now and
+             * turned on when it is being asked, and the choice is remembered.
+             *
+             * Nothing leaves the exports: a spreadsheet has room for all of it
+             * and no reason to hide any, which is what lets the screen be short.
+             */
+            'groups' => [
+                ['key' => 'dispatch', 'label' => 'Dispatch'],
+                ['key' => 'margin', 'label' => 'Expenses & margin'],
+                ['key' => 'detail', 'label' => 'Details & remarks'],
+            ],
             'columns' => [
                 ['key' => 'party_id', 'label' => $partyLabel.' Id', 'hidden' => true],
-                ['key' => 'party_name', 'label' => $partyLabel],
+                /*
+                 * Exported, never drawn. The rows are banded by party and the
+                 * band above them already reads "Customer — Car4Sales · Ledger
+                 * balance ...", so a column repeating that name on every row
+                 * underneath it said nothing the reader could not already see.
+                 *
+                 * It stays searchable, because search runs over what a column
+                 * exports rather than what it draws — typing a party's name
+                 * still narrows the report to them.
+                 */
+                ['key' => 'party_name', 'label' => $partyLabel, 'exportOnly' => true],
                 ['key' => 'file_no', 'label' => 'File No.'],
                 ['key' => 'registration_no', 'label' => 'Vehicle'],
                 // Sorted on the ISO date carried alongside it, so the order is
@@ -531,21 +558,24 @@ class ReportController extends Controller
                 // When it went out, and how long it has been out. Newest first
                 // on the first click; see the files list.
                 ['key' => 'dispatched', 'label' => 'Dispatched', 'sortBy' => 'dispatched_sort',
-                    'sortDesc' => true, 'sub' => 'days_out'],
+                    'sortDesc' => true, 'sub' => 'days_out', 'group' => 'dispatch'],
                 ['key' => 'work_type', 'label' => 'Work Type', 'note' => 'works_note'],
-                ['key' => 'description', 'label' => 'Details'],
+                ['key' => 'description', 'label' => 'Details', 'group' => 'detail'],
                 ['key' => 'counterparty', 'label' => $counterpartyLabel],
                 ['key' => 'status', 'label' => 'Status', 'type' => 'badge'],
-                // Exported, never drawn: the report is already thirteen
-                // columns wide. See exportOnly in DataGrid.
+                // Exported, never drawn: a work a row apiece is what a
+                // spreadsheet is for. See exportOnly in DataGrid.
                 ['key' => 'works_done', 'label' => 'Approved Works', 'exportOnly' => true],
                 ['key' => 'works_approved_on', 'label' => 'Approved On', 'exportOnly' => true],
                 ['key' => 'works_pending', 'label' => 'Pending Works', 'exportOnly' => true],
-                ['key' => 'remark', 'label' => 'Remarks'],
+                ['key' => 'remark', 'label' => 'Remarks', 'group' => 'detail'],
+                // Billed and cost are the two sides of the file and stay. What
+                // the office paid out of its own till, and what was left after
+                // it, are a further question.
                 ['key' => 'billed', 'label' => 'Billed', 'type' => 'money'],
                 ['key' => 'cost', 'label' => 'Cost', 'type' => 'money'],
-                ['key' => 'expenses', 'label' => 'Expenses', 'type' => 'money'],
-                ['key' => 'margin', 'label' => 'Margin', 'type' => 'money'],
+                ['key' => 'expenses', 'label' => 'Expenses', 'type' => 'money', 'group' => 'margin'],
+                ['key' => 'margin', 'label' => 'Margin', 'type' => 'money', 'group' => 'margin'],
 
                 /*
                  * Moving a file along without leaving the report. Kept out of
