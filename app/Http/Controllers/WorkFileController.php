@@ -750,6 +750,24 @@ class WorkFileController extends Controller
                     $file->vendor_date = $req->vendor_date;
 
                     /*
+                     * The works go with the folder.
+                     *
+                     * Each work carries its own vendor now, and the folder's is
+                     * worked out from theirs — so a folder handed over without
+                     * telling its works would roll back up as in-house work.
+                     * Cancelled work is left alone: it was struck off and went
+                     * nowhere.
+                     */
+                    $file->items()
+                        ->where('status', '<>', WorkFileModel::CANCELLED)
+                        ->update([
+                            'vendor_id' => $req->vendor_id,
+                            'vendor_date' => $req->vendor_date,
+                            // Going out again clears the day it last came back.
+                            'vendor_returned_on' => null,
+                        ]);
+
+                    /*
                      * Handing a file over is the moment it leaves the office.
                      *
                      * Waiting on a paper is one of the ways a file sits on the
@@ -1576,6 +1594,13 @@ class WorkFileController extends Controller
                     $amount = $amounts[$file->id] ?? null;
 
                     $file->vendor_returned_on = $req->returned_on;
+
+                    // The works come back with the folder, for the reason they
+                    // went out with it.
+                    $file->items()
+                        ->where('status', '<>', WorkFileModel::CANCELLED)
+                        ->whereNotNull('vendor_id')
+                        ->update(['vendor_returned_on' => $req->returned_on]);
                     // Blank, or the whole booking, both mean reverse it all.
                     $file->vendor_returned_amount = self::partialOrNull($amount, $file->vendor_amount);
 
@@ -2326,6 +2351,8 @@ class WorkFileController extends Controller
                 $file->registration_no = WorkFileModel::normaliseRegistration($req->registration_no) ?: null;
                 $file->customer_id = $req->customer_id;
                 $file->customer_amount = (float) $req->customer_amount;
+                $vendorWas = $file->vendor_id;
+
                 $file->vendor_id = $req->filled('vendor_id') ? $req->vendor_id : null;
                 $file->vendor_amount = $req->filled('vendor_amount') ? (float) $req->vendor_amount : null;
                 $file->vendor_date = $req->filled('vendor_date') ? $req->vendor_date : null;
@@ -2383,6 +2410,32 @@ class WorkFileController extends Controller
                             : (float) $correction['vendor_amount'];
                         $item->save();
                     }
+                }
+
+                /*
+                 * The vendor boxes above reach the works, when they change.
+                 *
+                 * Each work carries its own vendor, and this screen still asks
+                 * for one — so a vendor typed here is a vendor for the whole
+                 * folder. Only when it changes, though: a save that never
+                 * touched the boxes must not flatten a folder deliberately
+                 * split between two vendors.
+                 */
+                if ((int) $vendorWas !== (int) $file->vendor_id) {
+                    $file->items()
+                        ->where('status', '<>', WorkFileModel::CANCELLED)
+                        ->update([
+                            'vendor_id' => $file->vendor_id,
+                            'vendor_date' => $file->vendor_date,
+                            'vendor_returned_on' => $file->vendor_id ? $file->vendor_returned_on : null,
+                        ]);
+                } elseif ($file->vendor_id) {
+                    // Same vendor, possibly a corrected date: that is the
+                    // folder's date and every work of theirs takes it.
+                    $file->items()
+                        ->where('status', '<>', WorkFileModel::CANCELLED)
+                        ->where('vendor_id', $file->vendor_id)
+                        ->update(['vendor_date' => $file->vendor_date]);
                 }
 
                 /*
