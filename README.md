@@ -1,3 +1,19 @@
+# Ac Info
+
+Work files, party ledgers and the papers that go between them.
+
+**Deploying? Read [DEPLOY.md](DEPLOY.md) first.** A deploy here is a `git pull`,
+so the database does not migrate and the assets do not build unless somebody
+does it. That list says what to run and in what order.
+
+Local setup: `composer install`, `npm install`, copy `.env`, then
+`php artisan migrate`. Tests are `php artisan test` and `npx vitest run`;
+there is no CI, so they run here or nowhere.
+
+---
+
+Everything below is the stock Laravel readme.
+
 <p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
 
 <p align="center">
