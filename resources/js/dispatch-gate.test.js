@@ -22,7 +22,9 @@ afterEach(() => {
     }
 });
 
-const FILE = (id, papers, note = null) => ({
+// The folder and the one work on it say the same thing, because the server
+// works both out from the same papers.
+const FILE = (id, papers, note = null, pending = null) => ({
     id,
     file_no: `F-000${id}`,
     registration_no: `BR01AB${1000 + id}`,
@@ -33,12 +35,21 @@ const FILE = (id, papers, note = null) => ({
     papers,
     papers_note: note,
     papers_url: `/admin/file/${id}/papers`,
-    items: [{ id: id * 10, work_type_id: 1, work_type: 'TR', customer_amount: 5000, vendor_rate: 3000 }],
+    items: [{
+        id: id * 10,
+        work_type_id: 1,
+        work_type: 'TR',
+        customer_amount: 5000,
+        vendor_rate: 3000,
+        state: 'here',
+        papers,
+        papers_pending: pending,
+    }],
 });
 
 const FILES = [
     FILE(1, 'ready'),
-    FILE(2, 'pending', 'Papers pending: Form 30'),
+    FILE(2, 'pending', 'Papers pending: Form 30', 'Form 30'),
     FILE(3, 'to_check', 'Papers not checked yet'),
 ];
 
@@ -71,7 +82,7 @@ const rowOf = (host, id) => host.querySelector(`input[name="files[]"][value="${i
 const reason = (host, id) => host.querySelector(`input[name="overrides[${id}]"]`);
 const submit = (host) => host.querySelector('button[type="submit"]');
 const ticked = (host) => [...host.querySelectorAll('input[name="files[]"]')].filter((b) => b.checked).map((b) => Number(b.value)).sort();
-const selectAll = (host) => [...host.querySelectorAll('input[type="checkbox"]')].find((el) => ! el.closest('.give-pick'));
+const selectAll = (host) => host.querySelector('.give-all input[type="checkbox"]');
 
 async function tick(host, id) {
     rowOf(host, id).querySelector('input[name="files[]"]').click();
@@ -128,7 +139,7 @@ describe('papers before dispatch', () => {
     });
 
     it('keeps a reason given before a bounced save', () => {
-        const host = mount({ pickedFiles: [2], oldOverrides: { 2: 'Kept reason' } });
+        const host = mount({ pickedFiles: [2], pickedJobs: [20], oldOverrides: { 2: 'Kept reason' } });
 
         expect(reason(host, 2).value).toBe('Kept reason');
     });

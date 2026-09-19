@@ -26,8 +26,9 @@ use Tests\TestCase;
  * same party, with the same words on it, because an unsplit file must not read
  * differently on a statement somebody has already filed.
  *
- * Nothing on screen creates a split yet. This is the shape underneath the
- * screens that will, so the splits here are built by hand.
+ * This is the shape underneath the handover: the splits here are built by hand
+ * so the money can be read on its own. SplitHandoverTest drives the screen that
+ * makes them.
  *
  * See the note in PartyLedgerTest: DatabaseTransactions, never RefreshDatabase.
  */

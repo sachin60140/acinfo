@@ -23,7 +23,7 @@ const FILES = [
         description: 'With Duplicate RC',
         customer: 'Car4Sales',
         customer_amount: 5600,
-        items: [{ id: 11, work_type_id: 2, work_type: 'TR', customer_amount: 3000, vendor_rate: 1800 }],
+        items: [{ id: 11, work_type_id: 2, work_type: 'TR', customer_amount: 3000, vendor_rate: 1800, state: 'here' }],
     },
     {
         id: 2,
@@ -33,7 +33,7 @@ const FILES = [
         description: '',
         customer: 'Kuwy Technology Service Pvt Ltd',
         customer_amount: 0,
-        items: [{ id: 12, work_type_id: 3, work_type: 'HPA', customer_amount: 0, vendor_rate: null }],
+        items: [{ id: 12, work_type_id: 3, work_type: 'HPA', customer_amount: 0, vendor_rate: null, state: 'here' }],
     },
     {
         id: 3,
@@ -43,7 +43,7 @@ const FILES = [
         description: '',
         customer: 'Rakesh JI Madhubani',
         customer_amount: 7000,
-        items: [{ id: 13, work_type_id: 2, work_type: 'TR', customer_amount: 7000, vendor_rate: 2500 }],
+        items: [{ id: 13, work_type_id: 2, work_type: 'TR', customer_amount: 7000, vendor_rate: 2500, state: 'here' }],
     },
 ];
 
