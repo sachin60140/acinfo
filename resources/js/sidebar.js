@@ -1,9 +1,15 @@
 /*
  * Rolling up the sidebar sections.
  *
- * The menu is thirteen screens under four headings, and most of a working day
+ * The menu is two dozen screens under five headings, and most of a working day
  * is spent in one of them. So a heading is a button that shuts its section, and
- * what is shut is remembered.
+ * a section the reader has changed their mind about is remembered.
+ *
+ * Changed their mind about, rather than shut: Setup starts shut, because it
+ * holds the three lists the office writes once and never opens again. A cookie
+ * that could only record shutting would have nowhere to note that somebody
+ * opened it, so what is written down is every section that is not the way it
+ * starts. Each section's own starting state rides on the markup.
  *
  * Almost none of the work happens here. The server renders each section already
  * open or already shut, from the same cookie this writes — see the note at the
@@ -21,7 +27,7 @@ const COOKIE = 'nav_collapsed';
 /** A year. Long enough that it is not a setting anyone has to make twice. */
 const KEEP = 60 * 60 * 24 * 365;
 
-function shutGroups() {
+function flippedGroups() {
     const found = document.cookie
         .split('; ')
         .find((pair) => pair.startsWith(COOKIE + '='));
@@ -62,9 +68,12 @@ function toggle(button) {
     group.classList.toggle('is-shut', ! open);
 
     const key = group.dataset.navGroup;
-    const shut = shutGroups().filter((one) => one !== key);
+    const rest = flippedGroups().filter((one) => one !== key);
 
-    remember(open ? shut : shut.concat(key));
+    // Back the way it starts, so there is nothing left to remember about it.
+    const startsOpen = group.dataset.navStartsOpen !== 'false';
+
+    remember(open === startsOpen ? rest : rest.concat(key));
 }
 
 export function sidebar() {

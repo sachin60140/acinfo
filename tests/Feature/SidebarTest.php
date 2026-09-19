@@ -207,7 +207,11 @@ class SidebarTest extends TestCase
      * a menu that springs open again on every page and nothing else.
      */
 
-    /** The four headings, and the keys their state is stored under. */
+    /*
+     * The four headings that start open, and the keys their state is stored
+     * under. Setup is not among them: it starts shut, so the cookie means the
+     * opposite thing about it and it is tested on its own below.
+     */
     public static function menuSections(): array
     {
         return [
@@ -290,6 +294,107 @@ class SidebarTest extends TestCase
 
         $this->assertMatchesRegularExpression(
             '/nav-heading--current[^>]*aria-controls="nav-group-reports"/s',
+            $body
+        );
+    }
+
+    /*
+     * ---- Setup, which starts shut ------------------------------------------
+     *
+     * It holds the three lists the office writes once and never opens again —
+     * work types, expense types, paper types — which sat among the screens used
+     * every hour, in a section carrying twelve of the menu's twenty-four
+     * entries.
+     *
+     * What the cookie holds is every section that is not the way it starts, so
+     * the four older sections are in it once they are shut and Setup is in it
+     * once it is opened. One cookie, read against each section's own default.
+     */
+
+    /** The links inside one section, and nothing from any other. */
+    private function sectionLinks(string $body, string $key): string
+    {
+        $this->assertMatchesRegularExpression('/id="nav-group-'.preg_quote($key, '/').'"/s', $body, "no $key section");
+
+        preg_match('/id="nav-group-'.preg_quote($key, '/').'"[^>]*>(.*?)<\/ul>/s', $body, $found);
+
+        return $found[1] ?? '';
+    }
+
+    public function test_setup_arrives_shut_for_a_reader_who_has_never_touched_it(): void
+    {
+        $body = $this->actingAs($this->admin())->get('/admin/dashboard')->assertOk()->getContent();
+
+        $this->assertStringContainsString('Setup', $body);
+
+        $this->assertMatchesRegularExpression(
+            '/aria-expanded="false"[^>]*aria-controls="nav-group-setup"/s',
+            $body,
+            'Setup came back open to somebody who never opened it'
+        );
+
+        $this->assertMatchesRegularExpression('/id="nav-group-setup"\s+hidden/s', $body);
+    }
+
+    /** The same cookie, meaning the opposite thing, because Setup starts shut. */
+    public function test_setup_arrives_open_for_a_reader_who_opened_it(): void
+    {
+        $body = $this->actingAs($this->admin())
+            ->withUnencryptedCookie('nav_collapsed', 'setup')
+            ->get('/admin/dashboard')->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression(
+            '/aria-expanded="true"[^>]*aria-controls="nav-group-setup"/s',
+            $body,
+            'Setup stayed shut for somebody who opened it'
+        );
+
+        $this->assertDoesNotMatchRegularExpression('/id="nav-group-setup"\s+hidden/s', $body);
+    }
+
+    /** And opening Setup does not shut anything else that was left alone. */
+    public function test_opening_setup_leaves_the_other_sections_open(): void
+    {
+        $body = $this->actingAs($this->admin())
+            ->withUnencryptedCookie('nav_collapsed', 'setup')
+            ->get('/admin/dashboard')->assertOk()->getContent();
+
+        foreach (['client-ledger', 'vendor-customer', 'work-files', 'reports'] as $key) {
+            $this->assertDoesNotMatchRegularExpression(
+                '/id="nav-group-'.preg_quote($key, '/').'"\s+hidden/s',
+                $body,
+                "$key was shut too"
+            );
+        }
+    }
+
+    public function test_the_lists_the_office_writes_once_left_the_work_screens(): void
+    {
+        $body = $this->actingAs($this->admin())->get('/admin/dashboard')->assertOk()->getContent();
+
+        $setup = $this->sectionLinks($body, 'setup');
+        $work = $this->sectionLinks($body, 'work-files');
+
+        foreach ([route('worktype.index'), route('expensetype.index'), route('papertype.index')] as $href) {
+            $this->assertStringContainsString($href, $setup, "$href is not under Setup");
+            $this->assertStringNotContainsString($href, $work, "$href is still among the work screens");
+        }
+
+        // And the work of the day stayed where it was.
+        $this->assertStringContainsString(route('workfile.assign'), $work);
+        $this->assertStringContainsString(route('workfile.index'), $work);
+    }
+
+    /** Shut, it still says the reader is inside it — the same as any section. */
+    public function test_setup_says_the_page_is_in_there_while_it_is_shut(): void
+    {
+        $body = $this->actingAs($this->admin())
+            ->get(route('worktype.index'))->assertOk()->getContent();
+
+        $this->assertSame(1, substr_count($body, 'nav-heading--current'));
+
+        $this->assertMatchesRegularExpression(
+            '/nav-heading--current[^>]*aria-controls="nav-group-setup"/s',
             $body
         );
     }

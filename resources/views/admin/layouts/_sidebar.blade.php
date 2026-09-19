@@ -74,9 +74,6 @@
               ['label' => 'Approved Files', 'icon' => 'bi-patch-check', 'href' => route('workfile.approved'), 'active' => $req->routeIs('workfile.approved')],
               // Editing one file belongs to the list it was opened from.
               ['label' => 'All Work Files', 'icon' => 'bi-folder2-open', 'href' => route('workfile.index'), 'active' => $req->routeIs('workfile.index', 'workfile.edit')],
-              ['label' => 'Work Types', 'icon' => 'bi-briefcase', 'href' => route('worktype.index'), 'active' => $req->routeIs('worktype.index', 'worktype.edit')],
-              ['label' => 'Expense Types', 'icon' => 'bi-cash-stack', 'href' => route('expensetype.index'), 'active' => $req->routeIs('expensetype.index', 'expensetype.edit')],
-              ['label' => 'Paper Types', 'icon' => 'bi-card-checklist', 'href' => route('papertype.index'), 'active' => $req->routeIs('papertype.index', 'papertype.edit')],
           ],
       ],
       'reports' => [
@@ -89,11 +86,30 @@
               ['label' => 'Not Yet Collected', 'icon' => 'bi-hourglass-split', 'href' => route('report.uncollected'), 'active' => $req->routeIs('report.uncollected')],
           ],
       ],
+      /*
+       * The lists the rest of the application is built out of.
+       *
+       * They sat among the work screens, where twelve of the menu's twenty-four
+       * entries were one section and three of them were things the office set up
+       * once and then never opened again. Kept apart, and shut to begin with:
+       * somebody adding a paper type goes looking for it, and nobody else should
+       * have to read past it every day to reach Give to Vendor.
+       */
+      'setup' => [
+          'label' => 'Setup',
+          'shut' => true,
+          'items' => [
+              ['label' => 'Work Types', 'icon' => 'bi-briefcase', 'href' => route('worktype.index'), 'active' => $req->routeIs('worktype.index', 'worktype.edit')],
+              ['label' => 'Expense Types', 'icon' => 'bi-cash-stack', 'href' => route('expensetype.index'), 'active' => $req->routeIs('expensetype.index', 'expensetype.edit')],
+              ['label' => 'Paper Types', 'icon' => 'bi-card-checklist', 'href' => route('papertype.index'), 'active' => $req->routeIs('papertype.index', 'papertype.edit')],
+          ],
+      ],
   ];
 
   /*
-   * Which sections are shut, read from the reader's own cookie and rendered into
-   * the markup rather than applied by script afterwards.
+   * Which sections the reader has changed their mind about, read from their own
+   * cookie and rendered into the markup rather than applied by script
+   * afterwards.
    *
    * Afterwards would mean every shut section appearing for an instant on every
    * page load, and this sidebar is replaced wholesale on every visit — see
@@ -101,8 +117,14 @@
    * server already knows; it may as well say so in the markup it is already
    * sending. The cookie is left unencrypted for this reason, named in
    * bootstrap/app.php, and holds nothing but these keys.
+   *
+   * A key means "not how this section starts", not "shut". It read as "shut"
+   * while every section started open, and every cookie already written still
+   * says the same thing about those sections — but Setup starts shut, and a
+   * cookie that could only record shutting would have no way to remember
+   * somebody opening it.
    */
-  $shut = array_flip(array_filter(explode(',', (string) $req->cookie('nav_collapsed'))));
+  $flipped = array_flip(array_filter(explode(',', (string) $req->cookie('nav_collapsed'))));
 @endphp
 
 <!-- ======= Sidebar ======= -->
@@ -122,10 +144,17 @@
     @foreach ($groups as $key => $group)
       @php
         $holdsCurrent = collect($group['items'])->contains('active', true);
-        $open = ! isset($shut[$key]);
+        $startsOpen = ! ($group['shut'] ?? false);
+        $open = isset($flipped[$key]) ? ! $startsOpen : $startsOpen;
       @endphp
 
-      <li class="nav-item nav-group{{ $open ? '' : ' is-shut' }}" data-nav-group="{{ $key }}">
+      {{-- data-nav-starts-open: how this section begins for somebody who has
+           never touched it, so the script knows whether a click is a change of
+           mind worth writing down or a return to the way things were. --}}
+      <li
+        class="nav-item nav-group{{ $open ? '' : ' is-shut' }}"
+        data-nav-group="{{ $key }}"
+        data-nav-starts-open="{{ $startsOpen ? 'true' : 'false' }}">
         {{-- A button rather than a heading with a handler hung on it: this does
              something instead of going somewhere, so it has to be reachable by
              keyboard and has to announce its own state. --}}
