@@ -8,6 +8,11 @@ import { sidebar } from './sidebar';
  * here: a toggle that moves the arrow but not what a screen reader is told, or
  * one that forgets the section it shut a moment ago. Both look fine on the
  * click and are wrong on the next page.
+ *
+ * What the cookie holds is every section that is not the way it starts, which
+ * is why Setup is in the fixture: it starts shut, so opening it is what gets
+ * written down and shutting it again is what clears it. A cookie that only
+ * recorded shutting would have nowhere to put "they opened Setup".
  */
 
 function menu() {
@@ -30,6 +35,15 @@ function menu() {
               </button>
               <ul class="nav-group__items" id="nav-group-reports">
                 <li class="nav-item"><a class="nav-link" href="/admin/reports/profit">Profit</a></li>
+              </ul>
+            </li>
+            <li class="nav-item nav-group is-shut" data-nav-group="setup" data-nav-starts-open="false">
+              <button type="button" class="nav-heading nav-heading--toggle"
+                      aria-expanded="false" aria-controls="nav-group-setup">
+                <span>Setup</span>
+              </button>
+              <ul class="nav-group__items" id="nav-group-setup" hidden>
+                <li class="nav-item"><a class="nav-link" href="/admin/worktype">Work Types</a></li>
               </ul>
             </li>
           </ul>
@@ -103,6 +117,35 @@ describe('the sidebar sections', () => {
         heading('reports').click();
 
         expect(written()).toEqual(['work-files']);
+    });
+
+    /* Setup starts shut, so it is opening it that is the change of mind. */
+    it('writes down a section that starts shut when it is opened', () => {
+        heading('setup').click();
+
+        expect(heading('setup').getAttribute('aria-expanded')).toBe('true');
+        expect(items('setup').hidden).toBe(false);
+        expect(written()).toEqual(['setup']);
+    });
+
+    it('stops remembering it once it is shut again', () => {
+        heading('setup').click();
+        heading('setup').click();
+
+        expect(items('setup').hidden).toBe(true);
+        expect(written()).toEqual([]);
+    });
+
+    /*
+     * The two meanings in one cookie. A section that starts open and one that
+     * starts shut are both in it for the same reason — neither is the way it
+     * started — and the server reads each against its own default.
+     */
+    it('holds a shut section and an opened one side by side', () => {
+        heading('work-files').click();
+        heading('setup').click();
+
+        expect(written().sort()).toEqual(['setup', 'work-files']);
     });
 
     it('does nothing to a click on a link, which has somewhere of its own to go', () => {
