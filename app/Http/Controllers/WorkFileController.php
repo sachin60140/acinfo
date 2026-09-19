@@ -328,6 +328,25 @@ class WorkFileController extends Controller
                 : 'No files received yet. Use Receive Files above to add the first one.',
             'totals' => ['charged' => 'sum', 'cost' => 'sum', 'expenses' => 'sum', 'margin' => 'sum'],
             'rowClass' => 'row_class',
+            /*
+             * What else this list can say, offered rather than shown.
+             *
+             * Fourteen columns answered every question anybody had ever asked of
+             * this screen at once, which meant it answered none of them well:
+             * the seven that say which file this is and where it has got to were
+             * read past a wall of figures nobody was looking at that morning.
+             *
+             * So those seven stand, and the rest are grouped by the question
+             * they answer and turned on when it is being asked. Nothing is lost
+             * — every column still goes into every export, whichever bands are
+             * open — and the choice is remembered per browser, so an office that
+             * always wants the money can turn it on once.
+             */
+            'groups' => [
+                ['key' => 'dispatch', 'label' => 'Vendor & dispatch'],
+                ['key' => 'money', 'label' => 'Cost & margin'],
+                ['key' => 'detail', 'label' => 'Details'],
+            ],
             'columns' => [
                 ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
                 ['key' => 'registration_no', 'label' => 'Vehicle'],
@@ -340,9 +359,9 @@ class WorkFileController extends Controller
                  * asks of a dispatch date is what went out lately.
                  */
                 ['key' => 'dispatched', 'label' => 'Dispatched', 'sortBy' => 'dispatched_raw',
-                    'sortDesc' => true, 'sub' => 'days_out'],
+                    'sortDesc' => true, 'sub' => 'days_out', 'group' => 'dispatch'],
                 ['key' => 'work_type', 'label' => 'Work Type'],
-                ['key' => 'description', 'label' => 'Details'],
+                ['key' => 'description', 'label' => 'Details', 'group' => 'detail'],
                 // A party statement is opened to be read against this list, and
                 // this list is behind a status and date filter — taking the tab
                 // with it means setting the filter again to come back.
@@ -350,14 +369,18 @@ class WorkFileController extends Controller
                 // Debit green, credit red — the same two directions the rest of
                 // the ledger uses, carried by the class the sheet already defines.
                 ['key' => 'charged', 'label' => 'Charged', 'type' => 'money', 'class' => 'dr', 'sub' => 'charged_was'],
-                ['key' => 'vendor', 'label' => 'Vendor', 'type' => 'link', 'linkTo' => 'vendor_url'],
-                ['key' => 'cost', 'label' => 'Cost', 'type' => 'money', 'class' => 'cr', 'sub' => 'cost_was'],
+                ['key' => 'vendor', 'label' => 'Vendor', 'type' => 'link', 'linkTo' => 'vendor_url',
+                    'group' => 'dispatch'],
+                ['key' => 'cost', 'label' => 'Cost', 'type' => 'money', 'class' => 'cr', 'sub' => 'cost_was',
+                    'group' => 'money'],
                 // What the office paid out of its own till, included in the
                 // Cost beside it and broken out so a margin can be read.
-                ['key' => 'expenses', 'label' => 'Expenses', 'type' => 'money', 'class' => 'cr'],
+                ['key' => 'expenses', 'label' => 'Expenses', 'type' => 'money', 'class' => 'cr',
+                    'group' => 'money'],
                 // A margin has a side: earned reads Dr, lost reads Cr, and neither
                 // needs a minus sign to be read correctly.
-                ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold'],
+                ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold',
+                    'group' => 'money'],
                 /*
                  * Every row on the approved screen says the same status, so it
                  * is dropped there and the two columns that differ take its
@@ -390,10 +413,12 @@ class WorkFileController extends Controller
                 ['key' => 'handed_over', 'label' => 'Handed Over', 'exportOnly' => ! $approvals],
                 // A column a spreadsheet can filter on; on screen it is said in the status cell.
                 ['key' => 'pending_papers', 'label' => 'Papers Pending', 'exportOnly' => true],
-                // A column of the word "Edit" is noise in a spreadsheet, and in the
-                // search box it is worse: every row matches anyone typing "edit".
-                ['key' => 'action', 'label' => 'Action', 'type' => 'link', 'linkTo' => 'edit_url',
-                    'sortable' => false, 'searchable' => false, 'exportable' => false],
+                /*
+                 * No Action column. It held the word "Edit" on every row and
+                 * went to the same place the file number already goes — a whole
+                 * column, and the rightmost one on the widest table in the
+                 * application, spent repeating a link that was already there.
+                 */
             ],
             'rows' => $rows,
         ];

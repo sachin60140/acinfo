@@ -140,6 +140,22 @@ const props = defineProps({
     sortable: { type: Boolean, default: true },
     exportable: { type: Boolean, default: true },
     emptyText: { type: String, default: 'Nothing to show.' },
+
+    /*
+     * Bands of columns the reader can turn on, as [{ key, label, on }].
+     *
+     * A column naming a band is drawn only while that band is open; a column
+     * naming none is always drawn. That is the whole rule, and it is what keeps
+     * a long list readable without hiding anything permanently: the handful of
+     * columns that say which file this is and where it has got to are always
+     * there, and the rest — what it cost, who has it, what the margin was — is
+     * one click away when somebody is asking that question.
+     *
+     * Exports are untouched. Every column the screen knows about goes into the
+     * spreadsheet whether or not it is drawn, which is exactly what makes it
+     * safe for the default to be short.
+     */
+    groups: { type: Array, default: () => [] },
 });
 
 const query = ref('');
@@ -155,9 +171,50 @@ const page = ref(1);
  */
 const reordered = ref(false);
 
+/*
+ * Which bands are open, remembered per screen in this browser.
+ *
+ * Read through a try, because storage throws rather than coming back empty in a
+ * private window — and a table that will not draw is a far worse answer than a
+ * table showing its usual columns.
+ */
+const groupStore = `acinfo.grid.${props.title}.groups`;
+
+function remembered() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(groupStore) || 'null');
+
+        if (Array.isArray(saved)) {
+            // Only bands this screen still offers: a column band that has since
+            // been renamed or dropped should not keep a seat in memory.
+            return saved.filter((key) => props.groups.some((band) => band.key === key));
+        }
+    } catch {
+        // Nothing remembered about this screen. The defaults stand.
+    }
+
+    return null;
+}
+
+const open = ref(remembered() ?? props.groups.filter((band) => band.on).map((band) => band.key));
+
+const isOpen = (key) => open.value.includes(key);
+
+function toggleGroup(key) {
+    open.value = isOpen(key) ? open.value.filter((one) => one !== key) : [...open.value, key];
+
+    try {
+        localStorage.setItem(groupStore, JSON.stringify(open.value));
+    } catch {
+        // It will not be remembered past this page. It still works on it.
+    }
+}
+
 // What the table draws. Hidden columns are internal; export-only ones are
-// real data that this screen has no room for.
-const shown = computed(() => props.columns.filter((c) => ! c.hidden && ! c.exportOnly));
+// real data that this screen has no room for; the rest depend on their band.
+const shown = computed(() => props.columns.filter(
+    (c) => ! c.hidden && ! c.exportOnly && (! c.group || isOpen(c.group))
+));
 
 /* Searching runs over what a column exports, not what it displays, so a search
    matches what the reader can actually see rather than an internal id. */
@@ -630,6 +687,22 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                 <span v-if="note" class="grid__note">{{ note }}</span>
             </div>
 
+            <!-- What else this table can say, offered rather than shown. Named
+                 for the question each answers, not for the columns inside. -->
+            <div v-if="groups.length" class="grid__groups">
+                <button
+                    v-for="band in groups"
+                    :key="band.key"
+                    type="button"
+                    class="grid__group"
+                    :class="{ 'is-on': isOpen(band.key) }"
+                    :aria-pressed="isOpen(band.key)"
+                    @click="toggleGroup(band.key)">
+                    <i class="bi" :class="isOpen(band.key) ? 'bi-check2' : 'bi-plus'"></i>
+                    {{ band.label }}
+                </button>
+            </div>
+
             <div v-if="exportable && rows.length" class="grid__tools">
                 <button type="button" class="ui-btn ui-btn--sm" @click="copy">
                     <i class="bi bi-clipboard"></i> Copy
@@ -899,6 +972,46 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
     color: var(--n-500);
     font-size: var(--t-sm);
     margin-right: auto;
+}
+
+/* Offered quietly: these are a way to ask the table a further question, not the
+   controls the screen is about. Open ones are filled in so the state of the
+   table is readable at a glance from across a desk. */
+.grid__groups {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+}
+
+.grid__group {
+    align-items: center;
+    background: var(--n-000);
+    border: 1px solid var(--n-300);
+    border-radius: 999px;
+    color: var(--n-600);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: var(--t-xs);
+    font-weight: 600;
+    gap: 0.25rem;
+    padding: 0.2rem 0.6rem;
+    white-space: nowrap;
+}
+
+.grid__group:hover {
+    border-color: var(--brand-400);
+    color: var(--brand-600);
+}
+
+.grid__group.is-on {
+    background: var(--brand-050);
+    border-color: var(--brand-500);
+    color: var(--brand-700);
+}
+
+.grid__group:focus-visible {
+    outline: 2px solid var(--brand-500);
+    outline-offset: 2px;
 }
 
 .grid__note {

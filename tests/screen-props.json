@@ -490,10 +490,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": {
@@ -562,10 +567,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": {
@@ -634,10 +644,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": {
@@ -706,10 +721,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": {
@@ -778,10 +798,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": "[]",
@@ -814,10 +839,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": {
@@ -886,10 +916,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": "[]",
