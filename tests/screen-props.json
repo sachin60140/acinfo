@@ -1287,6 +1287,12 @@
             "emptyText": "string",
             "groupBy": "string",
             "groupLabel": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "jobStatuses": {
                 "approval_done": "string",
                 "cancelled": "string",
@@ -1383,6 +1389,12 @@
             "emptyText": "string",
             "groupBy": "string",
             "groupLabel": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "jobStatuses": {
                 "approval_done": "string",
                 "cancelled": "string",

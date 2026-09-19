@@ -4,8 +4,10 @@
  *
  * The grid is the same grid every other listing uses and is left alone; this
  * only listens for the row somebody asked about and opens the dialog over it.
- * Everything the grid is handed is passed straight through, so a column added
- * to the report tomorrow needs nothing here.
+ * Everything the grid is handed is named below and passed straight through, so
+ * a column added to the report tomorrow needs nothing here — though a new grid
+ * prop does, and VueMountTest is what says so rather than a silently dropped
+ * feature.
  */
 import { computed, ref } from 'vue';
 import DataGrid from './DataGrid.vue';
@@ -14,6 +16,8 @@ import WorkUpdateDialog from './WorkUpdateDialog.vue';
 const props = defineProps({
     columns: { type: Array, required: true },
     rows: { type: Array, default: () => [] },
+    // Bands of columns the reader can turn on; see DataGrid.
+    groups: { type: Array, default: () => [] },
     title: { type: String, default: 'Export' },
     groupBy: { type: String, default: '' },
     groupLabel: { type: String, default: '' },
@@ -43,6 +47,7 @@ const props = defineProps({
 const gridProps = computed(() => ({
     columns: props.columns,
     rows: props.rows,
+    groups: props.groups,
     title: props.title,
     groupBy: props.groupBy,
     groupLabel: props.groupLabel,

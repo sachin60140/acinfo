@@ -200,6 +200,106 @@ class ReportTest extends TestCase
      * quietly dropped from the export shows up as a missing entry rather than
      * hiding behind a heading that still happens to appear somewhere on screen.
      */
+    /*
+     * ---- The columns the report offers rather than shows --------------------
+     *
+     * Fifteen wide, it answered what this party's work was and what it billed
+     * underneath four columns of free text and derived figures nobody reads on
+     * the way past. Those are bands now, and the exports keep everything.
+     */
+
+    /** The report's columns, by key. */
+    private function reportColumns(): array
+    {
+        $columns = [];
+
+        foreach ($this->gridProps(route('report.files'))['columns'] as $column) {
+            $columns[$column['key']] = $column;
+        }
+
+        return $columns;
+    }
+
+    /** What the grid will actually draw: not hidden, not export-only, no band. */
+    private function drawnByDefault(): array
+    {
+        return array_keys(array_filter(
+            $this->reportColumns(),
+            fn ($column) => empty($column['hidden'])
+                && empty($column['exportOnly'])
+                && ! isset($column['group'])
+        ));
+    }
+
+    public function test_the_report_offers_a_band_for_each_further_question(): void
+    {
+        $this->actingAs($this->admin());
+
+        $offered = array_column($this->gridProps(route('report.files'))['groups'], 'key');
+
+        $this->assertSame(['dispatch', 'margin', 'detail'], $offered);
+    }
+
+    public function test_the_columns_it_opens_with_are_what_the_report_is_for(): void
+    {
+        $this->actingAs($this->admin());
+
+        $this->assertSame([
+            'file_no', 'registration_no', 'received', 'work_type',
+            'counterparty', 'status', 'billed', 'cost', 'update',
+        ], $this->drawnByDefault());
+    }
+
+    public function test_the_further_questions_are_behind_their_own_bands(): void
+    {
+        $this->actingAs($this->admin());
+
+        $columns = $this->reportColumns();
+
+        $this->assertSame('dispatch', $columns['dispatched']['group']);
+        $this->assertSame('margin', $columns['expenses']['group']);
+        $this->assertSame('margin', $columns['margin']['group']);
+        $this->assertSame('detail', $columns['description']['group']);
+        $this->assertSame('detail', $columns['remark']['group']);
+    }
+
+    /**
+     * The band above each run of rows already reads "Customer — Car4Sales ·
+     * Ledger balance ...", so a column repeating that name on every row under
+     * it said nothing the reader could not already see.
+     */
+    public function test_the_party_is_not_repeated_under_its_own_band(): void
+    {
+        $this->actingAs($this->admin());
+
+        $columns = $this->reportColumns();
+
+        $this->assertTrue($columns['party_name']['exportOnly'], 'the party name is drawn twice');
+
+        // Still on every row, so the export and the search still have it, and
+        // the band heading still has something to be built from.
+        $this->assertNotEmpty(array_column($this->gridProps(route('report.files'))['rows'], 'party_name'));
+
+        // And still searchable: the grid searches what a column exports, not
+        // what it draws, so typing a party name still narrows the report.
+        $this->assertNotSame(false, $columns['party_name']['searchable'] ?? true);
+    }
+
+    /** A band being shut takes nothing out of the spreadsheet. */
+    public function test_every_column_is_still_exported_whatever_is_shown(): void
+    {
+        $this->actingAs($this->admin());
+
+        foreach ($this->reportColumns() as $key => $column) {
+            if ($key === 'update') {
+                // The one column that is a button rather than data.
+                continue;
+            }
+
+            $this->assertNotSame(false, $column['exportable'] ?? true, "$key stopped being exported");
+        }
+    }
+
     private function gridProps(string $url): array
     {
         $html = $this->get($url)->assertOk()->getContent();
