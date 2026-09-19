@@ -38,6 +38,24 @@ class WorkFileItemModel extends Model
         return $this->belongsTo(WorkTypeModel::class, 'work_type_id');
     }
 
+    /**
+     * Whoever was given this particular job.
+     *
+     * A folder's works go out one at a time: the transfer to the agent who is
+     * quick with transfers, the hypothecation addition to the one with the bank
+     * contact. The folder's own vendor is worked out from these.
+     */
+    public function vendor(): BelongsTo
+    {
+        return $this->belongsTo(PartyModel::class, 'vendor_id');
+    }
+
+    /** Still with a vendor: given out, and not yet come back. */
+    public function isOut(): bool
+    {
+        return (bool) $this->vendor_id && ! $this->vendor_returned_on;
+    }
+
     public function isApproved(): bool
     {
         return $this->status === WorkFileModel::APPROVED;

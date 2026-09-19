@@ -680,23 +680,125 @@ class WorkFileModel extends Model
             ->all();
     }
 
-    public static function papersNotReady(array $fileIds): array
+    public static function papersNotReady(array $fileIds, array $jobIds = []): array
     {
         if (! $fileIds) {
             return [];
         }
 
+        /*
+         * Narrowed to the works going out, when some of them are.
+         *
+         * A folder can hold a transfer whose papers are complete and a
+         * hypothecation addition still waiting on a form. Sending the
+         * transfer is not sending that form out incomplete, and a refusal
+         * about work that is staying here is one people learn to click past.
+         */
+        $only = $jobIds ? ' AND ppw.id IN ('.implode(',', array_map('intval', $jobIds)).')' : '';
+        $pending = str_replace('AND ppw.status NOT IN', $only.' AND ppw.status NOT IN', self::PENDING_PAPERS);
+        $names = str_replace('AND ppnw.status NOT IN',
+            ($jobIds ? ' AND ppnw.id IN ('.implode(',', array_map('intval', $jobIds)).')' : '').' AND ppnw.status NOT IN',
+            self::PENDING_PAPER_NAMES);
+        $audit = str_replace('AND nai.status NOT IN',
+            ($jobIds ? ' AND nai.id IN ('.implode(',', array_map('intval', $jobIds)).')' : '').' AND nai.status NOT IN',
+            self::NEEDS_AUDIT);
+
         return self::query()
             ->whereIn('id', $fileIds)
-            ->where(fn ($q) => $q->whereRaw(self::NEEDS_AUDIT)->orWhereRaw(self::PENDING_PAPERS))
+            ->where(fn ($q) => $q->whereRaw($audit)->orWhereRaw($pending))
             ->select('id')
-            ->selectRaw(self::NEEDS_AUDIT.' as needs_audit')
-            ->selectRaw(self::PENDING_PAPER_NAMES.' as pending_papers')
+            ->selectRaw($audit.' as needs_audit')
+            ->selectRaw($names.' as pending_papers')
             ->get()
             ->mapWithKeys(fn ($file) => [$file->id => $file->needs_audit
                 ? 'papers not checked yet'
                 : 'papers pending: '.$file->pending_papers])
             ->all();
+    }
+
+    /**
+     * The same question asked of each work rather than of the folder.
+     *
+     * The handover screen ticks works one at a time now, so the warning has to
+     * sit where the tick is: a folder whose transfer is ready and whose
+     * hypothecation addition is still waiting on a form should say so against
+     * the addition, not across the whole row. Asked of the folder, the screen
+     * would demand a reason the server no longer wants — papersNotReady()
+     * narrows to the works going out, and the two have to agree, or the
+     * operator is made to explain something nobody objected to.
+     *
+     * Returns [work id => ['why' => 'to_check'|'pending', 'papers' => ?string]],
+     * holding only the works that are not ready. Kept in pieces rather than as a
+     * sentence: the screen writes one wording into a badge and another into the
+     * tooltip beside it, and splitting a sentence back up in a template is how
+     * the two drift apart. Finished work is left out — approved, returned and
+     * cancelled work has nothing left to be checked for.
+     *
+     * @param  array<int, int>  $fileIds
+     * @return array<int, array{why: string, papers: ?string}>
+     */
+    public static function papersNotReadyByJob(array $fileIds): array
+    {
+        if (! $fileIds) {
+            return [];
+        }
+
+        $finished = [self::APPROVED, self::RETURNED, self::CANCELLED];
+
+        /*
+         * Not looked at yet, and with something to look for. A work type with
+         * no paper list, or one whose papers have all been retired, is not held
+         * up by an audit that could never find anything — the same exemption
+         * NEEDS_AUDIT makes.
+         */
+        $toCheck = DB::table('work_file_item as i')
+            ->whereIn('i.work_file_id', $fileIds)
+            ->whereNull('i.papers_audited_at')
+            ->whereNotIn('i.status', $finished)
+            ->whereExists(fn ($q) => $q
+                ->selectRaw('1')
+                ->from('work_type_paper as t')
+                ->join('paper_type as p', 'p.id', '=', 't.paper_type_id')
+                ->where('p.is_active', 1)
+                ->whereColumn('t.work_type_id', 'i.work_type_id'))
+            ->pluck('i.id');
+
+        /*
+         * Still waiting on a paper. One line serves every work that needs it —
+         * an RC covers the hypothecation removal and the transfer alike — so
+         * the pivot is what says which works a pending paper actually holds up.
+         */
+        $pending = DB::table('work_file_paper as p')
+            ->join('paper_type as pt', 'pt.id', '=', 'p.paper_type_id')
+            ->join('work_file_paper_item as pi', 'pi.work_file_paper_id', '=', 'p.id')
+            ->join('work_file_item as i', 'i.id', '=', 'pi.work_file_item_id')
+            ->whereIn('p.work_file_id', $fileIds)
+            ->where('p.state', WorkFilePaperModel::PENDING)
+            ->whereNotIn('i.status', $finished)
+            ->groupBy('pi.work_file_item_id')
+            // Selected and aliased rather than plucked: a raw expression given to
+            // pluck() is read back as a column of that name, and the name is the
+            // SQL.
+            ->selectRaw('pi.work_file_item_id as item_id')
+            ->selectRaw("GROUP_CONCAT(DISTINCT pt.name ORDER BY pt.sort, pt.name SEPARATOR ', ') as names")
+            ->get();
+
+        $why = [];
+
+        foreach ($pending as $row) {
+            $why[(int) $row->item_id] = ['why' => 'pending', 'papers' => $row->names];
+        }
+
+        /*
+         * Written after, and over, what is missing. The pending list on a work
+         * nobody has checked yet is not the whole answer — there may be papers
+         * on it that have not been asked for at all.
+         */
+        foreach ($toCheck as $itemId) {
+            $why[(int) $itemId] = ['why' => 'to_check', 'papers' => null];
+        }
+
+        return $why;
     }
 
     /**
@@ -1613,6 +1715,26 @@ class WorkFileModel extends Model
     }
 
     /**
+     * Who has this folder, in the space a list gives for one name.
+     *
+     * A folder split between vendors has no single one, and its own column is
+     * null — so a list would call it in-house work, which is the one thing it
+     * is not.
+     */
+    public function vendorLabel(): ?string
+    {
+        if ($this->vendor_id) {
+            return $this->vendor?->name;
+        }
+
+        $vendors = $this->items()->whereNotNull('vendor_id')
+            ->where('status', '<>', self::CANCELLED)
+            ->distinct()->count('vendor_id');
+
+        return $vendors > 1 ? $vendors.' vendors' : null;
+    }
+
+    /**
      * What each vendor on this folder is owed for it, and when.
      *
      * The money follows the work: a vendor with two of the three jobs is owed
@@ -1811,9 +1933,25 @@ class WorkFileModel extends Model
     public static function withVendor()
     {
         return self::query()
-            ->with('workType', 'customer', 'vendor', 'items.workType')
-            ->whereNotNull('vendor_id')
-            ->whereNull('vendor_returned_on')
+            ->with('workType', 'customer', 'vendor', 'items.workType', 'items.vendor')
+            /*
+             * A folder with any work still out, rather than a folder with a
+             * vendor. A folder split between two of them has no vendor of its
+             * own, and half of it coming back does not bring the other half.
+             *
+             * Or the folder itself, when that is where the vendor is written. A
+             * folder with no works at all is handed over whole and has nowhere
+             * else to carry one, and the screens that still set a vendor on the
+             * folder direct leave its works empty-handed — asked of the works
+             * alone, both would drop off this screen with the vendor still
+             * holding the papers.
+             */
+            ->where(fn ($outer) => $outer
+                ->whereHas('items', fn ($q) => $q->whereNotNull('vendor_id')
+                    ->whereNull('vendor_returned_on')
+                    ->whereNotIn('status', [self::CANCELLED]))
+                ->orWhere(fn ($own) => $own->whereNotNull('vendor_id')
+                    ->whereNull('vendor_returned_on')))
             /*
              * Everything the vendor is still holding, whatever state the work
              * is in. An approved file is the one that comes back — they got the
@@ -2222,12 +2360,27 @@ class WorkFileModel extends Model
     public static function unassigned()
     {
         return self::query()
-            ->with('workType', 'customer', 'items.workType')
+            // items.vendor: a folder can come back here for its other half, and
+            // the half already gone has to say who has it.
+            ->with('workType', 'customer', 'items.workType', 'items.vendor')
             // Whether its papers are ready to go with it; see assign().
             ->select('work_file.*')
             ->selectRaw(self::NEEDS_AUDIT.' as needs_audit')
             ->selectRaw(self::PENDING_PAPER_NAMES.' as pending_papers')
-            ->whereNull('vendor_id')
+            /*
+             * A folder with any work still on the desk, rather than a folder
+             * with no vendor.
+             *
+             * Its works go out one at a time now, so a folder whose transfer is
+             * with one vendor and whose hypothecation addition is still here
+             * has to come back to this screen — under the old rule it left it
+             * the moment anything on it was given away.
+             */
+            ->where(fn ($outer) => $outer
+                ->whereHas('items', fn ($q) => $q->whereNull('vendor_id')
+                    ->whereNotIn('status', [self::APPROVED, self::RETURNED, self::CANCELLED]))
+                // A folder with no works at all is still handed over whole.
+                ->orWhereDoesntHave('items'))
             // Only work still in hand can be given out. A file that is approved,
             // returned or cancelled has nothing left for a vendor to do.
             ->whereIn('status', self::OPEN_STATUSES)
@@ -3185,6 +3338,30 @@ class WorkFileModel extends Model
             SQL);
     }
 
+    /**
+     * Who has this folder, for a list that reads rows rather than models.
+     *
+     * The same answer vendorLabel() gives, as SQL: a folder split between two
+     * vendors has none of its own, and its column is null — so a list would
+     * call it in-house work, which is the one thing it is not.
+     */
+    private static function vendorLabelColumn()
+    {
+        $cancelled = self::CANCELLED;
+
+        return DB::raw(<<<SQL
+            COALESCE(vendor.name, (
+                SELECT CASE WHEN COUNT(DISTINCT vendor_item.vendor_id) > 1
+                            THEN CONCAT(COUNT(DISTINCT vendor_item.vendor_id), ' vendors')
+                       END
+                FROM work_file_item AS vendor_item
+                WHERE vendor_item.work_file_id = work_file.id
+                  AND vendor_item.vendor_id IS NOT NULL
+                  AND vendor_item.status <> '$cancelled'
+            )) AS vendor_label
+            SQL);
+    }
+
     public static function report(string $partyType, $partyId = null, ?string $status = null, ?string $from = null, ?string $to = null)
     {
         $isVendor = $partyType === 'vendor';
@@ -3668,7 +3845,8 @@ class WorkFileModel extends Model
                 'customer.name as customer_name',
                 'customer.id as customer_id',
                 'vendor.name as vendor_name',
-                'vendor.id as vendor_id'
+                'vendor.id as vendor_id',
+                self::vendorLabelColumn()
             );
 
         if ($status === 'open') {

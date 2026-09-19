@@ -115,6 +115,13 @@
                         "list_of": {
                             "customer_amount": "number",
                             "id": "number",
+                            "papers": "string",
+                            "papers_pending": "null",
+                            "state": "string",
+                            "status_label": "string",
+                            "vendor": "null",
+                            "vendor_amount": "null",
+                            "vendor_date": "null",
                             "vendor_rate": "null",
                             "work_type": "string",
                             "work_type_id": "number"
@@ -130,6 +137,7 @@
             "oldAmounts": "[]",
             "oldOverrides": "[]",
             "pickedFiles": "[]",
+            "pickedJobs": "[]",
             "rateHistory": {
                 "list_of": {
                     "rates": {
@@ -482,10 +490,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": {
@@ -554,10 +567,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": {
@@ -626,10 +644,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": {
@@ -698,10 +721,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": {
@@ -770,10 +798,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": "[]",
@@ -806,10 +839,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": {
@@ -878,10 +916,15 @@
                 "works_approved_on:text",
                 "works_pending:text",
                 "handed_over:text",
-                "pending_papers:text",
-                "action:link:no-export:no-sort"
+                "pending_papers:text"
             ],
             "emptyText": "string",
+            "groups": {
+                "list_of": {
+                    "key": "string",
+                    "label": "string"
+                }
+            },
             "perPage": "number",
             "rowClass": "string",
             "rows": "[]",

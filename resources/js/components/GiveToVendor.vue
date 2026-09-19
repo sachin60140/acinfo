@@ -1,20 +1,27 @@
 <script setup>
 /*
- * Handing a batch of files to one vendor.
+ * Handing a batch of work to one vendor.
  *
  * Field names are the ones WorkFileController::assign() already validates —
- * vendor_id, vendor_date, files[], amounts[<job id>] and remark — so the form still
- * posts normally and the server still checks every value. That is what makes it
- * safe to convert a screen on a live ledger: only the rendering moves, the money
- * logic does not.
+ * vendor_id, vendor_date, files[], jobs[], amounts[<job id>] and remark — so the
+ * form still posts normally and the server still checks every value. That is
+ * what makes it safe to convert a screen on a live ledger: only the rendering
+ * moves, the money logic does not.
  *
- * The screen's job is one handover at a counter: tick the files going out, agree
+ * The screen's job is one handover at a counter: tick the work going out, agree
  * a price on each, and see before saving what the vendor is being credited in
  * total and where that leaves their balance.
  *
- * A folder is ticked whole — the envelope goes across the counter in one piece —
- * but the price is agreed per job inside it. Papers for a transfer and a
- * hypothecation addition are one file, two works, and two costs.
+ * The tick is per job, not per folder. Papers for a transfer and a hypothecation
+ * addition are one file, two works and two costs, and they need not go to the
+ * same person — one agent is quick with transfers, another has the bank
+ * contact. The folder's own box above them is a shorthand for all of their
+ * ticks at once, and a folder half of which has already gone comes back to this
+ * screen for the other half.
+ *
+ * jobs[] is all or nothing on the server: posted at all, it is read as the whole
+ * list of work leaving, for every folder in the batch. So every ticked job posts
+ * its own id — never some folders by job and others whole.
  */
 import { computed, onMounted, reactive, ref } from 'vue';
 import { balance, money, side } from '../money';
@@ -31,6 +38,9 @@ const props = defineProps({
     vendorDateDisplay: { type: String, default: '' },
     remark: { type: String, default: '' },
     pickedFiles: { type: Array, default: () => [] },
+    // And the work ticked inside them, so a bounced batch does not come back
+    // having quietly widened a handover the operator had narrowed.
+    pickedJobs: { type: Array, default: () => [] },
     // The last few rates agreed for each work, keyed by work type.
     rateHistory: { type: Array, default: () => [] },
     oldAmounts: { type: Object, default: () => ({}) },
@@ -39,10 +49,18 @@ const props = defineProps({
 });
 
 /*
- * Step 3 follows step 2: a file goes out once its papers are checked and
- * complete. One that is not can still be ticked — the RTO sometimes takes a
- * paper later — but then it needs a reason, which the office keeps.
+ * Step 3 follows step 2: work goes out once its papers are checked and
+ * complete. Work whose papers are not can still be ticked — the RTO sometimes
+ * takes a paper later — but then the folder needs a reason, which the office
+ * keeps.
+ *
+ * Asked of the work, not of the folder, because the server asks it that way
+ * too. A folder whose transfer is ready and whose hypothecation addition is
+ * still waiting on a form lets the transfer go without a word.
  */
+const jobReady = (item) => ! item.papers || item.papers === 'ready';
+
+// A folder with no work lines of its own carries the answer itself.
 const ready = (file) => ! file.papers || file.papers === 'ready';
 
 const reasons = reactive(
@@ -53,11 +71,21 @@ const chosen = ref(props.vendorId);
 const remarkText = ref(props.remark);
 
 /*
- * The ticked ids, bound straight to the checkboxes. An unticked box posts
- * nothing of its own, and its amount is disabled below, so an amount typed
- * against a file that is not going out cannot reach the vendor's ledger.
+ * The ticked folders, bound straight to the checkboxes. An unticked box posts
+ * nothing of its own, and its amounts are disabled below, so a rate typed
+ * against work that is not going out cannot reach the vendor's ledger.
  */
 const picked = ref(props.pickedFiles.map(Number));
+
+/*
+ * The ticked work, which is what actually goes out.
+ *
+ * Kept beside the folder ticks rather than derived from them: the server reads
+ * jobs[] as the entire list of work leaving, across every folder in the batch,
+ * so a folder ticked with nothing under it would hand over nothing at all.
+ * onFileToggle and onJobToggle are what hold the two in step.
+ */
+const pickedWork = ref(props.pickedJobs.map(Number));
 
 // Keyed on the job, because that is what carries a rate.
 const amounts = reactive(
@@ -68,7 +96,92 @@ const amounts = reactive(
     )
 );
 
+const jobs = (file) => file.items ?? [];
+
+/*
+ * The work on this folder that is still here to be given away. Work already
+ * with a vendor, and work that is finished, is shown but cannot be ticked:
+ * hiding it would make a half-empty folder look like a whole one.
+ */
+const hereJobs = (file) => jobs(file).filter((item) => item.state === 'here');
+
 const isPicked = (file) => picked.value.includes(file.id);
+
+const isJobPicked = (item) => pickedWork.value.includes(item.id);
+
+/*
+ * Some of a folder's work going and some staying. Drawn on the folder's own box
+ * as the half-ticked state, so a part handover is visible from the row without
+ * reading down the works.
+ */
+const partlyPicked = (file) => {
+    const here = hereJobs(file);
+
+    return here.length > 0 && here.some(isJobPicked) && ! here.every(isJobPicked);
+};
+
+/*
+ * Ticking work fills in what that kind of work usually costs.
+ *
+ * On the tick only, and never over something already typed. A rate that
+ * recomputed itself could not be cleared — and a blank box has always meant
+ * "not agreed yet", which is a thing the operator has to be able to say.
+ *
+ * It fills from the work type's vendor cost, never from what the customer is
+ * charged. Those are the two sides of the job and the gap between them is the
+ * margin; using one for the other would credit the vendor the whole charge and
+ * book every file at nothing.
+ */
+function fillRate(item) {
+    if (item.vendor_rate && String(amounts[item.id]).trim() === '') {
+        amounts[item.id] = Number(item.vendor_rate).toFixed(2);
+    }
+}
+
+function takeJob(item) {
+    if (! isJobPicked(item)) {
+        pickedWork.value.push(item.id);
+    }
+
+    fillRate(item);
+}
+
+function dropJobs(file) {
+    const ids = jobs(file).map((item) => item.id);
+
+    pickedWork.value = pickedWork.value.filter((id) => ! ids.includes(id));
+}
+
+/* The folder's box is a shorthand for every tick under it. */
+function onFileToggle(file) {
+    if (isPicked(file)) {
+        hereJobs(file).forEach(takeJob);
+    } else {
+        dropJobs(file);
+    }
+}
+
+/*
+ * And the folder follows its work. Ticking one work on an untouched folder
+ * brings the folder with it — files[] has to name the folder or the server
+ * never looks inside it — and unticking the last one lets the folder go, so a
+ * folder with nothing under it is never posted as a handover of nothing.
+ */
+function onJobToggle(file, item) {
+    if (isJobPicked(item)) {
+        fillRate(item);
+
+        if (! isPicked(file)) {
+            picked.value.push(file.id);
+        }
+
+        return;
+    }
+
+    if (! hereJobs(file).some(isJobPicked)) {
+        picked.value = picked.value.filter((id) => id !== file.id);
+    }
+}
 
 /*
  * What this work has been paid before.
@@ -104,32 +217,6 @@ function toggleRates(work) {
     showingRates.value = showingRates.value === work.id ? null : work.id;
 }
 
-const jobs = (file) => file.items ?? [];
-
-/*
- * Ticking a file fills in what this kind of work usually costs.
- *
- * On the tick only, and never over something already typed. A rate that
- * recomputed itself could not be cleared — and a blank box has always meant
- * "not agreed yet", which is a thing the operator has to be able to say.
- *
- * It fills from the work type's vendor cost, never from what the customer is
- * charged. Those are the two sides of the job and the gap between them is the
- * margin; using one for the other would credit the vendor the whole charge and
- * book every file at nothing.
- */
-function onPick(file) {
-    if (! isPicked(file)) {
-        return;
-    }
-
-    jobs(file).forEach((item) => {
-        if (item.vendor_rate && String(amounts[item.id]).trim() === '') {
-            amounts[item.id] = Number(item.vendor_rate).toFixed(2);
-        }
-    });
-}
-
 /*
  * Narrowing the list.
  *
@@ -145,6 +232,8 @@ function onPick(file) {
  */
 const search = ref('');
 
+// Whoever already holds half of a folder is worth searching on: the other half
+// is usually being sent after it.
 const haystack = (file) => [
     file.file_no,
     file.registration_no,
@@ -152,6 +241,7 @@ const haystack = (file) => [
     file.customer,
     file.received_date,
     ...jobs(file).map((item) => item.work_type),
+    ...jobs(file).map((item) => item.vendor),
 ].filter(Boolean).join(' ').toLowerCase();
 
 const terms = computed(() =>
@@ -190,37 +280,70 @@ const hiddenPicked = computed(() =>
  * quietly dropping a file somebody ticked earlier is as wrong as quietly adding
  * one. The footer says how many are ticked but out of sight.
  */
-// Select all ticks what is ready. A file whose papers are not is ticked on
-// purpose, one at a time, with a reason — never swept in by a header box.
-const shownReady = computed(() => shown.value.filter(ready));
+// Select all takes the work that is ready. Work whose papers are not is ticked
+// on purpose, one at a time, with a reason — never swept in by a header box.
+const sweepJobs = (file) => hereJobs(file).filter(jobReady);
+
+const sweepFiles = computed(() =>
+    shown.value.filter((file) => (jobs(file).length ? sweepJobs(file).length > 0 : ready(file)))
+);
 
 const allPicked = computed({
-    get: () => shownReady.value.length > 0 && shownReady.value.every(isPicked),
+    get: () => sweepFiles.value.length > 0 && sweepFiles.value.every(
+        (file) => isPicked(file) && sweepJobs(file).every(isJobPicked)
+    ),
     set: (on) => {
-        const ids = (on ? shownReady.value : shown.value).map((file) => file.id);
-
-        picked.value = on
-            ? [...new Set([...picked.value, ...ids])]
-            : picked.value.filter((id) => ! ids.includes(id));
-
         if (on) {
-            shownReady.value.forEach(onPick);
+            sweepFiles.value.forEach((file) => {
+                sweepJobs(file).forEach(takeJob);
+
+                if (! isPicked(file)) {
+                    picked.value.push(file.id);
+                }
+            });
+
+            return;
         }
+
+        const ids = shown.value.map((file) => file.id);
+
+        picked.value = picked.value.filter((id) => ! ids.includes(id));
+        shown.value.forEach(dropJobs);
     },
 });
 
-const needsReason = (file) => isPicked(file) && ! ready(file) && String(reasons[file.id] ?? '').trim() === '';
+/*
+ * The work actually leaving, which is what everything below counts.
+ *
+ * Read off the ticked folders as well as the ticked work, so a stray job id
+ * left behind by a folder being unticked can never reach a total.
+ */
+const goingJobs = computed(() =>
+    props.files.filter(isPicked).flatMap((file) => hereJobs(file).filter(isJobPicked))
+);
+
+/*
+ * A reason is owed for the work that is going, not for everything in the
+ * folder. The server narrows the same question to the same work, and the two
+ * have to agree — asked of the folder, this box would demand an explanation
+ * the server never asked for, which is the kind of refusal people learn to type
+ * anything into.
+ */
+const notReadyGoing = (file) => (jobs(file).length
+    ? hereJobs(file).filter(isJobPicked).some((item) => ! jobReady(item))
+    : ! ready(file));
+
+const needsReason = (file) =>
+    isPicked(file) && notReadyGoing(file) && String(reasons[file.id] ?? '').trim() === '';
 
 const unexplained = computed(() => props.files.filter(needsReason).length);
 
-const pickedJobs = computed(() => props.files.filter(isPicked).flatMap(jobs));
-
 const total = computed(() =>
-    pickedJobs.value.reduce((sum, item) => sum + (Number(amounts[item.id]) || 0), 0)
+    goingJobs.value.reduce((sum, item) => sum + (Number(amounts[item.id]) || 0), 0)
 );
 
 const blanks = computed(
-    () => pickedJobs.value.filter((item) => String(amounts[item.id]).trim() === '').length
+    () => goingJobs.value.filter((item) => String(amounts[item.id]).trim() === '').length
 );
 
 const vendor = computed(
@@ -242,8 +365,18 @@ const afterClass = computed(() =>
     vendor.value ? `ui-money--${side(after.value)}` : 'ui-money--strong'
 );
 
+/*
+ * How many folders have some of their work going but not all of it. Said out
+ * loud because it is the one thing about this screen somebody can get wrong
+ * without noticing: the folder is ticked, the row looks handed over, and a work
+ * inside it is staying on the desk.
+ */
+const partFolders = computed(() =>
+    props.files.filter((file) => isPicked(file) && partlyPicked(file)).length
+);
+
 const summary = computed(() => {
-    if (!picked.value.length) {
+    if (! picked.value.length) {
         return terms.value.length && ! shown.value.length
             ? 'No files match that search.'
             : 'Nothing ticked yet.';
@@ -252,10 +385,16 @@ const summary = computed(() => {
     const count = picked.value.length;
     const parts = [`${count} ${count === 1 ? 'file' : 'files'} going out`];
 
-    const works = pickedJobs.value.length;
+    const works = goingJobs.value.length;
 
     if (works !== count) {
-        parts.push(`${works} works`);
+        parts.push(`${works} ${works === 1 ? 'work' : 'works'}`);
+    }
+
+    if (partFolders.value) {
+        const many = partFolders.value === 1 ? 'file is' : 'files are';
+
+        parts.push(`${partFolders.value} ${many} going in part — the rest of it stays here`);
     }
 
     if (blanks.value) {
@@ -375,8 +514,9 @@ onMounted(() => {
                 <div>
                     <h5 class="ui-card__title">Files Waiting to Go Out</h5>
                     <div class="ui-hint">
-                        Tick the files you are handing over. Leave an amount blank if the rate is not
-                        agreed yet &mdash; nothing is posted to the vendor until it is filled in.
+                        Tick the work you are handing over &mdash; a whole folder from the box on its
+                        left, or one work at a time. Leave an amount blank if the rate is not agreed
+                        yet &mdash; nothing is posted to the vendor until it is filled in.
                     </div>
                 </div>
 
@@ -420,13 +560,18 @@ onMounted(() => {
                             <template v-for="file in files" :key="file.id">
                             <tr v-show="matches(file)" :class="{ 'is-picked': isPicked(file) }">
                                 <td data-label="Give out" class="give-pick">
+                                    <!-- Half-ticked while some of the folder's work is going and
+                                         some is staying, so a part handover is legible from the
+                                         row without reading down the works. -->
                                     <input
                                         type="checkbox"
                                         class="give-check"
                                         name="files[]"
                                         :value="file.id"
                                         v-model="picked"
-                                        @change="onPick(file)">
+                                        :indeterminate="partlyPicked(file)"
+                                        :aria-label="`Give out everything still here on ${file.file_no}`"
+                                        @change="onFileToggle(file)">
                                 </td>
 
                                 <td data-label="File No.">
@@ -435,9 +580,11 @@ onMounted(() => {
                                     <div v-if="! ready(file)" class="give-papers" :class="`give-papers--${file.papers}`">
                                         <a :href="file.papers_url" class="ui-link">{{ file.papers_note }}</a>
                                     </div>
-                                    <!-- Asked only once it is ticked, and posted only then. -->
+                                    <!-- Asked only once work that is not ready is actually
+                                         going out, and posted only then — the server asks for a
+                                         reason about the work leaving, not about the folder. -->
                                     <input
-                                        v-if="! ready(file) && isPicked(file)"
+                                        v-if="isPicked(file) && notReadyGoing(file)"
                                         type="text"
                                         class="ui-input give-reason"
                                         :class="{ 'ui-input--invalid': needsReason(file) }"
@@ -458,9 +605,50 @@ onMounted(() => {
                                 <!-- The three columns below stack one line per job
                                      and stay in step, so a folder with two works reads
                                      across: this work, charged this, costing that. -->
+                                <!-- One line per work, and the line is where its tick lives: the
+                                     three columns below stack in step, so a folder with two works
+                                     reads across — this work, charged this, costing that. -->
                                 <td data-label="Work Type">
                                     <div v-for="item in jobs(file)" :key="item.id" class="give-job">
-                                        {{ item.work_type || '&mdash;' }}
+                                        <label v-if="item.state === 'here'" class="give-work">
+                                            <input
+                                                type="checkbox"
+                                                class="give-check give-check--work"
+                                                name="jobs[]"
+                                                :value="item.id"
+                                                v-model="pickedWork"
+                                                :aria-label="`Give out ${item.work_type || 'this work'} on ${file.file_no}`"
+                                                @change="onJobToggle(file, item)">
+                                            <span class="give-work__name">{{ item.work_type || '&mdash;' }}</span>
+
+                                            <!-- Its own papers, beside its own tick, where a
+                                                 folder holds more than one work and the line under
+                                                 its number cannot say which of them is held up.
+                                                 The full sentence is in the tooltip; the badge has
+                                                 to fit on the line or the columns stop lining up. -->
+                                            <span
+                                                v-if="! jobReady(item) && jobs(file).length > 1"
+                                                class="give-work__papers"
+                                                :class="`give-papers--${item.papers}`"
+                                                :title="item.papers === 'to_check'
+                                                    ? 'Papers not checked yet'
+                                                    : `Papers pending: ${item.papers_pending}`">
+                                                <i class="bi bi-exclamation-triangle-fill"></i>
+                                                {{ item.papers === 'to_check' ? 'not checked' : item.papers_pending }}
+                                            </span>
+                                        </label>
+
+                                        <!-- Work that is not going anywhere from here: already
+                                             with somebody, or finished with. Shown rather than
+                                             left out, or a half-empty folder would read as a
+                                             whole one and nobody could see who has the rest. -->
+                                        <span v-else class="give-work give-work--fixed">
+                                            <span class="give-work__name">{{ item.work_type || '&mdash;' }}</span>
+                                            <span v-if="item.state === 'out'" class="give-work__with">
+                                                with {{ item.vendor || 'a vendor' }}<template v-if="item.vendor_date"> since {{ item.vendor_date }}</template>
+                                            </span>
+                                            <span v-else class="give-work__with">{{ item.status_label }}</span>
+                                        </span>
                                     </div>
                                 </td>
 
@@ -480,30 +668,42 @@ onMounted(() => {
                                          row cannot reach the server, and the greying out
                                          says so before anyone presses save. -->
                                     <div v-for="item in jobs(file)" :key="item.id" class="give-job">
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            step="0.01"
-                                            class="ui-input ui-input--amount"
-                                            :name="`amounts[${item.id}]`"
-                                            v-model="amounts[item.id]"
-                                            :disabled="!isPicked(file)"
-                                            placeholder="0.00">
+                                        <template v-if="item.state === 'here'">
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                step="0.01"
+                                                class="ui-input ui-input--amount"
+                                                :name="`amounts[${item.id}]`"
+                                                v-model="amounts[item.id]"
+                                                :disabled="! isJobPicked(item)"
+                                                :aria-label="`Vendor amount for ${item.work_type || 'this work'} on ${file.file_no}`"
+                                                placeholder="0.00">
 
-                                        <!-- What this work was paid before, at the
-                                             moment its rate is being agreed. -->
-                                        <button
-                                            v-if="pastRates(file, item).length"
-                                            type="button"
-                                            class="give-past__open"
-                                            title="What this work has been paid before"
-                                            @click="toggleRates(item)">
-                                            <i class="bi bi-clock-history"></i>
-                                            last {{ money(pastRates(file, item)[0].amount) }} at {{ rtoOf(file) }}
-                                        </button>
-                                        <span v-else class="give-past__none">
-                                            no earlier rate<template v-if="rtoOf(file)"> at {{ rtoOf(file) }}</template>
+                                            <!-- What this work was paid before, at the
+                                                 moment its rate is being agreed. -->
+                                            <button
+                                                v-if="pastRates(file, item).length"
+                                                type="button"
+                                                class="give-past__open"
+                                                title="What this work has been paid before"
+                                                @click="toggleRates(item)">
+                                                <i class="bi bi-clock-history"></i>
+                                                last {{ money(pastRates(file, item)[0].amount) }} at {{ rtoOf(file) }}
+                                            </button>
+                                            <span v-else class="give-past__none">
+                                                no earlier rate<template v-if="rtoOf(file)"> at {{ rtoOf(file) }}</template>
+                                            </span>
+                                        </template>
+
+                                        <!-- Already agreed with whoever has it. Shown, not
+                                             editable: changing what another vendor is owed is a
+                                             correction, and it belongs on the edit screen where
+                                             the effect on their balance is visible. -->
+                                        <span v-else-if="item.state === 'out'" class="ui-money ui-money--cr">
+                                            {{ item.vendor_amount === null ? '&mdash;' : money(item.vendor_amount) }}
                                         </span>
+                                        <span v-else class="ui-money--nil">&mdash;</span>
                                     </div>
                                 </td>
                             </tr>
@@ -761,6 +961,68 @@ onMounted(() => {
 
 .give-job + .give-job {
     margin-top: var(--s-1);
+}
+
+/* A work and its tick, on one line.
+   One line and not two: the Work Type, Charged and Vendor Amount columns stack
+   a block per work and stay in step by having the same number of them at the
+   same height. A note wrapped onto a second line here would push this column's
+   works out of step with their own charges. */
+.give-work {
+    align-items: center;
+    display: flex;
+    gap: var(--s-2);
+    min-width: 0;
+}
+
+label.give-work {
+    cursor: pointer;
+}
+
+.give-work__name {
+    white-space: nowrap;
+}
+
+.give-check--work {
+    flex: none;
+    height: 0.95rem;
+    width: 0.95rem;
+}
+
+/* Work that is not going anywhere from this screen: who has it, or what became
+   of it. Quiet, because it is context and not an instruction. */
+.give-work--fixed .give-work__name {
+    color: var(--n-500);
+}
+
+.give-work__with {
+    color: var(--n-500);
+    font-size: var(--t-xs);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* What this work is still waiting for, said where its rate is being agreed.
+   Truncated rather than wrapped, with the whole of it in the tooltip. */
+.give-work__papers {
+    align-items: center;
+    display: inline-flex;
+    font-size: var(--t-xs);
+    font-weight: 600;
+    gap: 0.2rem;
+    max-width: 10rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.give-work__papers.give-papers--pending {
+    color: var(--warn-600);
+}
+
+.give-work__papers.give-papers--to_check {
+    color: var(--n-600);
 }
 
 /* The vehicle, in the shape a number plate is read in. */

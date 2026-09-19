@@ -16,6 +16,7 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { balance, money, side } from '../money';
 import FilePreview from './FilePreview.vue';
+import CardSection from './CardSection.vue';
 
 /*
  * The approval document being looked at, or null. Held here so the link
@@ -73,6 +74,17 @@ const props = defineProps({
      */
     papers: { type: Object, default: null },
 });
+
+/*
+ * Whether anything went wrong inside a part of the form that can be folded
+ * away. Matched on the field name's first word, because that is what groups
+ * them: items[3][amount] and new_works[0][work_type_id] are both the works.
+ *
+ * A section holding an error is held open by it. A form that folds away the
+ * reason it would not save is worse than a form that is merely long.
+ */
+const errorIn = (...prefixes) => Object.keys(props.errors ?? {})
+    .some((key) => prefixes.some((prefix) => key === prefix || key.startsWith(`${prefix}[`) || key.startsWith(`${prefix}.`)));
 
 // Asked for only when taking a handover back, which has to say why.
 const undoing = ref(Boolean(props.errors && props.errors.undo_remark));
@@ -411,6 +423,40 @@ const worksOnFile = computed(
 );
 
 const canAddWork = computed(() => worksOnFile.value < props.workTypes.length);
+
+/*
+ * What each section that can be folded says about itself while it is shut.
+ *
+ * Counts and totals rather than a label, because the point of the line is to
+ * answer "is there anything in there" without opening it. A file with three
+ * PDFs and a folded Documents section must not look like a file with none.
+ */
+const worksSummary = computed(
+    () => `${worksOnFile.value} ${worksOnFile.value === 1 ? 'work' : 'works'}`
+);
+
+const paidCount = computed(
+    () => paid.filter((one) => ! droppedPaid.has(one.id)).length + newPaid.length
+);
+
+const paidSummary = computed(() => (paidCount.value
+    ? `${paidCount.value} ${paidCount.value === 1 ? 'expense' : 'expenses'} · ${money(paidTotal.value)}`
+    : 'nothing paid out'));
+
+const docsSummary = computed(() => {
+    const held = keepingDocs.value.length;
+    const parts = [];
+
+    if (held) {
+        parts.push(`${held} ${held === 1 ? 'PDF' : 'PDFs'}`);
+    }
+
+    if (addingDocs.value) {
+        parts.push(`${addingDocs.value} to add`);
+    }
+
+    return parts.length ? parts.join(' · ') : 'nothing uploaded';
+});
 
 function addWork() {
     if (canAddWork.value) {
@@ -950,27 +996,28 @@ onMounted(() => {
                         </div>
                     </div>
                 </div>
+            </div>
 
-                <!--
-                    The works this file is for.
+            <!--
+                The works this file is for.
 
-                    Shown whenever there is more than one, because that is when
-                    the boxes above stop being able to say what the file is: a
-                    transfer and a hypothecation addition on one folder have a
-                    charge each, a rate each, and an approval each that arrives
-                    on its own day with its own document.
+                Shown whenever there is more than one, because that is when the
+                boxes above stop being able to say what the file is: a transfer
+                and a hypothecation addition on one folder have a charge each, a
+                rate each, and an approval each that arrives on its own day with
+                its own document.
 
-                    Status is not editable here. A work moves on the board, where
-                    the evidence goes with it — this screen is for corrections.
-                -->
-                <div v-if="isEdit" class="wf-works">
-                    <div class="wf-works__head">
-                        <h3 class="wf-section__title">Works on This File</h3>
-                        <div class="ui-hint">
-                            Correct a type or a price here. Statuses move on the status board,
-                            a work at a time.
-                        </div>
-                    </div>
+                Status is not editable here. A work moves on the board, where the
+                evidence goes with it — this screen is for corrections.
+            -->
+            <CardSection
+                v-if="isEdit"
+                title="Works on This File"
+                hint="Correct a type or a price here. Statuses move on the status board, a work at a time."
+                :summary="worksSummary"
+                :force-open="errorIn('items', 'new_works', 'remove_works')"
+                remember="file.works">
+                <div class="wf-works">
 
                     <div v-if="multiWork" class="ui-table-wrap">
                         <table class="ui-table wf-works__table">
@@ -1135,21 +1182,25 @@ onMounted(() => {
                         </span>
                     </div>
                 </div>
+            </CardSection>
 
-                <!--
-                    Money the office paid out on this file: a transfer challan,
-                    an affidavit, a notary's fee. It raises what the file cost
-                    and writes to no ledger, because it went out of the till
-                    rather than to a vendor or on to a customer.
-                -->
-                <div v-if="isEdit" class="wf-paid">
-                    <div class="wf-paid__head">
-                        <h6 class="wf-paid__title">Expenses on this file</h6>
-                        <span class="ui-hint">
-                            Money the office paid out. It adds to the cost and lowers the margin;
-                            nobody's ledger moves.
-                        </span>
-                    </div>
+            <!--
+                Money the office paid out on this file: a transfer challan, an
+                affidavit, a notary's fee. It raises what the file cost and
+                writes to no ledger, because it went out of the till rather than
+                to a vendor or on to a customer.
+
+                Folded away on a file with none, which is most of them.
+            -->
+            <CardSection
+                v-if="isEdit"
+                title="Expenses on this file"
+                hint="Money the office paid out. It adds to the cost and lowers the margin; nobody's ledger moves."
+                :summary="paidSummary"
+                :open="expenses.length > 0"
+                :force-open="errorIn('expenses', 'new_expenses', 'remove_expenses')"
+                remember="file.expenses">
+                <div class="wf-paid">
 
                     <div v-for="one in paid" :key="one.id" class="wf-paid__row" :class="{ 'is-going': droppedPaid.has(one.id) }">
                         <select
@@ -1241,20 +1292,23 @@ onMounted(() => {
                         <span v-else class="ui-hint">Nothing recorded yet.</span>
                     </div>
                 </div>
+            </CardSection>
 
-                <!--
-                    The papers themselves. Different from the approval
-                    screenshots above, which are evidence that one work came
-                    through: these are the file's own documents, and every one
-                    of them is offered to the customer under its name.
-                -->
-                <div v-if="isEdit" class="wf-docs">
-                    <div class="wf-paid__head">
-                        <h6 class="wf-paid__title">Documents</h6>
-                        <span class="ui-hint">
-                            PDFs for this file. The customer can download every one, under the name you give it here.
-                        </span>
-                    </div>
+            <!--
+                The papers themselves. Different from the approval screenshots
+                above, which are evidence that one work came through: these are
+                the file's own documents, and every one of them is offered to
+                the customer under its name.
+            -->
+            <CardSection
+                v-if="isEdit"
+                title="Documents"
+                hint="PDFs for this file. The customer can download every one, under the name you give it here."
+                :summary="docsSummary"
+                :open="documents.length > 0"
+                :force-open="unnamedDocs > 0 || errorIn('documents', 'document_names', 'remove_documents')"
+                remember="file.documents">
+                <div class="wf-docs">
 
                     <div v-for="doc in documents" :key="doc.id" class="wf-docs__row" :class="{ 'is-going': droppedDocs.has(doc.id) }">
                         <i class="bi bi-file-earmark-pdf wf-docs__icon"></i>
@@ -1337,38 +1391,48 @@ onMounted(() => {
                         </span>
                     </div>
                 </div>
+            </CardSection>
 
-                <!-- Asked only when a price that was already agreed has moved,
-                     and kept for the office: see WorkFileModel::PRICE. -->
-                <div v-if="askingWhy" class="ui-card wf-why">
-                    <div class="ui-card__body">
-                        <h2 class="ui-card__title wf-effect__title">Why is the price changing?</h2>
-                        <p v-if="priceChanges.length" class="wf-why__what">
-                            You are changing <strong>{{ priceChanges.join(', ') }}</strong> on a file that was
-                            already priced.
-                        </p>
-                        <p v-else class="wf-why__what">
-                            You are changing a price on a file that was already priced.
-                        </p>
-                        <label class="ui-label" for="price_remark">
-                            Internal remark <span class="ui-label__req">*</span>
-                        </label>
-                        <input
-                            id="price_remark"
-                            ref="priceRemarkBox"
-                            type="text"
-                            name="price_remark"
-                            class="ui-input"
-                            :class="{ 'ui-input--invalid': needsPriceReason || errors.price_remark }"
-                            v-model="priceRemark"
-                            maxlength="200"
-                            placeholder="e.g. Vendor agreed a lower rate for this office">
-                        <div class="ui-hint" :class="{ 'ui-hint--error': errors.price_remark }">
-                            {{ errors.price_remark || 'Kept on this file\'s history for the office. The customer never sees it.' }}
-                        </div>
+            <!-- Asked only when a price that was already agreed has moved,
+                 and kept for the office: see WorkFileModel::PRICE. -->
+            <div v-if="askingWhy" class="ui-card wf-why">
+                <div class="ui-card__body">
+                    <h2 class="ui-card__title wf-effect__title">Why is the price changing?</h2>
+                    <p v-if="priceChanges.length" class="wf-why__what">
+                        You are changing <strong>{{ priceChanges.join(', ') }}</strong> on a file that was
+                        already priced.
+                    </p>
+                    <p v-else class="wf-why__what">
+                        You are changing a price on a file that was already priced.
+                    </p>
+                    <label class="ui-label" for="price_remark">
+                        Internal remark <span class="ui-label__req">*</span>
+                    </label>
+                    <input
+                        id="price_remark"
+                        ref="priceRemarkBox"
+                        type="text"
+                        name="price_remark"
+                        class="ui-input"
+                        :class="{ 'ui-input--invalid': needsPriceReason || errors.price_remark }"
+                        v-model="priceRemark"
+                        maxlength="200"
+                        placeholder="e.g. Vendor agreed a lower rate for this office">
+                    <div class="ui-hint" :class="{ 'ui-hint--error': errors.price_remark }">
+                        {{ errors.price_remark || 'Kept on this file\'s history for the office. The customer never sees it.' }}
                     </div>
                 </div>
+            </div>
 
+            <!--
+                One save for the whole form, wherever the change was made.
+
+                Its own bar at the foot rather than the foot of the first card:
+                the fields, the works, the expenses and the documents are four
+                cards now, and a Save button belonging to one of them would read
+                as saving only that one.
+            -->
+            <div class="ui-card wf-save">
                 <div class="ui-card__foot">
                     <span class="ui-hint" :class="{ 'ui-hint--error': needsPriceReason }">
                         <template v-if="needsPriceReason">
@@ -1595,6 +1659,38 @@ onMounted(() => {
 </template>
 
 <style>
+/* The four cards of the form stack, with one save bar under them. */
+.wf-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    min-width: 0;
+}
+
+/*
+ * The save bar follows the operator down the form.
+ *
+ * ui-card__foot was already sticky, because this form is taller than a
+ * screen and a Save button that scrolls away is one nobody finds. Splitting
+ * the one card into four left the foot in a card of its own, where sticking
+ * to the bottom of a bar-height card means nothing — so the card is what
+ * sticks now, and the foot inside it sits still.
+ */
+.wf-save {
+    bottom: var(--s-4);
+    position: sticky;
+    z-index: 5;
+}
+
+/* Its whole body is the foot, so the foot's own top edge would draw a second
+   line inside the card's own, and its square top corners would sit inside the
+   card's rounded ones. */
+.wf-save .ui-card__foot {
+    border-radius: var(--r-lg);
+    border-top: 0;
+    position: static;
+}
+
 /* The form and what it does to the two statements, side by side at desk width
    and stacked on a phone. There is no table on this screen, so the row-to-card
    rule has nothing to convert — the same job is done by the grids collapsing
@@ -1724,14 +1820,15 @@ onMounted(() => {
 
 /* The works panel sits between the fields and the footer, inside the same card,
    so it reads as part of the file rather than as a second thing about it. */
-.wf-works {
-    border-top: 1px solid var(--n-200);
-    padding: var(--s-4);
+/* Each of these is a card of its own now, and a card body brings its own
+   padding and its own edge with it. */
+.wf-paid,
+.wf-docs {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
 }
 
-.wf-works__head {
-    margin-bottom: var(--s-3);
-}
 /* A work being added, laid out on the same grid as the works panel above it so
    the two read as one list. */
 /* A work on its way off the file. Struck through rather than gone, so what is
@@ -2164,20 +2261,6 @@ onMounted(() => {
 
 /* Money the office paid out on a file. Laid out as a line per expense so a
    challan and an affidavit read as two entries rather than one paragraph. */
-.wf-paid {
-    border-top: 1px solid var(--n-200);
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-    padding: var(--s-4);
-}
-
-.wf-paid__title {
-    font-size: var(--t-sm);
-    font-weight: 700;
-    margin: 0;
-}
-
 .wf-paid__row {
     align-items: center;
     display: grid;
@@ -2209,14 +2292,6 @@ onMounted(() => {
 
 /* Papers scanned against a file. A line each, so a form and its annexure
    read as two documents rather than one run of text. */
-.wf-docs {
-    border-top: 1px solid var(--n-200);
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-    padding: var(--s-4);
-}
-
 .wf-docs__row {
     align-items: start;
     display: grid;

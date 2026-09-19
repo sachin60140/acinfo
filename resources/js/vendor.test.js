@@ -22,8 +22,8 @@ const FILES = [
         customer: 'Car4Sales',
         customer_amount: 5600,
         items: [
-            { id: 11, work_type_id: 2, work_type: 'TR', customer_amount: 3000, vendor_rate: 1800 },
-            { id: 12, work_type_id: 3, work_type: 'HPA', customer_amount: 2600, vendor_rate: null },
+            { id: 11, work_type_id: 2, work_type: 'TR', customer_amount: 3000, vendor_rate: 1800, state: 'here' },
+            { id: 12, work_type_id: 3, work_type: 'HPA', customer_amount: 2600, vendor_rate: null, state: 'here' },
         ],
     },
 ];

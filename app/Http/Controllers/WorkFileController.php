@@ -232,7 +232,9 @@ class WorkFileController extends Controller
                     ? 'was '.number_format((float) $f->customer_amount, 2, '.', ',')
                     : null,
 
-                'vendor' => $f->vendor_name ?? 'In-house',
+                // "2 vendors" where the folder is split between them: with no
+                // vendor of its own it would otherwise read as work nobody was given.
+                'vendor' => $f->vendor_label ?? 'In-house',
                 'vendor_url' => $f->vendor_id ? route('party.statement', $f->vendor_id) : null,
 
                 /*
@@ -326,6 +328,25 @@ class WorkFileController extends Controller
                 : 'No files received yet. Use Receive Files above to add the first one.',
             'totals' => ['charged' => 'sum', 'cost' => 'sum', 'expenses' => 'sum', 'margin' => 'sum'],
             'rowClass' => 'row_class',
+            /*
+             * What else this list can say, offered rather than shown.
+             *
+             * Fourteen columns answered every question anybody had ever asked of
+             * this screen at once, which meant it answered none of them well:
+             * the seven that say which file this is and where it has got to were
+             * read past a wall of figures nobody was looking at that morning.
+             *
+             * So those seven stand, and the rest are grouped by the question
+             * they answer and turned on when it is being asked. Nothing is lost
+             * — every column still goes into every export, whichever bands are
+             * open — and the choice is remembered per browser, so an office that
+             * always wants the money can turn it on once.
+             */
+            'groups' => [
+                ['key' => 'dispatch', 'label' => 'Vendor & dispatch'],
+                ['key' => 'money', 'label' => 'Cost & margin'],
+                ['key' => 'detail', 'label' => 'Details'],
+            ],
             'columns' => [
                 ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
                 ['key' => 'registration_no', 'label' => 'Vehicle'],
@@ -338,9 +359,9 @@ class WorkFileController extends Controller
                  * asks of a dispatch date is what went out lately.
                  */
                 ['key' => 'dispatched', 'label' => 'Dispatched', 'sortBy' => 'dispatched_raw',
-                    'sortDesc' => true, 'sub' => 'days_out'],
+                    'sortDesc' => true, 'sub' => 'days_out', 'group' => 'dispatch'],
                 ['key' => 'work_type', 'label' => 'Work Type'],
-                ['key' => 'description', 'label' => 'Details'],
+                ['key' => 'description', 'label' => 'Details', 'group' => 'detail'],
                 // A party statement is opened to be read against this list, and
                 // this list is behind a status and date filter — taking the tab
                 // with it means setting the filter again to come back.
@@ -348,14 +369,18 @@ class WorkFileController extends Controller
                 // Debit green, credit red — the same two directions the rest of
                 // the ledger uses, carried by the class the sheet already defines.
                 ['key' => 'charged', 'label' => 'Charged', 'type' => 'money', 'class' => 'dr', 'sub' => 'charged_was'],
-                ['key' => 'vendor', 'label' => 'Vendor', 'type' => 'link', 'linkTo' => 'vendor_url'],
-                ['key' => 'cost', 'label' => 'Cost', 'type' => 'money', 'class' => 'cr', 'sub' => 'cost_was'],
+                ['key' => 'vendor', 'label' => 'Vendor', 'type' => 'link', 'linkTo' => 'vendor_url',
+                    'group' => 'dispatch'],
+                ['key' => 'cost', 'label' => 'Cost', 'type' => 'money', 'class' => 'cr', 'sub' => 'cost_was',
+                    'group' => 'money'],
                 // What the office paid out of its own till, included in the
                 // Cost beside it and broken out so a margin can be read.
-                ['key' => 'expenses', 'label' => 'Expenses', 'type' => 'money', 'class' => 'cr'],
+                ['key' => 'expenses', 'label' => 'Expenses', 'type' => 'money', 'class' => 'cr',
+                    'group' => 'money'],
                 // A margin has a side: earned reads Dr, lost reads Cr, and neither
                 // needs a minus sign to be read correctly.
-                ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold'],
+                ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold',
+                    'group' => 'money'],
                 /*
                  * Every row on the approved screen says the same status, so it
                  * is dropped there and the two columns that differ take its
@@ -388,10 +413,12 @@ class WorkFileController extends Controller
                 ['key' => 'handed_over', 'label' => 'Handed Over', 'exportOnly' => ! $approvals],
                 // A column a spreadsheet can filter on; on screen it is said in the status cell.
                 ['key' => 'pending_papers', 'label' => 'Papers Pending', 'exportOnly' => true],
-                // A column of the word "Edit" is noise in a spreadsheet, and in the
-                // search box it is worse: every row matches anyone typing "edit".
-                ['key' => 'action', 'label' => 'Action', 'type' => 'link', 'linkTo' => 'edit_url',
-                    'sortable' => false, 'searchable' => false, 'exportable' => false],
+                /*
+                 * No Action column. It held the word "Edit" on every row and
+                 * went to the same place the file number already goes — a whole
+                 * column, and the rightmost one on the widest table in the
+                 * application, spent repeating a link that was already there.
+                 */
             ],
             'rows' => $rows,
         ];
@@ -669,11 +696,16 @@ class WorkFileController extends Controller
     }
 
     /**
-     * Hand a batch of files to one vendor.
+     * Hand a batch of work to one vendor.
      *
-     * Only files that have no vendor yet are offered: moving a file that is
-     * already with someone is a correction, and belongs on the edit screen where
-     * the consequence for the first vendor's balance is visible.
+     * By the work, not by the folder. A folder holding a transfer and a
+     * hypothecation addition need not send both to the same person: the ticks
+     * are per job, and a folder half of which has gone comes back to this
+     * screen for the other half.
+     *
+     * Only work nobody has yet is offered. Moving work that is already with
+     * someone is a correction, and belongs on the edit screen where the
+     * consequence for the first vendor's balance is visible.
      */
     public function assign(Request $req)
     {
@@ -683,6 +715,12 @@ class WorkFileController extends Controller
                 'vendor_date' => 'required|date_format:Y-m-d',
                 'files' => 'required|array|min:1',
                 'files.*' => 'integer',
+                /*
+                 * The works going out, by job id. Left out, the whole folder
+                 * goes — which is the ordinary handover and stays one tick.
+                 */
+                'jobs' => 'nullable|array',
+                'jobs.*' => 'integer',
                 'amounts' => 'nullable|array',
                 'amounts.*' => 'nullable|numeric|gte:0|max:99999999',
                 'remark' => 'nullable|string|max:200',
@@ -706,7 +744,18 @@ class WorkFileController extends Controller
                 ->map(fn ($reason) => trim((string) $reason))
                 ->filter(fn ($reason) => $reason !== '');
 
-            $notReady = WorkFileModel::papersNotReady(array_map('intval', (array) $req->input('files')));
+            /*
+             * Asked of the works going out, not of the folder.
+             *
+             * A folder can hold a transfer whose papers are complete and a
+             * hypothecation addition still waiting on a form. Sending the
+             * transfer is not sending the form out incomplete, and stopping it
+             * because of the other work is the kind of refusal people learn to
+             * click past.
+             */
+            $jobs = array_map('intval', (array) $req->input('jobs', []));
+
+            $notReady = WorkFileModel::papersNotReady(array_map('intval', (array) $req->input('files')), $jobs);
 
             $unexplained = collect($notReady)->reject(fn ($why, $id) => $overrides->has($id));
 
@@ -720,19 +769,83 @@ class WorkFileController extends Controller
                 );
             }
 
-            $assigned = DB::transaction(function () use ($req, $amounts, $notReady, $overrides) {
-                // Re-read under the same rules the form was built with, so a stale
-                // page cannot assign a file that has since been given away or
-                // cancelled, and unknown ids simply do not come back.
+            $assigned = DB::transaction(function () use ($req, $amounts, $notReady, $overrides, $jobs) {
+                /*
+                 * Re-read under the same rules the form was built with, so a
+                 * stale page cannot assign work that has since been given away
+                 * or cancelled, and unknown ids simply do not come back.
+                 *
+                 * By the works: a folder half of which is already with somebody
+                 * is still here for the other half.
+                 */
                 $files = WorkFileModel::whereIn('id', $req->input('files'))
-                    ->whereNull('vendor_id')
+                    ->where(fn ($outer) => $outer
+                        ->whereHas('items', fn ($q) => $q->whereNull('vendor_id')
+                            ->whereNotIn('status', [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED]))
+                        ->orWhereDoesntHave('items'))
                     ->where('status', '!=', WorkFileModel::CANCELLED)
                     ->get();
 
                 $vendorName = PartyModel::whereKey($req->vendor_id)->value('name');
 
+                /*
+                 * The folders work actually went out of, which is not the
+                 * folders that were read back. A ticked job somebody else sent
+                 * a moment ago leaves its folder with nothing to give, and
+                 * counting it here would report a handover that did not happen.
+                 */
+                $done = collect();
+
                 foreach ($files as $file) {
                     $from = $file->status;
+
+                    /*
+                     * The works going out of this folder: the ones ticked, or
+                     * all of those still here when the form ticked none.
+                     *
+                     * Work already with a vendor is not re-sent — the same
+                     * folder can come back to this screen for its other half,
+                     * and the half that left is not leaving twice.
+                     */
+                    $here = $file->items->filter(fn ($item) => ! $item->vendor_id
+                        && ! in_array($item->status, [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED], true));
+
+                    $going = $jobs ? $here->whereIn('id', $jobs) : $here;
+
+                    /*
+                     * A folder with no works on it at all is handed over whole,
+                     * the way it always was. Files taken in before a folder
+                     * could hold several works have none, and there is nothing
+                     * for the works to carry — so the folder carries it.
+                     */
+                    if ($file->items->isEmpty()) {
+                        $file->vendor_id = $req->vendor_id;
+                        $file->vendor_date = $req->vendor_date;
+
+                        /*
+                         * No rate is taken here. amounts[] is keyed by job, and a
+                         * folder id read out of it is whatever job happens to share
+                         * the number — work_file and work_file_item count from one
+                         * apiece. The screen offers no box on a folder with no work
+                         * to price, so there is nothing to read even in principle,
+                         * and what it costs is settled on the edit screen as before.
+                         */
+
+                        if (in_array($file->status, [WorkFileModel::IN_OFFICE, WorkFileModel::PAPER_PENDENCY], true)) {
+                            $file->status = WorkFileModel::DISPATCHED;
+                        }
+
+                        $file->save();
+                        $file->syncLedger();
+                        $file->logStatus($from, trim(($req->remark ? $req->remark.' — ' : '').'Given to '.$vendorName));
+                        $done->push($file);
+
+                        continue;
+                    }
+
+                    if ($going->isEmpty()) {
+                        continue;
+                    }
 
                     /*
                      * The rate is agreed per job, because the charge is. A folder
@@ -740,73 +853,57 @@ class WorkFileController extends Controller
                      * costs, and the folder's own figure is their sum — set here
                      * would be erased by the roll-up a moment later.
                      */
-                    foreach ($file->items as $item) {
+                    foreach ($going as $item) {
                         $amount = $amounts[$item->id] ?? null;
+
                         $item->vendor_amount = ($amount === null || $amount === '') ? null : (float) $amount;
+                        $item->vendor_id = $req->vendor_id;
+                        $item->vendor_date = $req->vendor_date;
+                        // Going out again clears the day it last came back.
+                        $item->vendor_returned_on = null;
+
+                        // Leaving the office is true of the work that leaves it.
+                        if (in_array($item->status, [WorkFileModel::IN_OFFICE, WorkFileModel::PAPER_PENDENCY], true)) {
+                            $item->status = WorkFileModel::DISPATCHED;
+                        }
+
                         $item->save();
                     }
 
-                    $file->vendor_id = $req->vendor_id;
-                    $file->vendor_date = $req->vendor_date;
-
                     /*
-                     * The works go with the folder.
+                     * The folder's vendor, date and status are not set here.
                      *
-                     * Each work carries its own vendor now, and the folder's is
-                     * worked out from theirs — so a folder handed over without
-                     * telling its works would roll back up as in-house work.
-                     * Cancelled work is left alone: it was struck off and went
-                     * nowhere.
+                     * They are worked out from the works by the roll-up below:
+                     * one vendor while the works agree and none while they do
+                     * not, and File Dispatch once the work that left says so.
+                     * Written here as well, a handover of half a folder would
+                     * claim the whole of it had gone.
                      */
-                    $file->items()
-                        ->where('status', '<>', WorkFileModel::CANCELLED)
-                        ->update([
-                            'vendor_id' => $req->vendor_id,
-                            'vendor_date' => $req->vendor_date,
-                            // Going out again clears the day it last came back.
-                            'vendor_returned_on' => null,
-                        ]);
-
-                    /*
-                     * Handing a file over is the moment it leaves the office.
-                     *
-                     * Waiting on a paper is one of the ways a file sits on the
-                     * desk, so Paper Pendency leaves with In Office. Left out,
-                     * a file sent on an override stayed in Paper Pendency for
-                     * good while the vendor had it — which is what the board
-                     * and every list then showed.
-                     */
-                    if (in_array($file->status, [WorkFileModel::IN_OFFICE, WorkFileModel::PAPER_PENDENCY], true)) {
-                        $file->status = WorkFileModel::DISPATCHED;
-                        // The jobs move with the folder: the file leaving the office is true of
-                        // every work on it, and the folder's own status is derived from
-                        // theirs — left behind, they would roll it straight back.
-                        /*
-                         * Cancelled work is left where it is. It was struck off
-                         * the folder and off the customer's statement, and moving
-                         * it with the rest brought it back to life — the roll-up
-                         * counts a work that is not cancelled, so the charge
-                         * reappeared on a statement nobody had touched.
-                         */
-                        $file->items()
-                            ->where('status', '<>', WorkFileModel::CANCELLED)
-                            ->update(['status' => WorkFileModel::DISPATCHED]);
-                    }
-
                     // Reloaded because the status above was written straight to
                     // the database; the copies in memory still say what they were.
                     $file->load('items');
                     $file->rollUp();
                     $file->save();
                     $file->syncLedger();
-                    $file->logStatus($from, trim(($req->remark ? $req->remark.' — ' : '').'Given to '.$vendorName));
+                    /*
+                     * Named when only part of the folder went. "Given to
+                     * Sharma" on a folder of three, two of which are with
+                     * somebody else, is a sentence nobody can act on.
+                     */
+                    $went = $going->count() === $file->items->count()
+                        ? 'Given to '.$vendorName
+                        : $going->map(fn ($item) => $item->workType?->name ?? 'work')->implode(', ').' given to '.$vendorName;
+
+                    $file->logStatus($from, trim(($req->remark ? $req->remark.' — ' : '').$went));
 
                     if (isset($notReady[$file->id])) {
                         $file->logStatus($file->status, 'Went to the vendor before its papers were complete ('.$notReady[$file->id].'). Reason: '.$overrides[$file->id], null, WorkFileModel::PAPERS_OVERRIDE);
                     }
+
+                    $done->push($file);
                 }
 
-                return $files;
+                return $done;
             });
 
             if ($assigned->isEmpty()) {
@@ -819,6 +916,9 @@ class WorkFileController extends Controller
 
         $files = WorkFileModel::unassigned();
         $vendors = PartyModel::selectList('vendor');
+
+        // Asked of every work on the screen at once, rather than a query a row.
+        $jobPapers = WorkFileModel::papersNotReadyByJob($files->pluck('id')->all());
 
         // A bounced batch comes back with the date the user chose, not today's.
         $vendorDate = old('vendor_date', date('Y-m-d'));
@@ -835,6 +935,12 @@ class WorkFileController extends Controller
             'vendorDateDisplay' => $vendorDateDisplay,
             'remark' => (string) old('remark'),
             'pickedFiles' => array_map('intval', (array) old('files', [])),
+            /*
+             * The works ticked, not only the folders. A bounced batch that
+             * came back ticking whole folders would quietly widen a handover
+             * the operator had narrowed.
+             */
+            'pickedJobs' => array_map('intval', (array) old('jobs', [])),
             'oldOverrides' => (object) (array) old('overrides', []),
             'oldAmounts' => (object) (array) old('amounts', []),
             /*
@@ -877,9 +983,17 @@ class WorkFileController extends Controller
                 'papers_url' => route('workfile.papers', ['id' => $file->id, 'return_to' => route('workfile.assign')]),
 
                 /*
-                 * A folder is handed over whole, but the rate is agreed per job:
-                 * a transfer and a hypothecation addition in one envelope are two
-                 * charges and two costs.
+                 * The works in the envelope, each one its own handover.
+                 *
+                 * The rate is agreed per job because the charge is — a transfer
+                 * and a hypothecation addition in one folder are two charges and
+                 * two costs — and now the tick is per job too: they do not have
+                 * to go to the same person, or on the same day.
+                 *
+                 * Works already gone and works already finished are sent as
+                 * well. They cannot be ticked, but leaving them out would make a
+                 * half-empty folder look like a whole one, and the operator
+                 * would have no way to see who is holding the rest.
                  */
                 'items' => $file->items->map(fn ($item) => [
                     'id' => (int) $item->id,
@@ -887,11 +1001,35 @@ class WorkFileController extends Controller
                     'work_type' => $item->workType?->name,
                     'customer_amount' => (float) $item->customer_amount,
                     // What this kind of work usually costs to have done, so
-                    // ticking the file fills the box in. Never the customer
-                    // charge: the gap between the two is the margin.
+                    // ticking it fills the box in. Never the customer charge:
+                    // the gap between the two is the margin.
                     'vendor_rate' => $item->workType?->default_vendor_rate === null
                         ? null
                         : (float) $item->workType->default_vendor_rate,
+
+                    /*
+                     * Where this work stands: here to be given out, out with
+                     * somebody already, or done with and never going anywhere.
+                     * Only "here" can be ticked.
+                     */
+                    'state' => in_array($item->status, [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED], true)
+                        ? 'done'
+                        : ($item->vendor_id ? 'out' : 'here'),
+                    'status_label' => WorkFileModel::STATUSES[$item->status] ?? null,
+
+                    // Who has it and since when, for the works that are gone.
+                    'vendor' => $item->vendor?->name,
+                    'vendor_date' => $item->vendor_date ? date('d-m-Y', strtotime($item->vendor_date)) : null,
+                    'vendor_amount' => $item->vendor_amount === null ? null : (float) $item->vendor_amount,
+
+                    /*
+                     * Its own papers, not the folder's. The server asks the
+                     * same question of the works going out, so a folder held up
+                     * by a form on work that is staying here must not ask the
+                     * operator to explain a refusal nobody made.
+                     */
+                    'papers' => $jobPapers[$item->id]['why'] ?? 'ready',
+                    'papers_pending' => $jobPapers[$item->id]['papers'] ?? null,
                 ])->values(),
             ])->values(),
         ];
@@ -1664,7 +1802,8 @@ class WorkFileController extends Controller
             'files' => $files->map(fn ($file) => [
                 'id' => $file->id,
                 'file_no' => $file->file_no,
-                'vendor' => $file->vendor?->name,
+                // Named from the works when the folder is split between vendors.
+                'vendor' => $file->vendorLabel(),
                 'vendor_date' => $file->vendor_date ? date('d-m-Y', strtotime($file->vendor_date)) : null,
                 // How long the vendor has had it, which is why this list is read.
                 'days_out' => WorkFileModel::daysOutText($file->vendor_date, $file->status),
@@ -2016,7 +2155,7 @@ class WorkFileController extends Controller
                 'registration_no' => $file->registration_no,
                 'description' => $file->description,
                 'customer' => $file->customer?->name,
-                'vendor' => $file->vendor?->name,
+                'vendor' => $file->vendorLabel(),
                 'customer_amount' => (float) $file->customer_amount,
                 // The folder's own state, derived from the jobs below it. Shown,
                 // never chosen: it is an answer, not a question.
