@@ -14,9 +14,17 @@
  */
 import { computed } from 'vue';
 import { balance, money, side } from '../money';
+import MiniChart from './MiniChart.vue';
 
 const props = defineProps({
     tiles: { type: Array, default: () => [] },
+
+    /*
+     * The pictures under the figures, described by the server the same way the
+     * tiles are: what to draw and what it is called, never how to draw it.
+     * Each is { title, hint, kind, format, series, rows, href }.
+     */
+    charts: { type: Array, default: () => [] },
 });
 
 /*
@@ -73,12 +81,89 @@ const groups = computed(() => {
                 </component>
             </div>
         </div>
+
+        <!--
+            The pictures, under the figures.
+
+            A tile says what a month was; these say which way it has been going,
+            which is the question somebody actually opens this screen with. Each
+            one links to the screen that holds the same rows, for the reason the
+            tiles do: a figure nobody can get behind is a figure nobody trusts.
+        -->
+        <div v-if="charts.length" class="dash__band">
+            <h2 class="dash__heading">How it is going</h2>
+
+            <div class="dash__charts">
+                <section
+                    v-for="chart in charts"
+                    :key="chart.title"
+                    class="ui-card dash__chart"
+                    :class="{ 'dash__chart--wide': chart.wide }">
+                    <div class="ui-card__head dash__chart-head">
+                        <!-- Allowed to shrink, so a long hint does not push the
+                             link onto a line of its own. -->
+                        <div class="dash__chart-heading">
+                            <h3 class="dash__chart-title">{{ chart.title }}</h3>
+                            <p v-if="chart.hint" class="ui-hint">{{ chart.hint }}</p>
+                        </div>
+                        <a v-if="chart.href" :href="chart.href" class="ui-btn ui-btn--sm">Open</a>
+                    </div>
+
+                    <div class="ui-card__body">
+                        <MiniChart
+                            :kind="chart.kind"
+                            :rows="chart.rows"
+                            :series="chart.series || []"
+                            :format="chart.format || 'count'"
+                            :caption="chart.title + '. ' + (chart.hint || '')" />
+                    </div>
+                </section>
+            </div>
+        </div>
     </div>
 </template>
 
 <style>
 .dash__band + .dash__band {
     margin-top: var(--s-6);
+}
+
+/* Two across on a desk and one on a phone. The money chart wants the room, so
+   it is given both columns where there are two. */
+.dash__charts {
+    display: grid;
+    gap: var(--s-4);
+    grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+}
+
+.dash__chart {
+    min-width: 0;
+}
+
+.dash__chart--wide {
+    grid-column: 1 / -1;
+}
+
+.dash__chart-head {
+    align-items: start;
+    flex-wrap: nowrap;
+    gap: var(--s-3);
+}
+
+.dash__chart-heading {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.dash__chart-head .ui-btn {
+    flex: none;
+}
+
+.dash__chart-title {
+    color: var(--ink-800);
+    font-size: var(--t-md);
+    font-weight: 700;
+    margin: 0;
 }
 
 .dash__heading {

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class PartyModel extends Model
@@ -108,6 +109,54 @@ class PartyModel extends Model
         }
 
         return $totals;
+    }
+
+    /**
+     * The customer who has owed money longest, and since when.
+     *
+     * Not the largest debt — the oldest. A balance of 5,000 from March is a
+     * different conversation from 50,000 from last week, and only one of them
+     * is a problem that has been ignored.
+     *
+     * Dated from the earliest entry a customer still has money outstanding
+     * against, rather than from their last movement: somebody who part-paid
+     * last week has not stopped owing you for March.
+     *
+     * Returns null when nobody is in debit, which is when the tile should not
+     * appear at all — see the note on the Awaiting Price tile.
+     *
+     * @return array{name: string, amount: float, since: string, days: int}|null
+     */
+    public static function oldestUnpaid(string $partyType = 'customer'): ?array
+    {
+        $owing = DB::table('party')
+            ->leftJoin('party_ledger', 'party_ledger.party_id', '=', 'party.id')
+            ->where('party.party_type', $partyType)
+            ->select('party.id', 'party.name', DB::raw(PartyLedgerModel::BALANCE_SQL.' as balance'))
+            ->selectRaw('MIN(party_ledger.txn_date) as first_entry')
+            ->groupBy('party.id', 'party.name')
+            ->havingRaw(PartyLedgerModel::BALANCE_SQL.' > 0')
+            ->get();
+
+        if ($owing->isEmpty()) {
+            return null;
+        }
+
+        // The earliest first entry among those still in debit.
+        $oldest = $owing->filter(fn ($row) => $row->first_entry !== null)
+            ->sortBy('first_entry')
+            ->first();
+
+        if (! $oldest) {
+            return null;
+        }
+
+        return [
+            'name' => $oldest->name,
+            'amount' => round((float) $oldest->balance, 2),
+            'since' => date('d-m-Y', strtotime($oldest->first_entry)),
+            'days' => (int) Carbon::parse($oldest->first_entry)->startOfDay()->diffInDays(now()->startOfDay()),
+        ];
     }
 
     /**

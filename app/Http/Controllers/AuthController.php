@@ -158,6 +158,101 @@ class AuthController extends Controller
         ];
 
         /*
+         * Who is holding the papers, and for how long.
+         *
+         * Counted off the works rather than the folders: a folder split between
+         * two agents is out with both and belongs to neither. The oldest is
+         * named because a vendor with something three days old and one with
+         * something five weeks old are the same count and not the same problem.
+         */
+        $holding = WorkFileModel::vendorsHolding();
+
+        if ($holding['files']) {
+            $tiles[] = [
+                'group' => 'Work',
+                'label' => 'With Vendors',
+                'value' => $holding['files'],
+                'type' => 'count',
+                'note' => trim(implode(' · ', array_filter([
+                    $holding['vendors'].' '.Str::plural('vendor', $holding['vendors']),
+                    match (true) {
+                        $holding['oldest_days'] === null => null,
+                        $holding['oldest_days'] === 0 => 'all sent today',
+                        default => 'oldest '.$holding['oldest_days'].' '
+                            .Str::plural('day', $holding['oldest_days'])
+                            .($holding['oldest_vendor'] ? ' with '.$holding['oldest_vendor'] : ''),
+                    },
+                ]))),
+                'href' => route('workfile.vendorreturn'),
+            ];
+        }
+
+        /*
+         * Work that is through and still on the shelf.
+         *
+         * Finished, charged for, and not yet collected — money the office has
+         * earned and a customer has not come back for. It is the one figure
+         * here that is nobody's fault and still somebody's problem.
+         */
+        $waiting = WorkFileModel::uncollected();
+
+        if ($waiting->isNotEmpty()) {
+            $tiles[] = [
+                'group' => 'Work',
+                'label' => 'Not Yet Collected',
+                'value' => round((float) $waiting->sum('outstanding'), 2),
+                'type' => 'money',
+                'tone' => 'dr',
+                'note' => $waiting->count().' '.Str::plural('file', $waiting->count()).' finished and still here',
+                'href' => route('report.uncollected'),
+            ];
+        }
+
+        /*
+         * Files nobody can finish, because a paper has not arrived.
+         *
+         * Aged from the day the papers came in rather than from the day
+         * somebody noticed the gap: a file has been stuck for as long as it has
+         * been here, whatever the office knew about it.
+         */
+        $papers = WorkFileModel::papersPending();
+
+        if ($papers['files']) {
+            $tiles[] = [
+                'group' => 'Work',
+                'label' => 'Papers Pending',
+                'value' => $papers['files'],
+                'type' => 'count',
+                'note' => $papers['oldest_days']
+                    ? 'oldest here '.$papers['oldest_days'].' '.Str::plural('day', $papers['oldest_days'])
+                    : 'waiting on a document',
+                'href' => route('workfile.index', ['status' => WorkFileModel::PAPERS_PENDING]),
+            ];
+        }
+
+        /*
+         * The debt that has been sitting longest.
+         *
+         * Not the largest — the oldest. 5,000 from March is a different
+         * conversation from 50,000 from last week, and only one of them is a
+         * conversation nobody has had.
+         */
+        $overdue = PartyModel::oldestUnpaid('customer');
+
+        if ($overdue) {
+            $tiles[] = [
+                'group' => 'Parties',
+                'label' => 'Owing Longest',
+                'value' => $overdue['amount'],
+                'type' => 'money',
+                'tone' => 'dr',
+                'note' => $overdue['name'].' · since '.$overdue['since']
+                    .' ('.$overdue['days'].' '.Str::plural('day', $overdue['days']).')',
+                'href' => route('party.index', 'customer'),
+            ];
+        }
+
+        /*
          * Files taken in, or given to a vendor, with the money not yet agreed.
          *
          * Shown only when there are any. A file waiting on a price posts nothing
@@ -195,7 +290,135 @@ class AuthController extends Controller
             ];
         }
 
-        return Screen::make('admin.dashboard', 'vue-dashboard', ['tiles' => $tiles])->toResponse($req);
+        /*
+         * Gathered into their groups before they are handed over.
+         *
+         * The tiles are built in the order they are worked out, and the
+         * component starts a new heading whenever the group changes — so
+         * Owing Longest, which is a Parties figure and is only known after the
+         * work has been counted, put a second "Parties" heading underneath
+         * "Work". Sorting is stable in PHP 8, so the order inside each group is
+         * the order they were written above.
+         */
+        $order = ['Client ledger' => 0, 'Parties' => 1, 'Work' => 2];
+
+        usort($tiles, fn ($a, $b) => ($order[$a['group']] ?? 99) <=> ($order[$b['group']] ?? 99));
+
+        /*
+         * And the same figures over time.
+         *
+         * A tile says what this month is; these say which way it has been
+         * going, which is the question somebody opens this screen with. Each is
+         * described rather than drawn — what to plot and what it is called —
+         * so MiniChart decides how a bar looks in one place for all four.
+         *
+         * Twelve months, because a year is the shortest window in which this
+         * business repeats itself: the month the RTO is slow, the month nobody
+         * buys a vehicle.
+         */
+        $byMonth = WorkFileModel::monthlyMoney(12);
+        $flow = WorkFileModel::monthlyFlow(12);
+        $statuses = WorkFileModel::statusCounts();
+        // Already a collection: vendorPerformance() ends in ->get().
+        $vendors = WorkFileModel::vendorPerformance();
+
+        $charts = [
+            [
+                'title' => 'Money by month',
+                // Three bars a month over a year: the one chart here that cannot
+                // be read in a third of the width.
+                'wide' => true,
+                'hint' => 'Billed, what it cost, and what was left — by the month the papers came in.',
+                'kind' => 'columns',
+                'format' => 'money',
+                'series' => [
+                    ['key' => 'billed', 'label' => 'Billed', 'tone' => 'in'],
+                    ['key' => 'cost', 'label' => 'Cost', 'tone' => 'out'],
+                    ['key' => 'margin', 'label' => 'Margin', 'tone' => 'net'],
+                ],
+                'rows' => array_map(fn ($m) => [
+                    'label' => $m['label'],
+                    'values' => ['billed' => $m['billed'], 'cost' => $m['cost'], 'margin' => $m['margin']],
+                ], $byMonth),
+                'href' => route('report.profit'),
+            ],
+            [
+                'title' => 'Files in and out',
+                'hint' => 'Taken in against finished with. The two lines apart is the office falling behind.',
+                'kind' => 'columns',
+                'format' => 'count',
+                'series' => [
+                    ['key' => 'received', 'label' => 'Received', 'tone' => 'in'],
+                    ['key' => 'finished', 'label' => 'Finished', 'tone' => 'net'],
+                ],
+                'rows' => array_map(fn ($m) => [
+                    'label' => $m['label'],
+                    'values' => ['received' => $m['received'], 'finished' => $m['finished']],
+                ], $flow),
+                'href' => route('report.files'),
+            ],
+        ];
+
+        /*
+         * Where the open work is sitting. Only the statuses that have anything
+         * in them: a row reading zero is a row nobody reads, and the board
+         * itself leaves empty tabs out for the same reason.
+         */
+        $open = [];
+
+        foreach (WorkFileModel::OPEN_STATUSES as $status) {
+            if (($statuses[$status] ?? 0) > 0) {
+                $open[] = [
+                    'label' => WorkFileModel::STATUSES[$status] ?? $status,
+                    'value' => $statuses[$status],
+                ];
+            }
+        }
+
+        if ($open) {
+            usort($open, fn ($a, $b) => $b['value'] <=> $a['value']);
+
+            $charts[] = [
+                'title' => 'Where the open work is',
+                'hint' => 'The '.$statuses['open'].' files still in hand, by the stage they have reached.',
+                'kind' => 'bars',
+                'format' => 'count',
+                'rows' => $open,
+                'href' => route('workfile.status'),
+            ];
+        }
+
+        /*
+         * How long each vendor takes, once they have finished enough for the
+         * figure to mean anything. One file returned in two days is not a
+         * two-day vendor, and ranking somebody top on a single job is how a
+         * number like this starts being distrusted.
+         */
+        $turnaround = $vendors
+            ->filter(fn ($v) => $v->finished >= 2 && $v->average_days !== null)
+            ->sortBy('average_days')
+            ->take(8)
+            ->map(fn ($v) => [
+                'label' => $v->vendor_name,
+                'value' => (int) $v->average_days,
+                'note' => 'over '.$v->finished.' files',
+            ])->values()->all();
+
+        if ($turnaround) {
+            $charts[] = [
+                'title' => 'Vendor turnaround',
+                'hint' => 'Average days to return work, quickest first. Vendors with at least two finished files.',
+                'kind' => 'bars',
+                'format' => 'count',
+                'rows' => $turnaround,
+                'href' => route('report.vendors'),
+            ];
+        }
+
+        return Screen::make('admin.dashboard', 'vue-dashboard', [
+            'tiles' => $tiles,
+            'charts' => $charts,
+        ])->toResponse($req);
     }
 
     public function client(Request $req)

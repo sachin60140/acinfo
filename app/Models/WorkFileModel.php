@@ -2299,6 +2299,203 @@ class WorkFileModel extends Model
      *
      * @return array{open: int, month_billed: float, month_margin: float}
      */
+    /**
+     * When a file's money is not yet settled, as SQL.
+     *
+     * Lifted out of summary() so the month tile and the twelve-month chart
+     * under it cannot drift apart. A file whose price is still to be agreed has
+     * no margin yet and is left out of one rather than counted at a cost of
+     * nothing — and a tile saying 40,000 above a chart saying 62,000 for the
+     * same month is worse than either figure alone.
+     */
+    private static function unsettled(): string
+    {
+        $shortWork = fn (string $column) => "EXISTS (
+            SELECT 1 FROM work_file_item
+            WHERE work_file_item.work_file_id = work_file.id
+              AND work_file_item.status <> '".self::CANCELLED."'
+              AND (work_file_item.$column IS NULL OR work_file_item.$column <= 0))";
+
+        return "(status NOT IN ('".self::CANCELLED."', '".self::RETURNED."') AND (
+            customer_amount IS NULL OR customer_amount <= 0
+            OR ".$shortWork('customer_amount')."
+            OR (vendor_id IS NOT NULL AND (
+                vendor_amount IS NULL OR vendor_amount <= 0
+                OR ".$shortWork('vendor_amount')."))))";
+    }
+
+    /**
+     * What was billed, what it cost and what was left, month by month.
+     *
+     * By the day the papers came in, the same as the File Margin tile, because
+     * that is the month the office thinks of a file as belonging to. Oldest
+     * first, and every month in the range is present even when nothing happened
+     * in it — a chart that silently closes its gaps draws a quiet August as
+     * though it never existed.
+     *
+     * @return array<int, array{label: string, month: string, billed: float, cost: float, margin: float, files: int}>
+     */
+    public static function monthlyMoney(int $months = 12): array
+    {
+        $earned = self::EARNED;
+        $spent = self::SPENT;
+        $unsettled = self::unsettled();
+
+        $from = now()->startOfMonth()->subMonths($months - 1);
+
+        $rows = DB::table('work_file')
+            ->whereDate('received_date', '>=', $from->toDateString())
+            ->selectRaw("DATE_FORMAT(received_date, '%Y-%m') as month")
+            ->selectRaw("COALESCE(SUM($earned), 0) as billed")
+            ->selectRaw("COALESCE(SUM(CASE WHEN $unsettled THEN 0 ELSE ($spent) END), 0) as cost")
+            ->selectRaw("COALESCE(SUM(CASE WHEN $unsettled THEN 0 ELSE $earned - ($spent) END), 0) as margin")
+            ->selectRaw('COUNT(*) as files')
+            ->groupBy('month')
+            // keyBy, not pluck: a row here is four figures, and pluck wants one.
+            ->get()
+            ->keyBy('month');
+
+        return self::overTheMonths($months, function (Carbon $month) use ($rows) {
+            $row = $rows[$month->format('Y-m')] ?? null;
+
+            return [
+                'billed' => round((float) ($row->billed ?? 0), 2),
+                'cost' => round((float) ($row->cost ?? 0), 2),
+                'margin' => round((float) ($row->margin ?? 0), 2),
+                'files' => (int) ($row->files ?? 0),
+            ];
+        });
+    }
+
+    /**
+     * Files taken in against files finished with, month by month.
+     *
+     * Finished meaning approved or gone back to the customer — FINISHED_ON is
+     * the same expression the lists date that by. The two lines answer one
+     * question: is the office keeping up with what is coming through the door.
+     *
+     * @return array<int, array{label: string, month: string, received: int, finished: int}>
+     */
+    public static function monthlyFlow(int $months = 12): array
+    {
+        $from = now()->startOfMonth()->subMonths($months - 1)->toDateString();
+
+        $received = DB::table('work_file')
+            ->whereDate('received_date', '>=', $from)
+            ->selectRaw("DATE_FORMAT(received_date, '%Y-%m') as month")
+            ->selectRaw('COUNT(*) as total')
+            ->groupBy('month')
+            ->pluck('total', 'month');
+
+        $finishedOn = self::FINISHED_ON;
+
+        $finished = DB::table('work_file')
+            ->whereRaw("$finishedOn IS NOT NULL")
+            ->whereRaw("$finishedOn >= ?", [$from])
+            ->selectRaw("DATE_FORMAT($finishedOn, '%Y-%m') as month")
+            ->selectRaw('COUNT(*) as total')
+            ->groupBy('month')
+            ->pluck('total', 'month');
+
+        return self::overTheMonths($months, fn (Carbon $month) => [
+            'received' => (int) ($received[$month->format('Y-m')] ?? 0),
+            'finished' => (int) ($finished[$month->format('Y-m')] ?? 0),
+        ]);
+    }
+
+    /**
+     * The last N months, oldest first, each labelled and filled by the caller.
+     *
+     * Every month present whether anything happened in it or not, for the
+     * reason given on monthlyMoney(): a gap is a fact about the business and a
+     * chart that closes it is telling a different story.
+     */
+    private static function overTheMonths(int $months, callable $fill): array
+    {
+        $out = [];
+        $month = now()->startOfMonth()->subMonths($months - 1);
+
+        for ($i = 0; $i < $months; $i++) {
+            $out[] = array_merge([
+                'month' => $month->format('Y-m'),
+                // "Sep" on its own where the year has not turned, because a
+                // twelve-month axis is mostly one year and reads better short.
+                'label' => $month->format('M'),
+                'year' => $month->format('Y'),
+            ], $fill($month));
+
+            $month = $month->copy()->addMonth();
+        }
+
+        return $out;
+    }
+
+    /**
+     * What vendors are holding right now, and who has had something longest.
+     *
+     * Counted off the works rather than the folders, because a folder split
+     * between two vendors is out with both of them and belongs to neither
+     * alone. Work that has come back is not being held.
+     *
+     * @return array{files: int, vendors: int, oldest_days: ?int, oldest_vendor: ?string}
+     */
+    public static function vendorsHolding(): array
+    {
+        $out = DB::table('work_file_item as i')
+            ->join('work_file as f', 'f.id', '=', 'i.work_file_id')
+            ->join('party as v', 'v.id', '=', 'i.vendor_id')
+            ->whereNotNull('i.vendor_id')
+            ->whereNull('i.vendor_returned_on')
+            ->whereNotIn('i.status', [self::APPROVED, self::RETURNED, self::CANCELLED])
+            ->selectRaw('COUNT(DISTINCT i.work_file_id) as files')
+            ->selectRaw('COUNT(DISTINCT i.vendor_id) as vendors')
+            ->selectRaw('MAX(DATEDIFF(CURDATE(), i.vendor_date)) as oldest_days')
+            ->first();
+
+        $days = $out?->oldest_days === null ? null : (int) $out->oldest_days;
+
+        // Who that oldest one is with, asked only when there is one to name.
+        $vendor = $days === null ? null : DB::table('work_file_item as i')
+            ->join('party as v', 'v.id', '=', 'i.vendor_id')
+            ->whereNotNull('i.vendor_id')
+            ->whereNull('i.vendor_returned_on')
+            ->whereNotIn('i.status', [self::APPROVED, self::RETURNED, self::CANCELLED])
+            ->whereRaw('DATEDIFF(CURDATE(), i.vendor_date) = ?', [$days])
+            ->value('v.name');
+
+        return [
+            'files' => (int) ($out?->files ?? 0),
+            'vendors' => (int) ($out?->vendors ?? 0),
+            'oldest_days' => $days,
+            'oldest_vendor' => $vendor,
+        ];
+    }
+
+    /**
+     * Files held up waiting on a paper, and how long the oldest has waited.
+     *
+     * The same question the files list asks with PENDING_PAPERS, counted rather
+     * than listed. Waited from the day the papers came in: a file nobody can
+     * finish is ageing from the moment it arrived, not from the moment somebody
+     * noticed a form was missing.
+     *
+     * @return array{files: int, oldest_days: ?int}
+     */
+    public static function papersPending(): array
+    {
+        $row = DB::table('work_file')
+            ->whereIn('status', self::OPEN_STATUSES)
+            ->whereRaw(self::PENDING_PAPERS)
+            ->selectRaw('COUNT(*) as files')
+            ->selectRaw('MAX(DATEDIFF(CURDATE(), received_date)) as oldest_days')
+            ->first();
+
+        return [
+            'files' => (int) ($row?->files ?? 0),
+            'oldest_days' => $row?->oldest_days === null ? null : (int) $row->oldest_days,
+        ];
+    }
+
     public static function summary(): array
     {
         $open = (int) DB::table('work_file')
@@ -2316,22 +2513,12 @@ class WorkFileModel extends Model
          * file out with a vendor at no agreed rate reported its entire charge
          * as profit — on the one figure the business is run from.
          *
-         * The arms mirror awaitingPrice(): settled files are not outstanding,
-         * and a folder is asked about along with every live work on it, because
-         * a folder half priced totals more than zero and reads as settled.
+         * The rule itself is unsettled(), shared with the twelve-month chart
+         * this tile now sits above. Two copies of it would eventually disagree,
+         * and a tile and a chart disagreeing about the same month is worse than
+         * either of them being wrong on its own.
          */
-        $shortWork = fn (string $column) => "EXISTS (
-            SELECT 1 FROM work_file_item
-            WHERE work_file_item.work_file_id = work_file.id
-              AND work_file_item.status <> '".self::CANCELLED."'
-              AND (work_file_item.$column IS NULL OR work_file_item.$column <= 0))";
-
-        $outstanding = "(status NOT IN ('".self::CANCELLED."', '".self::RETURNED."') AND (
-            customer_amount IS NULL OR customer_amount <= 0
-            OR ".$shortWork('customer_amount')."
-            OR (vendor_id IS NOT NULL AND (
-                vendor_amount IS NULL OR vendor_amount <= 0
-                OR ".$shortWork('vendor_amount')."))))";
+        $outstanding = self::unsettled();
 
         $month = DB::table('work_file')
             ->whereYear('received_date', now()->year)
