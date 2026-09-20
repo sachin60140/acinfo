@@ -2378,6 +2378,9 @@ class WorkFileModel extends Model
              */
             ->where(fn ($outer) => $outer
                 ->whereHas('items', fn ($q) => $q->whereNull('vendor_id')
+                    // Work the office said it is doing itself is not waiting for
+                    // anybody; see WorkFileItemModel::isWaitingForAVendor().
+                    ->whereNull('kept_in_house_on')
                     ->whereNotIn('status', [self::APPROVED, self::RETURNED, self::CANCELLED]))
                 // A folder with no works at all is still handed over whole.
                 ->orWhereDoesntHave('items'))

@@ -37,6 +37,7 @@ const work = (id, name, over = {}) => ({
     vendor_amount: null,
     papers: 'ready',
     papers_pending: null,
+    kept_on: null,
     ...over,
 });
 
@@ -77,6 +78,7 @@ function mount(overrides = {}) {
         files: [WHOLE, HALF],
         vendors: [{ id: 6, name: 'Sharma Ji', mobile: '9835630000', current_balance: 0 }],
         action: '/admin/file/assign',
+        keepUrl: '/admin/file/keep-in-house',
         csrf: 'token',
         cancelUrl: '/admin/files',
         vendorId: 6,
@@ -221,6 +223,64 @@ describe('work that is already with somebody', () => {
 
         expect(amount(host, 22)).toBeNull();
         expect(fileBox(host, 2).closest('tr').textContent).toContain('1,200');
+    });
+});
+
+describe('work the office is doing itself', () => {
+    /* A third folder: one work kept here, one still waiting. */
+    const OURS = file(3, [
+        work(31, 'TR', { state: 'kept', kept_on: '18-09-2026' }),
+        work(32, 'HPA'),
+    ]);
+
+    const withOurs = (over = {}) => mount({ files: [OURS], ...over });
+
+    it('offers no tick for work that is ours, and says since when', () => {
+        const host = withOurs();
+
+        expect(workBox(host, 31)).toBeNull();
+
+        const row = fileBox(host, 3).closest('tr');
+
+        expect(row.textContent).toContain('kept in-house');
+        expect(row.textContent).toContain('since 18-09-2026');
+    });
+
+    it('never sweeps it in with the folder box above it', async () => {
+        const host = withOurs();
+
+        await click(fileBox(host, 3));
+
+        expect(postedWork(host)).toEqual([32]);
+    });
+
+    /*
+     * The same ticks, posted somewhere else. formnovalidate is what lets it go
+     * without a vendor chosen: giving work away needs somebody to give it to,
+     * keeping it does not.
+     */
+    it('offers to keep the ticked work instead, once something is ticked', async () => {
+        const host = withOurs();
+
+        const keep = () => [...host.querySelectorAll('button[type="submit"]')]
+            .find((b) => b.textContent.includes('in-house'));
+
+        expect(keep()).toBeUndefined();
+
+        await click(workBox(host, 32));
+
+        expect(keep()).toBeDefined();
+        expect(keep().getAttribute('formaction')).toBe('/admin/file/keep-in-house');
+        expect(keep().hasAttribute('formnovalidate')).toBe(true);
+    });
+
+    it('offers nothing to keep when the screen was given nowhere to post it', async () => {
+        const host = mount({ files: [OURS], keepUrl: '' });
+
+        await click(workBox(host, 32));
+
+        expect([...host.querySelectorAll('button[type="submit"]')]
+            .find((b) => b.textContent.includes('in-house'))).toBeUndefined();
     });
 });
 

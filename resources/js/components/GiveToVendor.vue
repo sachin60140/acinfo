@@ -30,6 +30,8 @@ const props = defineProps({
     files: { type: Array, default: () => [] },
     vendors: { type: Array, default: () => [] },
     action: { type: String, required: true },
+    // Where the same ticked work goes when it is staying here instead.
+    keepUrl: { type: String, default: '' },
     csrf: { type: String, required: true },
     cancelUrl: { type: String, required: true },
     // Repopulation after a failed validation, so nothing typed is lost.
@@ -647,6 +649,13 @@ onMounted(() => {
                                             <span v-if="item.state === 'out'" class="give-work__with">
                                                 with {{ item.vendor || 'a vendor' }}<template v-if="item.vendor_date"> since {{ item.vendor_date }}</template>
                                             </span>
+                                            <!-- Ours. Shown rather than dropped, so the row says why
+                                                 this work has no tick instead of simply lacking one;
+                                                 letting go of it again is done on the edit screen. -->
+                                            <span v-else-if="item.state === 'kept'" class="give-work__with give-work__with--kept">
+                                                <i class="bi bi-house-check"></i>
+                                                kept in-house<template v-if="item.kept_on"> since {{ item.kept_on }}</template>
+                                            </span>
                                             <span v-else class="give-work__with">{{ item.status_label }}</span>
                                         </span>
                                     </div>
@@ -760,6 +769,27 @@ onMounted(() => {
                 <span class="ui-hint">{{ summary }}</span>
                 <div class="give-actions">
                     <a :href="cancelUrl" class="ui-btn">Cancel</a>
+
+                    <!--
+                        The same ticks, posted somewhere else.
+
+                        formaction sends this button's submit to keepInHouse()
+                        instead, and formnovalidate is what lets it go without a
+                        vendor: the select above is required because giving work
+                        away needs somebody to give it to, and keeping it does
+                        not. Nothing about the money moves either way.
+                    -->
+                    <button
+                        v-if="keepUrl && goingJobs.length"
+                        type="submit"
+                        class="ui-btn"
+                        :formaction="keepUrl"
+                        formnovalidate
+                        title="We are doing this work here, so stop offering it to vendors">
+                        <i class="bi bi-house-check"></i>
+                        Keep {{ goingJobs.length === 1 ? 'it' : 'them' }} in-house
+                    </button>
+
                     <button type="submit" class="ui-btn ui-btn--primary" :disabled="unexplained > 0">
                         <i class="bi bi-check2-circle"></i> Give to Vendor
                     </button>
@@ -1005,6 +1035,13 @@ label.give-work {
 
 /* What this work is still waiting for, said where its rate is being agreed.
    Truncated rather than wrapped, with the whole of it in the tooltip. */
+/* Ours, in the colour the rest of the application uses for something settled
+   rather than something pending. */
+.give-work__with--kept {
+    color: var(--brand-600);
+    font-weight: 600;
+}
+
 .give-work__papers {
     align-items: center;
     display: inline-flex;

@@ -781,6 +781,7 @@ class WorkFileController extends Controller
                 $files = WorkFileModel::whereIn('id', $req->input('files'))
                     ->where(fn ($outer) => $outer
                         ->whereHas('items', fn ($q) => $q->whereNull('vendor_id')
+                            ->whereNull('kept_in_house_on')
                             ->whereNotIn('status', [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED]))
                         ->orWhereDoesntHave('items'))
                     ->where('status', '!=', WorkFileModel::CANCELLED)
@@ -807,8 +808,7 @@ class WorkFileController extends Controller
                      * folder can come back to this screen for its other half,
                      * and the half that left is not leaving twice.
                      */
-                    $here = $file->items->filter(fn ($item) => ! $item->vendor_id
-                        && ! in_array($item->status, [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED], true));
+                    $here = $file->items->filter(fn ($item) => $item->isWaitingForAVendor());
 
                     $going = $jobs ? $here->whereIn('id', $jobs) : $here;
 
@@ -928,6 +928,8 @@ class WorkFileController extends Controller
 
         $props = [
             'action' => route('workfile.assign'),
+            // The same ticks, posted somewhere else: see keepInHouse().
+            'keepUrl' => route('workfile.keepinhouse'),
             'csrf' => csrf_token(),
             'cancelUrl' => route('workfile.index'),
             'vendorId' => old('vendor_id') ? (int) old('vendor_id') : '',
@@ -1014,7 +1016,11 @@ class WorkFileController extends Controller
                      */
                     'state' => in_array($item->status, [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED], true)
                         ? 'done'
-                        : ($item->vendor_id ? 'out' : 'here'),
+                        : ($item->vendor_id ? 'out' : ($item->isKeptInHouse() ? 'kept' : 'here')),
+                    // When the office said it was doing this one itself.
+                    'kept_on' => $item->kept_in_house_on
+                        ? date('d-m-Y', strtotime($item->kept_in_house_on))
+                        : null,
                     'status_label' => WorkFileModel::STATUSES[$item->status] ?? null,
 
                     // Who has it and since when, for the works that are gone.
@@ -1041,6 +1047,83 @@ class WorkFileController extends Controller
             'anyFiles' => WorkFileModel::exists(),
             'vendorCount' => $vendors->count(),
         ])->toResponse($req);
+    }
+
+    /**
+     * Say that the office is doing some work itself.
+     *
+     * The other thing that can happen to a work on the Give to Vendor screen.
+     * It is offered there because it has no vendor and is not finished, which
+     * is exactly what a work being done at this counter looks like — so that
+     * folder sat on the list of work waiting to go out until the work was
+     * approved, next to the work that really was waiting.
+     *
+     * Nothing about the money moves. The customer is charged the same, no
+     * vendor is credited anything, and the work goes on through the status
+     * board as before. All that changes is that nobody is being asked to send
+     * it any more.
+     *
+     * Letting go of it again is a correction and lives on the edit screen, for
+     * the same reason moving a file to a different vendor does: by then the
+     * folder may have left this list entirely.
+     */
+    public function keepInHouse(Request $req)
+    {
+        $req->validate([
+            'files' => 'required|array|min:1',
+            'files.*' => 'integer',
+            'jobs' => 'required|array|min:1',
+            'jobs.*' => 'integer',
+        ], [
+            'jobs.required' => 'Tick the work you are keeping in-house.',
+        ]);
+
+        $jobs = array_map('intval', (array) $req->input('jobs'));
+
+        $kept = DB::transaction(function () use ($req, $jobs) {
+            /*
+             * Re-read under the same rule the screen was drawn with, so a stale
+             * page cannot keep work that has since been given away: work with a
+             * vendor is with them, and saying it is being done here would be a
+             * second answer to a question already settled.
+             */
+            $files = WorkFileModel::whereIn('id', $req->input('files'))
+                ->where('status', '!=', WorkFileModel::CANCELLED)
+                ->with('items.workType')
+                ->get();
+
+            $done = collect();
+
+            foreach ($files as $file) {
+                $keeping = $file->items
+                    ->whereIn('id', $jobs)
+                    ->filter(fn ($item) => $item->isWaitingForAVendor());
+
+                if ($keeping->isEmpty()) {
+                    continue;
+                }
+
+                foreach ($keeping as $item) {
+                    $item->kept_in_house_on = now()->toDateString();
+                    $item->save();
+                }
+
+                $named = $keeping->map(fn ($item) => $item->workType?->name ?? 'work')->implode(', ');
+
+                $file->logStatus($file->status, $named.' kept in-house');
+
+                $done->push($file);
+            }
+
+            return $done;
+        });
+
+        if ($kept->isEmpty()) {
+            return back()->with('error', 'That work is no longer here to keep — it may have been given out already.');
+        }
+
+        return redirect()->route('workfile.assign')
+            ->with('success', 'Kept in-house on '.$kept->count().' '.Str::plural('file', $kept->count()).': '.$kept->pluck('file_no')->implode(', '));
     }
 
     /**
@@ -2267,6 +2350,8 @@ class WorkFileController extends Controller
                 'items.*.work_type_id' => 'required|integer|exists:work_type,id',
                 'items.*.customer_amount' => 'required|numeric|gte:0|max:99999999',
                 'items.*.vendor_amount' => 'nullable|numeric|gte:0|max:99999999',
+                // Ticked, the office is doing this work itself; see keepInHouse().
+                'items.*.in_house' => 'nullable|boolean',
                 // Why a price that was already agreed has moved. Office-only;
                 // see the check below.
                 'price_remark' => 'nullable|string|max:200',
@@ -2547,6 +2632,28 @@ class WorkFileController extends Controller
                         $item->vendor_amount = ($correction['vendor_amount'] ?? '') === ''
                             ? null
                             : (float) $correction['vendor_amount'];
+
+                        /*
+                         * Kept in-house, or let go of again.
+                         *
+                         * Give to Vendor is where a work is marked as ours,
+                         * because that is the screen it was cluttering. Taking
+                         * the mark off is a correction and belongs here, for
+                         * the same reason moving a file to another vendor does:
+                         * by then the folder has left that list and there is
+                         * nowhere there to say it.
+                         *
+                         * Work already with a vendor is not touched either way.
+                         * It is with them, and saying it is being done here
+                         * would be a second answer to a settled question.
+                         */
+                        if (! $item->vendor_id) {
+                            $item->kept_in_house_on = empty($correction['in_house'])
+                                ? null
+                                // Kept already, keep the day it was decided.
+                                : ($item->kept_in_house_on ?: now()->toDateString());
+                        }
+
                         $item->save();
                     }
                 }
@@ -2922,6 +3029,11 @@ class WorkFileController extends Controller
                     'vendor_amount' => $item->vendor_amount === null ? '' : (float) $item->vendor_amount,
                     'status' => $item->status,
                     'status_label' => WorkFileModel::STATUSES[$item->status] ?? $item->status,
+                    // Whether the office said it is doing this one itself, and
+                    // whether it is still free to say so: work already with a
+                    // vendor is with them.
+                    'in_house' => $item->isKeptInHouse(),
+                    'has_vendor' => (bool) $item->vendor_id,
                     'screenshot_url' => $item->approval_screenshot ? route('workfile.approval', ['id' => $item->work_file_id, 'item' => $item->id]) : null,
                     'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
                 ])->values()
