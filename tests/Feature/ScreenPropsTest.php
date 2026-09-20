@@ -66,13 +66,15 @@ class ScreenPropsTest extends TestCase
      */
     private function seedWork(): void
     {
-        $customer = \App\Models\PartyModel::where('party_type', 'customer')->where('is_active', 1)->first();
-        $vendor = \App\Models\PartyModel::where('party_type', 'vendor')->where('is_active', 1)->first();
-        $type = \App\Models\WorkTypeModel::where('is_active', 1)->first();
-
-        if (! $customer || ! $type) {
-            return;
-        }
+        /*
+         * Made rather than looked for. This used to take whatever was in the
+         * database and return quietly when there was nothing, which on an empty
+         * one meant every screen below was compared against no rows at all —
+         * a golden file full of shapes that were never drawn.
+         */
+        $customer = $this->anyParty('customer');
+        $vendor = $this->anyParty('vendor');
+        $type = $this->anyWorkType();
 
         // One still in hand and unassigned, one out with a vendor: between them
         // every screen below has a row to draw.

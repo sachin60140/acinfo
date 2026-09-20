@@ -336,14 +336,7 @@ class DashboardTest extends TestCase
      */
     private function workFile(int $customerId, ?int $vendorId = null): WorkFileModel
     {
-        $type = WorkTypeModel::where('is_active', 1)->first();
-
-        if (! $type) {
-            $type = new WorkTypeModel;
-            $type->name = 'Mount Work '.uniqid();
-            $type->is_active = 1;
-            $type->save();
-        }
+        $type = $this->anyWorkType();
 
         $file = new WorkFileModel;
         $file->file_no = 'F-MOUNT-'.uniqid();
