@@ -208,9 +208,18 @@ class ReportTest extends TestCase
      * the way past. Those are bands now, and the exports keep everything.
      */
 
-    /** The report's columns, by key. */
+    /**
+     * The report's columns, by key.
+     *
+     * With a row to draw, because the screen shows an empty state instead of the
+     * grid when it has nothing — and then there are no columns to ask about at
+     * all. The file is made inside the test's transaction and rolled back with
+     * it.
+     */
     private function reportColumns(): array
     {
+        $this->file($this->customerA, 5000, $this->vendor, 3000);
+
         $columns = [];
 
         foreach ($this->gridProps(route('report.files'))['columns'] as $column) {
@@ -234,6 +243,9 @@ class ReportTest extends TestCase
     public function test_the_report_offers_a_band_for_each_further_question(): void
     {
         $this->actingAs($this->admin());
+
+        // A row, or the screen draws its empty state and has no grid to ask.
+        $this->file($this->customerA, 5000, $this->vendor, 3000);
 
         $offered = array_column($this->gridProps(route('report.files'))['groups'], 'key');
 

@@ -299,7 +299,7 @@ class CustomerPortalTest extends TestCase
         $file = new \App\Models\WorkFileModel;
         $file->file_no = 'F-'.substr((string) microtime(true), -6);
         $file->received_date = '2026-01-05';
-        $file->work_type_id = \App\Models\WorkTypeModel::query()->value('id');
+        $file->work_type_id = $this->anyWorkType()->id;
         $file->customer_id = $customer->id;
         $file->customer_amount = 4000;
         $file->status = 'in_office';
@@ -1148,6 +1148,22 @@ class CustomerPortalTest extends TestCase
 
     // ------------------------------------------------------------ the history
 
+    /**
+     * Whoever these written-by-hand log rows belong to.
+     *
+     * user_id used to be the literal 1, which is a real person on a machine
+     * somebody has been working in and nobody at all on a fresh database — the
+     * foreign key refuses it and eight tests fail on a row they only needed for
+     * its remark. Made once and reused, so a file's history is not written by a
+     * different person every line.
+     */
+    private ?User $logUser = null;
+
+    private function logUser(): User
+    {
+        return $this->logUser ??= $this->admin();
+    }
+
     private function log(int $fileId, ?string $from, string $to, ?string $remark, ?int $itemId = null): void
     {
         \Illuminate\Support\Facades\DB::table('work_file_status_log')->insert([
@@ -1156,7 +1172,7 @@ class CustomerPortalTest extends TestCase
             'from_status' => $from,
             'to_status' => $to,
             'remark' => $remark,
-            'user_id' => 1,
+            'user_id' => $this->logUser()->id,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -1199,7 +1215,15 @@ class CustomerPortalTest extends TestCase
             ->firstWhere('remark', 'Online Done');
 
         $this->assertNotNull($entry);
-        $this->assertSame('HPA', $entry['work_type'], 'a folder of several says which work moved');
+
+        /*
+         * Named against the work that actually moved, rather than against the
+         * literal 'HPA'. That only ever passed because the first work type in
+         * this machine's database happens to be called that — on any other one
+         * it was asserting the contents of a database rather than what the
+         * timeline does with them.
+         */
+        $this->assertSame($item->workType->name, $entry['work_type'], 'a folder of several says which work moved');
     }
 
     public function test_the_history_never_names_the_vendor(): void
@@ -1349,14 +1373,14 @@ class CustomerPortalTest extends TestCase
             [
                 'work_file_id' => $file->id, 'work_file_item_id' => null,
                 'from_status' => null, 'to_status' => 'in_office',
-                'remark' => 'An older note', 'user_id' => 1,
+                'remark' => 'An older note', 'user_id' => $this->logUser()->id,
                 'created_at' => '2026-01-10 09:00:00', 'updated_at' => '2026-01-10 09:00:00',
             ],
             [
                 // Moved later, with nothing written.
                 'work_file_id' => $file->id, 'work_file_item_id' => null,
                 'from_status' => 'in_office', 'to_status' => 'under_verification',
-                'remark' => null, 'user_id' => 1,
+                'remark' => null, 'user_id' => $this->logUser()->id,
                 'created_at' => '2026-02-20 09:00:00', 'updated_at' => '2026-02-20 09:00:00',
             ],
         ]);

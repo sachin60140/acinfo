@@ -72,7 +72,7 @@ class HandOverTest extends TestCase
         $file->file_no = 'F-HO-'.uniqid();
         $file->received_date = '2026-09-01';
         $file->registration_no = 'BR01HO'.random_int(1000, 9999);
-        $file->work_type_id = WorkTypeModel::query()->value('id');
+        $file->work_type_id = $this->anyWorkType()->id;
         $file->customer_id = $customer->id;
         $file->customer_amount = 5000;
         $file->vendor_id = $this->vendor->id;

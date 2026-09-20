@@ -68,7 +68,7 @@ class StatementExportTest extends TestCase
         $file = new WorkFileModel;
         $file->file_no = 'F-'.substr((string) microtime(true), -6);
         $file->received_date = '2026-01-05';
-        $file->work_type_id = WorkTypeModel::query()->value('id');
+        $file->work_type_id = $this->anyWorkType()->id;
         $file->customer_id = $customer->id;
         $file->customer_amount = 4000;
         $file->status = 'in_office';

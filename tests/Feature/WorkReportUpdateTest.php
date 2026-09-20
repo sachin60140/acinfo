@@ -59,7 +59,7 @@ class WorkReportUpdateTest extends TestCase
         $file = new WorkFileModel;
         $file->file_no = 'F-'.substr((string) microtime(true), -6);
         $file->received_date = '2026-09-01';
-        $file->work_type_id = WorkTypeModel::query()->value('id');
+        $file->work_type_id = $this->anyWorkType()->id;
         $file->customer_id = $customer->id;
         $file->customer_amount = 5000;
         $file->status = 'in_office';
