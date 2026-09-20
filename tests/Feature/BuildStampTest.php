@@ -203,6 +203,18 @@ class BuildStampTest extends TestCase
 
         $this->write('.git/HEAD', "ref: refs/../../outside.txt\n", 1_600_000_000);
 
+        /*
+         * And .git/refs has to be a real directory for the escape to resolve.
+         *
+         * Linux walks a path component by component, so refs/../../outside.txt
+         * is only reachable if refs is there to step out of; Windows flattens
+         * the same path before it touches the disk and does not care. Without
+         * this the check below found nothing on the build server and the test
+         * failed there while passing on every developer's machine — which is
+         * the opposite of what it is for.
+         */
+        @mkdir($this->tmp.'/.git/refs', 0777, true);
+
         $this->assertSame(
             1_999_999_000,
             @filemtime($this->tmp.'/.git/refs/../../outside.txt'),
