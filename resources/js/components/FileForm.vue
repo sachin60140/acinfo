@@ -130,6 +130,8 @@ const works = reactive(
         ...item,
         customer_amount: item.customer_amount ?? '',
         vendor_amount: item.vendor_amount ?? '',
+        // Whether the office already said this one is theirs.
+        in_house: Boolean(item.in_house),
     }))
 );
 
@@ -1026,6 +1028,7 @@ onMounted(() => {
                                     <th>Work</th>
                                     <th class="num" style="min-width: 8rem;">Charged</th>
                                     <th class="num" style="min-width: 8rem;">Vendor Rate</th>
+                                    <th>Ours</th>
                                     <th>Status</th>
                                     <th>Approval</th>
                                     <th class="wf-works__off"></th>
@@ -1064,6 +1067,35 @@ onMounted(() => {
                                             :name="going(work) ? null : `items[${work.id}][vendor_amount]`"
                                             v-model="work.vendor_amount"
                                             placeholder="Not agreed">
+                                    </td>
+
+                                    <!--
+                                        Work the office is doing itself.
+
+                                        Ticked on Give to Vendor, where it was
+                                        cluttering the list of work waiting to go
+                                        out. Untickable here, which is the whole
+                                        reason it is here: by then the folder has
+                                        left that screen and there is nowhere
+                                        there to change its mind.
+
+                                        Work already with a vendor has no box.
+                                        It is with them, and calling it ours
+                                        would be a second answer to a question
+                                        somebody already settled.
+                                    -->
+                                    <td data-label="Ours" class="wf-works__ours">
+                                        <label v-if="! work.has_vendor && ! going(work)" class="wf-works__keep">
+                                            <input
+                                                type="checkbox"
+                                                :name="`items[${work.id}][in_house]`"
+                                                value="1"
+                                                v-model="work.in_house"
+                                                :aria-label="`We are doing ${work.work_type || 'this work'} here`">
+                                            <span>In-house</span>
+                                        </label>
+                                        <span v-else-if="work.has_vendor" class="ui-sub">with a vendor</span>
+                                        <span v-else class="ui-money--nil">&mdash;</span>
                                     </td>
 
                                     <td data-label="Status">
@@ -1833,6 +1865,20 @@ onMounted(() => {
    the two read as one list. */
 /* A work on its way off the file. Struck through rather than gone, so what is
    about to happen can be read and undone. */
+/* A narrow column: it holds one word and one box, and the money beside it
+   needs the room more. */
+.wf-works__ours {
+    white-space: nowrap;
+}
+
+.wf-works__keep {
+    align-items: center;
+    cursor: pointer;
+    display: inline-flex;
+    font-size: var(--t-sm);
+    gap: var(--s-2);
+}
+
 .wf-works__table tr.is-going td {
     background: var(--cr-050);
     opacity: 0.7;

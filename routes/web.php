@@ -123,6 +123,8 @@ Route::group(['middleware' => 'admin'], function () {
         ->whereNumber('id')->name('workfile.papers');
 
     Route::match(['get', 'post'], 'admin/file/assign', [WorkFileController::class, 'assign'])->name('workfile.assign');
+    // The other thing that can happen to work on that screen: the office keeps it.
+    Route::post('admin/file/keep-in-house', [WorkFileController::class, 'keepInHouse'])->name('workfile.keepinhouse');
 
     Route::match(['get', 'post'], 'admin/file/vendor-return', [WorkFileController::class, 'vendorReturn'])->name('workfile.vendorreturn');
 
