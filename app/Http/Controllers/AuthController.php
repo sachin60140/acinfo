@@ -291,6 +291,20 @@ class AuthController extends Controller
         }
 
         /*
+         * Gathered into their groups before they are handed over.
+         *
+         * The tiles are built in the order they are worked out, and the
+         * component starts a new heading whenever the group changes — so
+         * Owing Longest, which is a Parties figure and is only known after the
+         * work has been counted, put a second "Parties" heading underneath
+         * "Work". Sorting is stable in PHP 8, so the order inside each group is
+         * the order they were written above.
+         */
+        $order = ['Client ledger' => 0, 'Parties' => 1, 'Work' => 2];
+
+        usort($tiles, fn ($a, $b) => ($order[$a['group']] ?? 99) <=> ($order[$b['group']] ?? 99));
+
+        /*
          * And the same figures over time.
          *
          * A tile says what this month is; these say which way it has been
@@ -311,6 +325,9 @@ class AuthController extends Controller
         $charts = [
             [
                 'title' => 'Money by month',
+                // Three bars a month over a year: the one chart here that cannot
+                // be read in a third of the width.
+                'wide' => true,
                 'hint' => 'Billed, what it cost, and what was left — by the month the papers came in.',
                 'kind' => 'columns',
                 'format' => 'money',

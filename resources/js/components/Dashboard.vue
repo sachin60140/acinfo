@@ -94,9 +94,15 @@ const groups = computed(() => {
             <h2 class="dash__heading">How it is going</h2>
 
             <div class="dash__charts">
-                <section v-for="chart in charts" :key="chart.title" class="ui-card dash__chart">
+                <section
+                    v-for="chart in charts"
+                    :key="chart.title"
+                    class="ui-card dash__chart"
+                    :class="{ 'dash__chart--wide': chart.wide }">
                     <div class="ui-card__head dash__chart-head">
-                        <div>
+                        <!-- Allowed to shrink, so a long hint does not push the
+                             link onto a line of its own. -->
+                        <div class="dash__chart-heading">
                             <h3 class="dash__chart-title">{{ chart.title }}</h3>
                             <p v-if="chart.hint" class="ui-hint">{{ chart.hint }}</p>
                         </div>
@@ -140,7 +146,17 @@ const groups = computed(() => {
 
 .dash__chart-head {
     align-items: start;
+    flex-wrap: nowrap;
     gap: var(--s-3);
+}
+
+.dash__chart-heading {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.dash__chart-head .ui-btn {
+    flex: none;
 }
 
 .dash__chart-title {

@@ -111,7 +111,8 @@
                             "tone": "string"
                         }
                     },
-                    "title": "string"
+                    "title": "string",
+                    "wide": "bool"
                 }
             },
             "tiles": {
