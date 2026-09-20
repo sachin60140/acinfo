@@ -115,6 +115,7 @@
                         "list_of": {
                             "customer_amount": "number",
                             "id": "number",
+                            "kept_on": "null",
                             "papers": "string",
                             "papers_pending": "null",
                             "state": "string",
@@ -134,6 +135,7 @@
                     "registration_no": "string"
                 }
             },
+            "keepUrl": "string",
             "oldAmounts": "[]",
             "oldOverrides": "[]",
             "pickedFiles": "[]",
@@ -230,7 +232,9 @@
                 "list_of": {
                     "approved_on": "null",
                     "customer_amount": "number",
+                    "has_vendor": "bool",
                     "id": "number",
+                    "in_house": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_label": "string",

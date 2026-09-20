@@ -56,6 +56,33 @@ class WorkFileItemModel extends Model
         return (bool) $this->vendor_id && ! $this->vendor_returned_on;
     }
 
+    /**
+     * The office is doing this one itself.
+     *
+     * Said out loud rather than left to be inferred from having no vendor,
+     * because having no vendor is also what a work waiting for one looks like.
+     * The two are the same row until somebody says which it is, and Give to
+     * Vendor spent that whole time offering both.
+     */
+    public function isKeptInHouse(): bool
+    {
+        return $this->kept_in_house_on !== null;
+    }
+
+    /**
+     * Waiting to be given to somebody: here, not spoken for, not finished.
+     *
+     * The set Give to Vendor offers, in one place, because the screen and the
+     * query behind it have to agree about it or a folder appears on a list it
+     * cannot be acted on from.
+     */
+    public function isWaitingForAVendor(): bool
+    {
+        return ! $this->vendor_id
+            && ! $this->isKeptInHouse()
+            && ! in_array($this->status, [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED], true);
+    }
+
     public function isApproved(): bool
     {
         return $this->status === WorkFileModel::APPROVED;
