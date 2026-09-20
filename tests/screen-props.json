@@ -88,6 +88,32 @@
     },
     "dashboard": {
         "vue-dashboard": {
+            "charts": {
+                "list_of": {
+                    "format": "string",
+                    "hint": "string",
+                    "href": "string",
+                    "kind": "string",
+                    "rows": {
+                        "list_of": {
+                            "label": "string",
+                            "values": {
+                                "billed": "…",
+                                "cost": "…",
+                                "margin": "…"
+                            }
+                        }
+                    },
+                    "series": {
+                        "list_of": {
+                            "key": "string",
+                            "label": "string",
+                            "tone": "string"
+                        }
+                    },
+                    "title": "string"
+                }
+            },
             "tiles": {
                 "list_of": {
                     "group": "string",
@@ -510,14 +536,14 @@
                     "action": "string",
                     "charged": "number",
                     "charged_was": "null",
-                    "cost": "number",
+                    "cost": "null",
                     "cost_was": "null",
                     "customer": "string",
                     "customer_url": "string",
-                    "days_out": "string",
+                    "days_out": "null",
                     "description": "string",
-                    "dispatched": "string",
-                    "dispatched_raw": "string",
+                    "dispatched": "null",
+                    "dispatched_raw": "null",
                     "edit_url": "string",
                     "expenses": "null",
                     "file_no": "string",
@@ -534,7 +560,7 @@
                     "status": "string",
                     "status_key": "string",
                     "vendor": "string",
-                    "vendor_url": "string",
+                    "vendor_url": "null",
                     "work_type": "string",
                     "works_approved_on": "string",
                     "works_done": "string",
@@ -683,8 +709,8 @@
                     "received_raw": "string",
                     "registration_no": "string",
                     "row_class": "string",
-                    "screenshot": "string",
-                    "screenshot_url": "string",
+                    "screenshot": "null",
+                    "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
                     "vendor": "string",
@@ -741,14 +767,14 @@
                     "action": "string",
                     "charged": "number",
                     "charged_was": "null",
-                    "cost": "number",
+                    "cost": "null",
                     "cost_was": "null",
                     "customer": "string",
                     "customer_url": "string",
-                    "days_out": "string",
+                    "days_out": "null",
                     "description": "string",
-                    "dispatched": "string",
-                    "dispatched_raw": "string",
+                    "dispatched": "null",
+                    "dispatched_raw": "null",
                     "edit_url": "string",
                     "expenses": "null",
                     "file_no": "string",
@@ -765,7 +791,7 @@
                     "status": "string",
                     "status_key": "string",
                     "vendor": "string",
-                    "vendor_url": "string",
+                    "vendor_url": "null",
                     "work_type": "string",
                     "works_approved_on": "string",
                     "works_done": "string",
