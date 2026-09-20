@@ -1,0 +1,108 @@
+# Both suites, on a machine nobody has been working in.
+#
+# They used to run here or nowhere — which meant they ran when somebody
+# remembered, on a database somebody had been using for months. That is how a
+# test came to pass only because the first work type in one developer's database
+# happened to be called HPA.
+#
+# A build server has an empty database every time, which is the point: it cannot
+# be fooled by data that is already there.
+
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    name: PHP and JS
+    runs-on: ubuntu-latest
+
+    services:
+      # 8.4, as the office runs. The suite leans on MySQL directly — GROUP_CONCAT
+      # with a separator, ORDER BY inside it, information_schema for index
+      # checks — so sqlite in memory would be testing a different application.
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: acinfo_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      # Laravel does not overwrite what is already in the environment, so these
+      # win over whatever .env.example happens to say.
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: acinfo_test
+      DB_USERNAME: root
+      DB_PASSWORD: ''
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo_mysql, zip, gd, fileinfo
+          coverage: none
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Composer cache
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      - run: composer install --no-interaction --prefer-dist --no-progress
+
+      - run: npm ci
+
+      - name: An environment to run in
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          mkdir -p storage/framework/testing
+
+      # The schema the suite expects, applied the way DEPLOY.md says to apply it
+      # on the server. A migration that only runs on a developer's machine is
+      # how the live site went down on 19 September.
+      - run: php artisan migrate --force
+
+      - name: PHP tests
+        run: php artisan test
+
+      - name: JS tests
+        run: npx vitest run
+
+      # The host has no npm step, so the compiled bundle travels in the
+      # repository — see the note in .gitignore. A change to resources/ that was
+      # committed without rebuilding leaves the server serving the old one, and
+      # nothing anywhere says so. Vite hashes on content, so building the same
+      # sources twice gives the same bytes: anything here means the commit is
+      # missing its assets.
+      - name: The built assets match the sources
+        run: |
+          npm run build
+          if ! git diff --quiet -- public/build; then
+            echo "public/build is not what these sources build to."
+            echo "Run 'npm run build' and commit public/build with your change."
+            git --no-pager diff --stat -- public/build
+            exit 1
+          fi

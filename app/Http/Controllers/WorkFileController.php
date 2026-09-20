@@ -3026,7 +3026,11 @@ class WorkFileController extends Controller
                     'work_type_id' => (int) $item->work_type_id,
                     'work_type' => $item->workType?->name,
                     'customer_amount' => (float) $item->customer_amount,
-                    'vendor_amount' => $item->vendor_amount === null ? '' : (float) $item->vendor_amount,
+                    // null, not an empty string: a rate that was never agreed is
+                    // absent rather than blank, and a prop whose type changes with
+                    // the data cannot be pinned by ScreenPropsTest. The form
+                    // coalesces it to an empty box either way.
+                    'vendor_amount' => $item->vendor_amount === null ? null : (float) $item->vendor_amount,
                     'status' => $item->status,
                     'status_label' => WorkFileModel::STATUSES[$item->status] ?? $item->status,
                     // Whether the office said it is doing this one itself, and

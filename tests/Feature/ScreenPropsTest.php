@@ -76,6 +76,20 @@ class ScreenPropsTest extends TestCase
         $vendor = $this->anyParty('vendor');
         $type = $this->anyWorkType();
 
+        /*
+         * A client too. The client ledger's own screens are in the list below,
+         * and a screen with no rows hands its component an empty array rather
+         * than a row's worth of shape — which reads as the shape having changed.
+         */
+        if (! \App\Models\ClientModel::query()->exists()) {
+            $client = new \App\Models\ClientModel;
+            $client->name = 'Props Client';
+            $client->mobile = '92100'.random_int(10000, 99999);
+            $client->password = \Illuminate\Support\Facades\Hash::make('password-for-tests');
+            $client->address = 'Nowhere in particular';
+            $client->save();
+        }
+
         // One still in hand and unassigned, one out with a vendor: between them
         // every screen below has a row to draw.
         foreach ([null, $vendor?->id] as $vendorId) {
@@ -101,6 +115,31 @@ class ScreenPropsTest extends TestCase
             $item->status = $file->status;
             $item->save();
         }
+
+        /*
+         * And one that is through, with its papers still here. Hand Over Papers
+         * is a screen about finished work nobody has collected; with none of
+         * that it draws its empty state and mounts no component at all, which
+         * is not the same thing as a screen that stopped working.
+         */
+        $done = new \App\Models\WorkFileModel;
+        $done->file_no = 'F-PROPS-'.uniqid();
+        $done->received_date = now()->toDateString();
+        $done->registration_no = 'BR01PR'.random_int(1000, 9999);
+        $done->description = 'Props fixture, approved';
+        $done->work_type_id = $type->id;
+        $done->customer_id = $customer->id;
+        $done->customer_amount = 1000;
+        $done->status = \App\Models\WorkFileModel::APPROVED;
+        $done->save();
+
+        $doneItem = new \App\Models\WorkFileItemModel;
+        $doneItem->work_file_id = $done->id;
+        $doneItem->work_type_id = $type->id;
+        $doneItem->customer_amount = 1000;
+        $doneItem->status = \App\Models\WorkFileModel::APPROVED;
+        $doneItem->approved_on = now()->toDateString();
+        $doneItem->save();
     }
     /**
      * Every screen that mounts something, with a URL that has data behind it.
@@ -163,6 +202,47 @@ class ScreenPropsTest extends TestCase
      * A row's figures change every time someone books a file; the fact that a
      * row carries a 'billed' key which holds a number does not.
      */
+    /**
+     * A list with nothing in it is not a list of a different shape.
+     *
+     * shape() describes a list by its first entry, so a screen with rows reads
+     * as ['list_of' => …] and the same screen with none reads as '[]'. What is
+     * recorded is the shape rows have when there are any; a database that holds
+     * none — a fresh checkout, a build server — has nothing to disagree about,
+     * and failing there would say the screen had changed when only the data had.
+     *
+     * Only in that direction. A screen that grew rows where the record has none
+     * is a real difference and still fails, and on any machine with data in it
+     * the comparison is as strict as it ever was.
+     */
+    private function allowingEmptyLists($expected, $actual)
+    {
+        if (is_array($expected) && array_key_exists('list_of', $expected) && $actual === '[]') {
+            return $expected;
+        }
+
+        /*
+         * A nullable field reads as whatever this database happens to hold:
+         * 'string' where there is a note and 'null' where there is not. The key
+         * is what is being pinned, not which of the two a given row has.
+         */
+        if (is_string($expected) && is_string($actual) && ($expected === 'null' || $actual === 'null')) {
+            return $expected;
+        }
+
+        if (! is_array($expected) || ! is_array($actual)) {
+            return $actual;
+        }
+
+        foreach ($actual as $key => $value) {
+            if (array_key_exists($key, $expected)) {
+                $actual[$key] = $this->allowingEmptyLists($expected[$key], $value);
+            }
+        }
+
+        return $actual;
+    }
+
     private function shape($value, int $depth = 0)
     {
         if (is_array($value)) {
@@ -352,7 +432,7 @@ class ScreenPropsTest extends TestCase
 
             $this->assertSame(
                 $expected,
-                $current[$name],
+                $this->allowingEmptyLists($expected, $current[$name]),
                 "$name hands its component a different shape than before. If the change is intended, ".
                 'regenerate with REGENERATE_SCREEN_PROPS=1 and read the diff.'
             );

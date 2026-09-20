@@ -358,13 +358,40 @@ class BuildStampTest extends TestCase
     {
         $request = match ($as) {
             'admin' => $this->actingAs($this->admin()),
-            'client' => $this->withSession(['userid' => \App\Models\ClientModel::query()->value('id')]),
+            'client' => $this->withSession(['userid' => $this->client()->id]),
             'customer' => $this->withSession(['customer_id' => $this->customer()->id]),
         };
 
         $body = $request->get($url)->assertOk()->getContent();
 
         $this->assertStringContainsString(Build::label(), $body, "$as has no build stamp");
+    }
+
+    /**
+     * Somebody to be signed in as.
+     *
+     * This used to take whichever client was already in the database, which is
+     * nobody at all on a fresh one: the session held a null id, the portal sent
+     * the request back to its login page, and a test about a footer failed on a
+     * redirect.
+     */
+    private function client(): \App\Models\ClientModel
+    {
+        $client = \App\Models\ClientModel::query()->first();
+
+        if ($client) {
+            return $client;
+        }
+
+        $client = new \App\Models\ClientModel;
+        $client->name = 'Build Stamp Client';
+        $client->mobile = '92000'.random_int(10000, 99999);
+        $client->password = \Illuminate\Support\Facades\Hash::make('password-for-tests');
+        // Not nullable, and the portal shows it on the account page.
+        $client->address = 'Nowhere in particular';
+        $client->save();
+
+        return $client;
     }
 
     private function customer(): PartyModel
