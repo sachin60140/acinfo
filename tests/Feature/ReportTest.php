@@ -272,6 +272,11 @@ class ReportTest extends TestCase
     {
         $this->actingAs($this->admin());
 
+        // Its own row to band, rather than whatever the database happens to hold:
+        // the assertion below is about a row existing under a band heading, and a
+        // test that only passes on a machine with old files in it is not a test.
+        $this->file($this->customerA, 5000, $this->vendor, 3000);
+
         $columns = $this->reportColumns();
 
         $this->assertTrue($columns['party_name']['exportOnly'], 'the party name is drawn twice');
