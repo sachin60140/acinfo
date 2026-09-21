@@ -22,6 +22,8 @@ const props = defineProps({
     // Today's, signed: positive when they still owe.
     balance: { type: Number, default: 0 },
     todayLabel: { type: String, default: '' },
+    // The files it was adjusted against: [{ label, amount }].
+    against: { type: Array, default: () => [] },
 });
 
 const text = computed(() => receiptMessage(props));

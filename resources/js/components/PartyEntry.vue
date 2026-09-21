@@ -12,7 +12,7 @@
  * the counter is asked about is the one the party is left with — so it is
  * worked out as the amount is typed, not after saving.
  */
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { balance, money, side } from '../money';
 
 const props = defineProps({
@@ -26,6 +26,18 @@ const props = defineProps({
     paymentModes: { type: Array, default: () => [] },
     dateField: { type: String, required: true },
     initial: { type: Object, required: true },
+
+    /*
+     * Adjusting a payment against files: which of the party's files it is
+     * for. Only on the payment side — a customer's Credit, a vendor's Debit —
+     * and only once the database has what it needs (adjustable).
+     */
+    adjustable: { type: Boolean, default: false },
+    paymentSide: { type: String, default: 'credit' },
+    // The party's open files, with __ID__ for the party.
+    billsUrl: { type: String, default: '' },
+    // A refused save's amounts, by file, to be put back.
+    initialAlloc: { type: Object, default: () => ({}) },
 });
 
 const entry = reactive({ ...props.initial });
@@ -75,6 +87,118 @@ const hint = computed(() => {
     return `${verb} ${money(entry.amount)} — ${selected.value.name} ends on ${balance(after.value)}.`;
 });
 
+/* ---- Adjusting against files ------------------------------------------- */
+
+const alloc = reactive({ ...props.initialAlloc });
+const bills = ref([]);
+const billsState = ref('idle');
+
+const showAdjust = computed(() =>
+    props.adjustable && Boolean(selected.value) && entry.entry_type === props.paymentSide
+);
+
+/*
+ * The party's open files, fetched when one is picked. A slow answer for a
+ * party since changed is thrown away rather than shown under the wrong name.
+ */
+let asked = 0;
+
+async function loadBills() {
+    bills.value = [];
+
+    if (! showAdjust.value || ! props.billsUrl) {
+        billsState.value = 'idle';
+
+        return;
+    }
+
+    const ticket = ++asked;
+    billsState.value = 'loading';
+
+    try {
+        const response = await fetch(props.billsUrl.replace('__ID__', String(selected.value.id)), {
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin',
+        });
+
+        if (! response.ok) {
+            throw new Error(String(response.status));
+        }
+
+        const data = await response.json();
+
+        if (ticket === asked) {
+            bills.value = data.bills ?? [];
+            billsState.value = 'ready';
+        }
+    } catch {
+        if (ticket === asked) {
+            billsState.value = 'failed';
+        }
+    }
+}
+
+watch(() => [entry.party_id, entry.entry_type], (now, before) => {
+    // Another party's files are not this one's: what was typed against them goes.
+    if (before && now[0] !== before[0]) {
+        for (const key of Object.keys(alloc)) {
+            delete alloc[key];
+        }
+    }
+
+    loadBills();
+}, { immediate: true });
+
+const amountOf = (bill) => Number(alloc[bill.id]) || 0;
+
+const allocated = computed(() => bills.value.reduce((sum, bill) => sum + amountOf(bill), 0));
+
+const onAccount = computed(() => Math.max(0, (Number(entry.amount) || 0) - allocated.value));
+
+const overAllocated = computed(() => allocated.value > (Number(entry.amount) || 0) + 0.005);
+
+const overOpen = (bill) => amountOf(bill) > Number(bill.open) + 0.005;
+
+// Said before Save is pressed; the server refuses the same, and keeps the typing.
+const adjustProblem = computed(() => {
+    if (! showAdjust.value) {
+        return '';
+    }
+
+    const over = bills.value.filter(overOpen);
+
+    if (over.length) {
+        return `${over.map((bill) => bill.fileNo).join(', ')}: more than is open on the file.`;
+    }
+
+    if (overAllocated.value) {
+        return `The files come to ${money(allocated.value)}, more than the payment of ${money(entry.amount)}.`;
+    }
+
+    return '';
+});
+
+/* Oldest first, which is what the payment would do if nobody said. */
+function fillOldest() {
+    let left = Number(entry.amount) || 0;
+
+    for (const bill of bills.value) {
+        const take = Math.min(Number(bill.open), left);
+        alloc[bill.id] = take > 0.005 ? take.toFixed(2) : '';
+        left -= Math.max(0, take);
+    }
+}
+
+function clearAlloc() {
+    for (const bill of bills.value) {
+        alloc[bill.id] = '';
+    }
+}
+
+function full(bill) {
+    alloc[bill.id] = Number(bill.open).toFixed(2);
+}
+
 const dateBox = ref(null);
 
 /*
@@ -87,6 +211,12 @@ const dateBox = ref(null);
  */
 function onReset() {
     Object.assign(entry, props.initial);
+
+    for (const key of Object.keys(alloc)) {
+        delete alloc[key];
+    }
+
+    Object.assign(alloc, props.initialAlloc);
     resetDateField();
 }
 
@@ -242,13 +372,86 @@ function resetDateField() {
                 </div>
             </div>
 
+            <!-- Which files this payment is for. Optional: left empty, the
+                 payment settles the oldest files first, as it always has. -->
+            <section v-if="showAdjust" class="adjust">
+                <div class="adjust__head">
+                    <h3 class="adjust__title">
+                        Adjust against files <span class="adjust__opt">optional</span>
+                    </h3>
+                    <div v-if="bills.length" class="adjust__tools">
+                        <button type="button" class="ui-btn ui-btn--sm" :disabled="!priced" @click="fillOldest">
+                            <i class="bi bi-sort-down"></i> Fill oldest first
+                        </button>
+                        <button type="button" class="ui-btn ui-btn--sm" @click="clearAlloc">Clear</button>
+                    </div>
+                </div>
+
+                <p class="ui-hint adjust__lead">
+                    Leave these empty and the payment settles the oldest files first, as before.
+                </p>
+
+                <div v-if="billsState === 'loading'" class="ui-hint">Looking up {{ selected.name }}'s files…</div>
+                <div v-else-if="billsState === 'failed'" class="ui-hint adjust__error">
+                    The files could not be loaded. The payment can still be saved, on account.
+                </div>
+                <div v-else-if="!bills.length" class="ui-hint">
+                    Nothing open on {{ selected.name }}'s files — the payment goes on account.
+                </div>
+
+                <div v-else class="adjust__list">
+                    <div
+                        v-for="bill in bills"
+                        :key="bill.id"
+                        class="adjust__row"
+                        :class="{ 'is-over': overOpen(bill), 'is-set': amountOf(bill) > 0 }">
+                        <div class="adjust__file">
+                            <a :href="bill.editUrl" target="_blank" rel="noopener" class="ui-link">{{ bill.fileNo }}</a>
+                            <span v-if="bill.vehicle" class="adjust__vehicle">{{ bill.vehicle }}</span>
+                            <div class="ui-sub">{{ bill.works }} · received {{ bill.received }}</div>
+                        </div>
+
+                        <div class="adjust__figures">
+                            <span>Charged {{ money(bill.charged) }}</span>
+                            <span v-if="bill.returned > 0">Returned {{ money(bill.returned) }}</span>
+                            <span v-if="bill.adjusted > 0">Adjusted {{ money(bill.adjusted) }}</span>
+                            <strong>Open {{ money(bill.open) }}</strong>
+                            <span v-if="bill.due < bill.open - 0.005" class="ui-sub">
+                                {{ bill.due > 0.005 ? 'partly' : 'already' }} covered by money on account
+                            </span>
+                        </div>
+
+                        <div class="adjust__amount">
+                            <input type="hidden" :name="`alloc[${bill.id}][work_file_id]`" :value="bill.id">
+                            <input
+                                type="number"
+                                class="ui-input"
+                                :class="{ 'ui-input--invalid': overOpen(bill) }"
+                                :name="`alloc[${bill.id}][amount]`"
+                                min="0"
+                                step="0.01"
+                                placeholder="0.00"
+                                v-model="alloc[bill.id]"
+                                :aria-label="`Amount against ${bill.fileNo}`">
+                            <button type="button" class="ui-btn ui-btn--sm" @click="full(bill)">Full</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="bills.length" class="adjust__foot" :class="{ 'is-error': adjustProblem }">
+                    <span>Against files <strong>{{ money(allocated) }}</strong></span>
+                    <span>On account <strong>{{ money(onAccount) }}</strong></span>
+                    <span v-if="adjustProblem" class="adjust__error">{{ adjustProblem }}</span>
+                </div>
+            </section>
+
             <div class="ui-card__foot" :class="{ 'ui-card__foot--dirty': touched }">
                 <span class="ui-hint">{{ hint }}</span>
                 <div class="foot-actions">
                     <button type="reset" class="ui-btn">
                         <i class="bi bi-arrow-counterclockwise"></i> Reset
                     </button>
-                    <button type="submit" class="ui-btn ui-btn--primary">
+                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="Boolean(adjustProblem)">
                         <i class="bi bi-check2-circle"></i> Save Entry
                     </button>
                 </div>
@@ -495,6 +698,102 @@ function resetDateField() {
     gap: var(--s-2);
 }
 
+/* ---- Adjust against files ---------------------------------------------- */
+
+.party-entry .adjust {
+    border-top: 1px solid var(--n-200);
+    padding: var(--s-4);
+}
+
+.party-entry .adjust__head {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-4);
+    justify-content: space-between;
+}
+
+.party-entry .adjust__title {
+    font-size: var(--t-base);
+    font-weight: 700;
+    margin: 0;
+}
+
+.party-entry .adjust__opt {
+    color: var(--n-400);
+    font-size: var(--t-xs);
+    font-weight: 400;
+}
+
+.party-entry .adjust__tools {
+    display: flex;
+    gap: var(--s-2);
+}
+
+.party-entry .adjust__lead {
+    margin: var(--s-1) 0 var(--s-3);
+}
+
+.party-entry .adjust__list {
+    border: 1px solid var(--n-200);
+    border-radius: var(--r-md);
+}
+
+.party-entry .adjust__row {
+    align-items: center;
+    border-bottom: 1px solid var(--n-100);
+    display: grid;
+    gap: var(--s-2) var(--s-4);
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.2fr) minmax(0, 1fr);
+    padding: var(--s-2) var(--s-3);
+}
+
+.party-entry .adjust__row:last-child {
+    border-bottom: 0;
+}
+
+.party-entry .adjust__row.is-set {
+    background: var(--dr-050);
+}
+
+.party-entry .adjust__row.is-over {
+    background: var(--cr-050);
+}
+
+.party-entry .adjust__vehicle {
+    font-weight: 700;
+    margin-left: var(--s-2);
+}
+
+.party-entry .adjust__figures {
+    display: flex;
+    flex-direction: column;
+    font-size: var(--t-sm);
+}
+
+.party-entry .adjust__amount {
+    display: flex;
+    gap: var(--s-2);
+}
+
+.party-entry .adjust__amount .ui-input {
+    min-width: 0;
+    text-align: right;
+}
+
+.party-entry .adjust__foot {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-4);
+    justify-content: flex-end;
+    margin-top: var(--s-3);
+}
+
+.party-entry .adjust__error {
+    color: var(--cr-700);
+    font-weight: 600;
+}
+
 /* Below the large breakpoint the two columns stack and every field takes the
    full width: this is a form filled one box at a time on a phone at a counter,
    and each summary line becomes its own labelled block rather than a pair
@@ -525,6 +824,11 @@ function resetDateField() {
 
     .party-entry .foot-actions .ui-btn {
         flex: 1 1 auto;
+    }
+
+    /* One file per block on a phone: which file, its figures, then the box. */
+    .party-entry .adjust__row {
+        grid-template-columns: minmax(0, 1fr);
     }
 }
 </style>

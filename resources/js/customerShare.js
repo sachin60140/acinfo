@@ -92,7 +92,7 @@ export function readyMessage(customer, rows, today = '') {
  *          balance: today's, signed, positive when they still owe and negative
  *          when they are in advance
  */
-export function receiptMessage({ name, amount, dateLabel = '', mode = '', reference = '', balance = 0, todayLabel = '' }) {
+export function receiptMessage({ name, amount, dateLabel = '', mode = '', reference = '', balance = 0, todayLabel = '', against = [] }) {
     if (! (Number(amount) > 0.005)) {
         return '';
     }
@@ -106,6 +106,15 @@ export function receiptMessage({ name, amount, dateLabel = '', mode = '', refere
 
     if (reference && reference.trim()) {
         lines.push(`Ref: ${reference.trim()}`);
+    }
+
+    // Which of their files it was for, when the office said.
+    if (against && against.length) {
+        lines.push('Against:');
+
+        for (const one of against) {
+            lines.push(`• ${one.label} — ${rupees(one.amount)}`);
+        }
     }
 
     lines.push('');

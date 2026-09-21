@@ -4,9 +4,12 @@ namespace App\Http\Controllers;
 
 use App\Models\PartyLedgerModel;
 use App\Models\PartyModel;
+use App\Models\WorkFileModel;
 use App\Support\Screen;
 use App\Support\WhatsApp;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -327,17 +330,121 @@ class PartyController extends Controller
                 'payment_mode' => ['nullable', Rule::in(PartyLedgerModel::PAYMENT_MODES)],
                 'ref_no' => 'nullable|string|max:50',
                 'particular' => 'required|string|max:255',
+
+                // The files this payment is adjusted against, keyed by file;
+                // see below. An empty box is no line at all.
+                'alloc' => 'nullable|array|max:200',
+                'alloc.*.work_file_id' => 'required|integer',
+                'alloc.*.amount' => 'nullable|numeric|min:0|max:99999999',
+            ], [
+                'alloc.*.amount.numeric' => 'An amount against a file must be a number.',
             ]);
 
-            $entry = new PartyLedgerModel;
-            $entry->party_id = $req->party_id;
-            $entry->txn_date = $req->txn_date;
-            $entry->entry_type = $req->entry_type;
-            $entry->amount = (float) $req->amount;
-            $entry->payment_mode = $req->payment_mode;
-            $entry->ref_no = $req->ref_no;
-            $entry->particular = $req->particular;
-            $entry->save();
+            /*
+             * Adjusted against files: which of this party's files the payment
+             * is for. What it does not cover settles the oldest charges, as
+             * every payment did before; see PartyLedgerModel::settle().
+             */
+            $lines = collect((array) $req->input('alloc', []))
+                ->filter(fn ($line) => is_array($line) && (float) ($line['amount'] ?? 0) > 0)
+                ->map(fn ($line) => [
+                    'work_file_id' => (int) $line['work_file_id'],
+                    'amount' => round((float) $line['amount'], 2),
+                ])
+                ->values();
+
+            // A customer pays with a credit; the office pays a vendor with a debit.
+            $paymentSide = $type === 'customer' ? 'credit' : 'debit';
+
+            if ($lines->isNotEmpty()) {
+                if ($req->entry_type !== $paymentSide) {
+                    return back()->withInput()->withErrors([
+                        'alloc' => 'Only a payment can be adjusted against files — a '
+                            .($paymentSide === 'credit' ? 'Credit' : 'Debit').' on this screen.',
+                    ]);
+                }
+
+                if (! PartyLedgerModel::adjustable()) {
+                    return back()->withInput()->withErrors([
+                        'alloc' => 'Adjusting against files needs the database update that came with it (php artisan migrate).',
+                    ]);
+                }
+
+                if ($lines->pluck('work_file_id')->duplicates()->isNotEmpty()) {
+                    return back()->withInput()->withErrors(['alloc' => 'A file can be adjusted against only once in one payment.']);
+                }
+
+                $against = round($lines->sum('amount'), 2);
+
+                if ($against > (float) $req->amount + 0.005) {
+                    return back()->withInput()->withErrors([
+                        'alloc' => 'The files come to '.number_format($against, 2, '.', ',')
+                            .', more than the payment of '.number_format((float) $req->amount, 2, '.', ',').'.',
+                    ]);
+                }
+            }
+
+            $entry = DB::transaction(function () use ($req, $lines, $type) {
+                /*
+                 * One payment for a party at a time. Two typed at once would
+                 * otherwise both be checked against the same open amount on a
+                 * file, and both adjusted against it.
+                 */
+                PartyModel::whereKey($req->party_id)->lockForUpdate()->first();
+
+                if ($lines->isNotEmpty()) {
+                    // Checked here, under the lock, against what the ledger says —
+                    // never against what the page showed.
+                    $bills = PartyLedgerModel::bills((int) $req->party_id, $type === 'customer' ? 'debit' : 'credit')['files'];
+                    $names = DB::table('work_file')->whereIn('id', $lines->pluck('work_file_id'))->pluck('file_no', 'id');
+                    $problems = [];
+
+                    foreach ($lines as $line) {
+                        $bill = $bills[$line['work_file_id']] ?? null;
+                        $name = $names[$line['work_file_id']] ?? 'That file';
+
+                        if (! $bill || $bill['charged'] <= 0.005) {
+                            $problems[] = $name.' is not one of this '.strtolower(PartyModel::label($type))."'s files.";
+                        } elseif ($line['amount'] > $bill['open'] + 0.005) {
+                            $problems[] = $name.' has only '.number_format($bill['open'], 2, '.', ',').' left to adjust.';
+                        }
+                    }
+
+                    if ($problems) {
+                        throw ValidationException::withMessages(['alloc' => implode(' ', $problems)]);
+                    }
+                }
+
+                $entry = new PartyLedgerModel;
+                $entry->party_id = $req->party_id;
+                $entry->txn_date = $req->txn_date;
+                $entry->entry_type = $req->entry_type;
+                $entry->amount = (float) $req->amount;
+                $entry->payment_mode = $req->payment_mode;
+                $entry->ref_no = $req->ref_no;
+                $entry->particular = $req->particular;
+
+                // Who typed it in, from the day it could be recorded.
+                if (PartyLedgerModel::adjustable()) {
+                    $entry->created_by = Auth::id();
+                }
+
+                $entry->save();
+
+                foreach ($lines as $line) {
+                    DB::table('party_ledger_allocation')->insert([
+                        'entry_id' => $entry->id,
+                        'party_id' => (int) $req->party_id,
+                        'work_file_id' => $line['work_file_id'],
+                        'amount' => $line['amount'],
+                        'created_by' => Auth::id(),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+
+                return $entry;
+            });
 
             $saved = back()->with('success', ucfirst($entry->entry_type).' entry saved successfully. Transaction ID: '.$entry->id);
 
@@ -368,6 +475,9 @@ class PartyController extends Controller
                     // So the message can say so: a payment dated last month
                     // beside an undated balance reads as last month's balance.
                     'todayLabel' => now()->format('d-m-Y'),
+                    // The files it was adjusted against, as the customer knows
+                    // them: the vehicle and the work, never a vendor.
+                    'against' => PartyLedgerModel::againstFor([$entry->id])[$entry->id] ?? [],
                 ]);
             }
 
@@ -416,6 +526,20 @@ class PartyController extends Controller
                 'ref_no' => (string) old('ref_no'),
                 'particular' => (string) old('particular'),
             ],
+
+            /*
+             * Adjusting a payment against files. Offered on the payment side
+             * only — a customer's Credit, a vendor's Debit — and only once the
+             * database has the table for it.
+             */
+            'adjustable' => PartyLedgerModel::adjustable(),
+            'paymentSide' => $type === 'customer' ? 'credit' : 'debit',
+            'billsUrl' => route('party.bills', ['id' => '__ID__']),
+            // A refused save's amounts, file by file, to be put back.
+            'initialAlloc' => (object) collect((array) old('alloc', []))
+                ->filter(fn ($line) => is_array($line) && ($line['amount'] ?? '') !== '')
+                ->mapWithKeys(fn ($line) => [(int) ($line['work_file_id'] ?? 0) => (string) $line['amount']])
+                ->all(),
         ];
 
         return Screen::make('admin.party.entry', 'vue-party-entry', $props, [
@@ -426,6 +550,56 @@ class PartyController extends Controller
             // The receipt for a payment just saved; see above.
             'receipt' => session('receipt'),
         ])->toResponse($req);
+    }
+
+    /**
+     * A party's files that a payment can still be adjusted against.
+     *
+     * For the Entry screen, fetched when a party is picked. What each file was
+     * charged, what came back on it, what payments are already adjusted
+     * against it, and what is open — the most a new payment can take. Oldest
+     * first, the order a payment nobody adjusts would settle them in.
+     *
+     * A vendor sees only their own share of a folder split between vendors,
+     * and only the works they were given.
+     */
+    public function bills($id)
+    {
+        $party = PartyModel::findOrFail($id);
+
+        if (! PartyLedgerModel::adjustable()) {
+            return response()->json(['bills' => []]);
+        }
+
+        $isCustomer = $party->party_type === 'customer';
+        $settled = PartyLedgerModel::bills($party->id, $isCustomer ? 'debit' : 'credit')['files'];
+        $open = array_filter($settled, fn ($bill) => $bill['open'] > 0.005);
+
+        $files = WorkFileModel::with('items.workType')
+            ->whereIn('id', array_keys($open))
+            ->orderBy('received_date')
+            ->orderBy('id')
+            ->get();
+
+        return response()->json(['bills' => $files->map(function ($file) use ($open, $isCustomer, $party) {
+            $works = $isCustomer
+                ? $file->workLabel()
+                : $file->items->where('vendor_id', $party->id)->map(fn ($item) => $item->workType?->name)->filter()->implode(', ');
+
+            return [
+                'id' => (int) $file->id,
+                'fileNo' => (string) $file->file_no,
+                'vehicle' => (string) $file->registration_no,
+                'works' => $works ?: $file->workLabel(),
+                'received' => date('d-m-Y', strtotime($file->received_date)),
+                'charged' => $open[$file->id]['charged'],
+                'returned' => $open[$file->id]['returned'],
+                'adjusted' => $open[$file->id]['adjusted'],
+                'open' => $open[$file->id]['open'],
+                'due' => $open[$file->id]['due'],
+                'editUrl' => route('workfile.edit', $file->id),
+            ];
+        })->values()]);
     }
 
     public function statement(Request $req, $id)
@@ -458,6 +632,9 @@ class PartyController extends Controller
         // The note on the file each entry came from, for the whole page at once.
         $remarks = PartyLedgerModel::fileRemarks($data['getRecords']);
 
+        // And the files each payment was adjusted against, the same way.
+        $against = PartyLedgerModel::againstFor($data['getRecords']->pluck('id')->all());
+
         foreach ($data['getRecords'] as $entry) {
             $running += $entry->signedAmount();
             $isDebit = $entry->entry_type === 'debit';
@@ -477,6 +654,8 @@ class PartyController extends Controller
                 'credit' => $isDebit ? null : (float) $entry->amount,
                 'balance' => round($running, 2),
                 'remarks' => $remarks[$entry->work_file_id] ?? null,
+                // The files a payment was adjusted against, when it was.
+                'against' => PartyLedgerModel::againstText($against[$entry->id] ?? []),
             ];
         }
 
@@ -500,6 +679,7 @@ class PartyController extends Controller
             'credit' => null,
             'balance' => round((float) $data['opening'], 2),
             'remarks' => null,
+            'against' => null,
         ]];
 
         $closing = [[
@@ -513,11 +693,13 @@ class PartyController extends Controller
             'credit' => (float) $data['credits'],
             'balance' => round((float) $data['closing'], 2),
             'remarks' => null,
+            'against' => null,
         ]];
 
         // Only when there is one to show. A column of empty cells is clutter on
         // screen and a column of commas in the spreadsheet.
         $hasRemarks = (bool) $remarks;
+        $hasAgainst = (bool) $against;
 
         $props = [
             // Also the export filename and the heading on the PDF and the printout.
@@ -537,6 +719,9 @@ class PartyController extends Controller
                 ['key' => 'debit', 'label' => 'Debit', 'type' => 'money', 'class' => 'ui-money--dr'],
                 ['key' => 'credit', 'label' => 'Credit', 'type' => 'money', 'class' => 'ui-money--cr'],
                 ['key' => 'balance', 'label' => 'Balance', 'type' => 'balance', 'class' => 'ui-money--strong'],
+
+                // Which files a payment was adjusted against, when any was.
+                ...($hasAgainst ? [['key' => 'against', 'label' => 'Against', 'width' => '14rem']] : []),
 
                 // The note on the file the entry came from, when any entry has
                 // one. Last, so it never pushes the figures off a narrow screen.

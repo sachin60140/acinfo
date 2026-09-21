@@ -71,6 +71,9 @@ Route::group(['middleware' => 'admin'], function () {
 
     Route::get('admin/party/statement/{id}', [PartyController::class, 'statement'])->name('party.statement');
 
+    // A party's files a payment can still be adjusted against, for the Entry screen.
+    Route::get('admin/party/bills/{id}', [PartyController::class, 'bills'])->whereNumber('id')->name('party.bills');
+
     // Issuing a customer their portal login. Customers only; the controller
     // refuses a vendor id outright.
     Route::match(['get', 'post'], 'admin/party/password/{id}', [PartyController::class, 'password'])->name('party.password');

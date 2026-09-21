@@ -99,6 +99,8 @@ class PaymentReceiptTest extends TestCase
             'reference' => '412345678901',
             'balance' => 2500.0,
             'todayLabel' => now()->format('d-m-Y'),
+            // Not adjusted against any file, so nothing to list.
+            'against' => [],
         ]);
     }
 
