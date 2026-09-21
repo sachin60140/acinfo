@@ -200,6 +200,10 @@ onBeforeUnmount(() => {
                             <div class="wu__fields">
                                 <div class="ui-field">
                                     <label class="ui-label" :for="`wu-status-${work.id}`">Status</label>
+                                    <!-- What this work said when the page was drawn, so a
+                                         save from a page left open cannot put back a
+                                         status it has moved on from since; see status(). -->
+                                    <input type="hidden" :name="`was[${work.id}]`" :value="work.status">
                                     <select
                                         :id="`wu-status-${work.id}`"
                                         class="ui-select"

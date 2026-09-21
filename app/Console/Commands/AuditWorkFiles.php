@@ -97,10 +97,29 @@ class AuditWorkFiles extends Command
         }
 
         // ---- And its status is what they say ------------------------------
-        $should = WorkFileModel::statusFromItems($file->items);
+        $should = WorkFileModel::statusFromItems($file->items, $file->status);
 
         if ($file->status !== $should) {
             $note($id, "is {$file->status} but its works say $should");
+        }
+
+        /*
+         * Returned to the customer, then un-returned by a save.
+         *
+         * Every work that was not cancelled went back, but the folder is not
+         * returned. The roll-up used to count the cancelled work, read such a
+         * folder as approved on the next save, and clear the return's date
+         * and refund. The refund agreed is recorded nowhere now, so this is
+         * for a person to put right, not the roll-up.
+         */
+        $standing = $file->items->reject(fn ($item) => $item->status === WorkFileModel::CANCELLED);
+
+        if ($file->items->count() > 1
+            && $standing->isNotEmpty()
+            && $standing->count() < $file->items->count()
+            && $standing->every(fn ($item) => $item->status === WorkFileModel::RETURNED)
+            && $file->status !== WorkFileModel::RETURNED) {
+            $note($id, "had its papers returned to the customer, but a later save lost the return and its refund (it is {$file->status}) — put the return and the refund agreed back by hand");
         }
 
         if (! $file->items->contains('work_type_id', $file->work_type_id)) {
