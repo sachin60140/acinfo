@@ -325,6 +325,72 @@ class WorkFileModel extends Model
         return $this->belongsTo(WorkTypeModel::class, 'work_type_id');
     }
 
+    /**
+     * What a customer is told when their work is approved, one notice per file.
+     *
+     * Built from the works approved in one save, so a board that approves a
+     * transfer on one file and a hypothecation addition on another offers two
+     * messages, each to its own customer. Each says which works came through
+     * and when, what is still in progress on the same file, whether the papers
+     * are ready to collect, and what the account owes.
+     *
+     * Never a vendor — a customer is not told who did the work — and never a
+     * remark: what was typed on the approval is the office's own note.
+     *
+     * @param  array<int, int>  $itemIds  works that moved into Approval Done in this save
+     * @return array<int, array<string, mixed>>
+     */
+    public static function approvalNotices(array $itemIds): array
+    {
+        if (! $itemIds) {
+            return [];
+        }
+
+        $approved = WorkFileItemModel::with('workType')
+            ->whereIn('id', $itemIds)
+            ->where('status', self::APPROVED)
+            ->orderBy('id')
+            ->get()
+            ->groupBy('work_file_id');
+
+        if ($approved->isEmpty()) {
+            return [];
+        }
+
+        return self::with(['customer', 'items.workType'])
+            ->whereIn('id', $approved->keys()->all())
+            ->orderBy('id')
+            ->get()
+            ->map(function ($file) use ($approved) {
+                // What is still being worked on: not finished, not struck off.
+                $pending = $file->items->reject(fn ($item) => in_array(
+                    $item->status,
+                    [self::APPROVED, self::CANCELLED, self::RETURNED],
+                    true
+                ));
+
+                $customer = $file->customer;
+
+                return [
+                    'id' => (int) $file->id,
+                    'fileNo' => (string) $file->file_no,
+                    'vehicle' => (string) $file->registration_no,
+                    'customer' => (string) ($customer?->name ?? ''),
+                    // Their WhatsApp number when one is saved, as everywhere.
+                    'mobile' => (string) ($customer?->whatsapp ?: $customer?->mobile),
+                    'works' => $approved[$file->id]->map(fn ($item) => [
+                        'work' => $item->workType?->name ?? 'Work',
+                        'on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : '',
+                    ])->values()->all(),
+                    'pending' => $pending->map(fn ($item) => $item->workType?->name ?? 'Work')->values()->all(),
+                    'papersReady' => $pending->isEmpty() && ! $file->handed_over_on,
+                    'balance' => $customer ? round(PartyLedgerModel::currentBalance($customer->id), 2) : 0.0,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
     public function customer(): BelongsTo
     {
         return $this->belongsTo(PartyModel::class, 'customer_id');

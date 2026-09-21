@@ -2274,6 +2274,7 @@ class WorkFileController extends Controller
                 $files = [];
                 $notes = [];
                 $moved = 0;
+                $approvedNow = [];
 
                 foreach ($items as $item) {
                     $upload = $uploads[$item->id] ?? null;
@@ -2333,6 +2334,12 @@ class WorkFileController extends Controller
                         $moved++;
                     }
 
+                    // Approved in this save, so the customer can be told from
+                    // the page it lands on; see approvalNotices().
+                    if ($movedThis && $item->isApproved()) {
+                        $approvedNow[] = (int) $item->id;
+                    }
+
                     $file = $item->file;
 
                     // The folder's status before any of its jobs moved, so the
@@ -2371,10 +2378,16 @@ class WorkFileController extends Controller
                     }
                 }
 
-                return ['items' => $moved, 'files' => count($files)];
+                return ['items' => $moved, 'files' => count($files), 'approved' => $approvedNow];
             });
             if (! $changed['files']) {
                 return back()->with('error', 'Nothing was changed.');
+            }
+
+            // Work approved in this save: the page it lands on offers to tell
+            // each customer, on WhatsApp. See the alerts partial.
+            if ($changed['approved']) {
+                session()->flash('approved', WorkFileModel::approvalNotices($changed['approved']));
             }
 
             /*
@@ -2847,6 +2860,14 @@ class WorkFileController extends Controller
                 return back()->withInput()->with('error', 'Approval Done needs a screenshot of the approval. Attach one and save again.');
             }
 
+            // The works not approved before this save, to tell which it
+            // approved; see below.
+            $unapprovedBefore = $file->items()
+                ->where('status', '<>', WorkFileModel::APPROVED)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
             DB::transaction(function () use ($file, $req, $removing, $priceChanges) {
                 if ($req->hasFile('approval_screenshot')) {
                     $file->storeScreenshot($req->file('approval_screenshot'));
@@ -3174,6 +3195,29 @@ class WorkFileController extends Controller
                     );
                 }
             });
+
+            /*
+             * Work approved on this screen — a folder of one work, whose status
+             * is set here — so the list it lands on offers to tell the
+             * customer, as the board and the Work Report do.
+             *
+             * Decided by the works, as the board decides it, and not by the
+             * folder. Found in review: taking the last pending work off a
+             * folder turns it Approval Done with nothing approved, and offered
+             * a weeks-old approval as news; approving a work while adding
+             * another leaves the folder Partly Approved, and offered nothing.
+             */
+            $approvedNow = $unapprovedBefore
+                ? WorkFileItemModel::whereIn('id', $unapprovedBefore)
+                    ->where('status', WorkFileModel::APPROVED)
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all()
+                : [];
+
+            if ($approvedNow) {
+                session()->flash('approved', WorkFileModel::approvalNotices($approvedNow));
+            }
 
             // What this save was, so the same save arriving a second time can
             // be told apart from a stale page; see the check above.

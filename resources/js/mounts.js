@@ -8,6 +8,7 @@
  */
 import { createApp } from 'vue';
 
+import ApprovalShare from './components/ApprovalShare.vue';
 import BalanceReminder from './components/BalanceReminder.vue';
 import ClientForm from './components/ClientForm.vue';
 import ClientPassword from './components/ClientPassword.vue';
@@ -96,6 +97,8 @@ export const components = {
     // Banded by customer, with a message for each band.
     'vue-uncollected-report': UncollectedReport,
     'vue-balance-reminder': BalanceReminder,
+    // Work just approved, offered to each customer on WhatsApp.
+    'vue-approval-share': ApprovalShare,
     'vue-customer-receipt': CustomerReceipt,
     'vue-expense-types': DataGrid,
     'vue-paper-types': DataGrid,

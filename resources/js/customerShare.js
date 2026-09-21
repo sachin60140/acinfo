@@ -128,6 +128,73 @@ export function receiptMessage({ name, amount, dateLabel = '', mode = '', refere
 }
 
 /**
+ * Work approved, as one message to the customer whose file it is.
+ *
+ * Which works came through and on what day, anything on the same file still in
+ * progress, whether the papers are ready to collect, and the balance. Built
+ * from the fields named here only: nothing about a vendor, and never the
+ * remark typed on the approval, which is the office's own.
+ *
+ * @param {{customer:string, vehicle?:string, fileNo?:string,
+ *          works:Array<{work:string, on?:string}>, pending?:string[],
+ *          papersReady?:boolean, balance?:number}} notice
+ * @param {string} today dd-mm-yyyy
+ */
+export function approvalMessage(notice, today = '') {
+    const works = notice.works ?? [];
+
+    if (! works.length) {
+        return '';
+    }
+
+    const lines = [`*Work approved — ${notice.customer}*`];
+
+    const which = [notice.vehicle, notice.fileNo].filter(Boolean).join(' · ');
+
+    if (which) {
+        lines.push(which);
+    }
+
+    lines.push('');
+
+    for (const one of works) {
+        lines.push(`✓ ${one.work} approved${one.on ? ` on ${one.on}` : ''}`);
+    }
+
+    const pending = notice.pending ?? [];
+
+    if (pending.length) {
+        lines.push(`Still in progress: ${pending.join(', ')}`);
+    }
+
+    const due = Number(notice.balance) || 0;
+    const closing = [];
+
+    if (notice.papersReady) {
+        closing.push('Your papers are ready to collect.');
+    }
+
+    /*
+     * The whole account, and said to be: a dealer with a dozen files reading
+     * "Balance due: ₹23,500" under one ₹3,000 transfer takes it for the price
+     * of these papers. Dated, as the receipt's balance is.
+     */
+    if (due > 0.005) {
+        closing.push(`Total balance on your account${today ? ` as of ${today}` : ''}: ${rupees(due)}`);
+    }
+
+    if (closing.length) {
+        lines.push('');
+        lines.push(...closing);
+    }
+
+    lines.push('');
+    lines.push('Thank you.');
+
+    return lines.join('\n');
+}
+
+/**
  * The balance on a customer's account, as a reminder.
  *
  * The whole balance and not a list of files: it is the one figure the
