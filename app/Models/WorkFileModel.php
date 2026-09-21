@@ -3665,7 +3665,9 @@ class WorkFileModel extends Model
                 'customer.name as customer_name',
                 'vendor.name as vendor_name',
                 DB::raw(($isVendor ? 'vendor.id' : 'customer.id').' as party_id'),
-                DB::raw(($isVendor ? 'vendor.name' : 'customer.name').' as party_name')
+                DB::raw(($isVendor ? 'vendor.name' : 'customer.name').' as party_name'),
+                // Where a list of these files can be sent; see WorkReport.vue.
+                DB::raw(($isVendor ? 'vendor.mobile' : 'customer.mobile').' as party_mobile')
             );
 
         if ($isVendor) {

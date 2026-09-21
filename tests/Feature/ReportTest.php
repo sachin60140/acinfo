@@ -317,6 +317,49 @@ class ReportTest extends TestCase
         }
     }
 
+    /*
+     * ---- Sending a vendor their list ----------------------------------------
+     */
+
+    /** Each row carries its vendor's number, for the WhatsApp button on its band. */
+    public function test_the_vendor_report_carries_each_vendors_number(): void
+    {
+        $this->actingAs($this->admin());
+
+        $file = $this->file($this->customerA, 5000, $this->vendor, 3000);
+
+        $props = $this->gridProps(route('report.files', ['party_type' => 'vendor']));
+        $row = collect($props['rows'])->firstWhere('id', $file->id);
+
+        $this->assertSame('vendor', $props['partyType']);
+        $this->assertSame($this->vendor->mobile, $row['party_mobile']);
+    }
+
+    /**
+     * The number rides on the row and nowhere else: not a column, so it is
+     * neither drawn nor written into an export somebody forwards on.
+     */
+    public function test_the_number_is_never_a_column(): void
+    {
+        $this->actingAs($this->admin());
+
+        $this->file($this->customerA, 5000, $this->vendor, 3000);
+
+        $keys = array_column($this->gridProps(route('report.files', ['party_type' => 'vendor']))['columns'], 'key');
+
+        $this->assertNotContains('party_mobile', $keys);
+    }
+
+    /** And the customer-wise report says which it is, so it offers nothing to send. */
+    public function test_the_customer_report_says_it_is_one(): void
+    {
+        $this->actingAs($this->admin());
+
+        $this->file($this->customerA, 5000);
+
+        $this->assertSame('customer', $this->gridProps(route('report.files'))['partyType']);
+    }
+
     private function gridProps(string $url): array
     {
         $html = $this->get($url)->assertOk()->getContent();

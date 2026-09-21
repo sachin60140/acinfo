@@ -328,6 +328,7 @@ class ReportController extends Controller
                 $groups[$key] = [
                     'id' => $row->party_id,
                     'name' => $row->party_name,
+                    'mobile' => $row->party_mobile,
                     'balance' => $balances[$row->party_id] ?? 0.0,
                     'files' => 0,
                     'billed' => 0.0,
@@ -409,6 +410,9 @@ class ReportController extends Controller
                     'party_id' => (int) $group['id'],
                     'party_band' => $band,
                     'party_name' => $group['name'],
+                    // Not a column: drawn nowhere and exported nowhere. The band's
+                    // WhatsApp button reads it off the first row under it.
+                    'party_mobile' => $group['mobile'],
                     'file_no' => $row->file_no,
                     'registration_no' => $row->registration_no,
                     'received' => date('d-m-Y', strtotime($row->received_date)),
@@ -511,6 +515,15 @@ class ReportController extends Controller
             'reasonKeys' => [WorkFileModel::CANCELLED, WorkFileModel::RETURNED],
             'today' => now()->toDateString(),
 
+            /*
+             * Which report this is, because only the vendor-wise one offers to
+             * send its list. A customer is never told a file went to a vendor —
+             * see WorkFileModel::CUSTOMER_STATUSES — and a customer's list of
+             * dispatch dates and days out would tell them exactly that.
+             */
+            'partyType' => $partyType,
+            // The date a sent list is "as of".
+            'todayLabel' => now()->format('d-m-Y'),
             'groupBy' => 'party_id',
             'groupLabel' => 'party_band',
             'totals' => ['billed' => 'sum', 'cost' => 'sum', 'expenses' => 'sum', 'margin' => 'sum'],
