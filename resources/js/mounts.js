@@ -11,6 +11,7 @@ import { createApp } from 'vue';
 import BalanceReminder from './components/BalanceReminder.vue';
 import ClientForm from './components/ClientForm.vue';
 import ClientPassword from './components/ClientPassword.vue';
+import CustomerReceipt from './components/CustomerReceipt.vue';
 import CustomerReturn from './components/CustomerReturn.vue';
 import HandOver from './components/HandOver.vue';
 import PaperAudit from './components/PaperAudit.vue';
@@ -93,6 +94,7 @@ export const components = {
     // Banded by customer, with a message for each band.
     'vue-uncollected-report': UncollectedReport,
     'vue-balance-reminder': BalanceReminder,
+    'vue-customer-receipt': CustomerReceipt,
     'vue-expense-types': DataGrid,
     'vue-paper-types': DataGrid,
     'vue-client-list': DataGrid,

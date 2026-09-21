@@ -339,7 +339,39 @@ class PartyController extends Controller
             $entry->particular = $req->particular;
             $entry->save();
 
-            return back()->with('success', ucfirst($entry->entry_type).' entry saved successfully. Transaction ID: '.$entry->id);
+            $saved = back()->with('success', ucfirst($entry->entry_type).' entry saved successfully. Transaction ID: '.$entry->id);
+
+            /*
+             * Money in from a customer: offer them a receipt on WhatsApp.
+             *
+             * Carried to the next page in the session, because the form posts
+             * and comes back; it is there once, beside the "saved" message, and
+             * gone on the next load. What it says is built from the figures
+             * named here and nothing else — never the particular, which is
+             * the office's own description of the entry.
+             */
+            if ($type === 'customer' && $entry->entry_type === 'credit'
+                && in_array($entry->payment_mode, PartyLedgerModel::MONEY_MODES, true)) {
+                $party = PartyModel::find($entry->party_id);
+
+                $saved->with('receipt', [
+                    'name' => $party->name,
+                    // Their WhatsApp number when one is saved, as everywhere.
+                    'mobile' => (string) ($party->whatsapp ?: $party->mobile),
+                    'amount' => (float) $entry->amount,
+                    'dateLabel' => date('d-m-Y', strtotime($entry->txn_date)),
+                    'mode' => $entry->payment_mode,
+                    'reference' => (string) $entry->ref_no,
+                    // Today's, after this payment — not as of the day it is
+                    // dated, which can be earlier.
+                    'balance' => round(PartyLedgerModel::currentBalance($party->id), 2),
+                    // So the message can say so: a payment dated last month
+                    // beside an undated balance reads as last month's balance.
+                    'todayLabel' => now()->format('d-m-Y'),
+                ]);
+            }
+
+            return $saved;
         }
 
         $label = PartyModel::label($type);
@@ -391,6 +423,8 @@ class PartyController extends Controller
             'label' => $label,
             // Nothing can be entered against a side with no parties on it.
             'partyCount' => count($props['parties']),
+            // The receipt for a payment just saved; see above.
+            'receipt' => session('receipt'),
         ])->toResponse($req);
     }
 

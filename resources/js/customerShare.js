@@ -81,6 +81,53 @@ export function readyMessage(customer, rows, today = '') {
 }
 
 /**
+ * A receipt for a payment just booked, and where the account stands after it.
+ *
+ * The customer's own reference goes in — the UPI or cheque number is how they
+ * find the payment in their bank — but the particular on the entry never
+ * does: it is the office's description, written for the office.
+ *
+ * @param {{name:string, amount:number, dateLabel?:string, mode?:string,
+ *          reference?:string, balance:number, todayLabel?:string}} receipt
+ *          balance: today's, signed, positive when they still owe and negative
+ *          when they are in advance
+ */
+export function receiptMessage({ name, amount, dateLabel = '', mode = '', reference = '', balance = 0, todayLabel = '' }) {
+    if (! (Number(amount) > 0.005)) {
+        return '';
+    }
+
+    const left = Number(balance) || 0;
+
+    const lines = [
+        `*Payment received — ${name}*`,
+        [`${rupees(amount)} received`, dateLabel && `on ${dateLabel}`, mode && `(${mode})`].filter(Boolean).join(' '),
+    ];
+
+    if (reference && reference.trim()) {
+        lines.push(`Ref: ${reference.trim()}`);
+    }
+
+    lines.push('');
+
+    // Dated, because the payment above may not be today's and the balance is.
+    const asOf = todayLabel ? ` as of ${todayLabel}` : '';
+
+    if (left > 0.005) {
+        lines.push(`Balance due${asOf}: ${rupees(left)}`);
+    } else if (left < -0.005) {
+        lines.push(`Paid in advance${asOf}: ${rupees(-left)}`);
+    } else {
+        lines.push(`Your account is fully settled${asOf}.`);
+    }
+
+    lines.push('');
+    lines.push('Thank you.');
+
+    return lines.join('\n');
+}
+
+/**
  * The balance on a customer's account, as a reminder.
  *
  * The whole balance and not a list of files: it is the one figure the
