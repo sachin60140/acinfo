@@ -150,6 +150,18 @@ const needsEvidence = (row) => approving(row) && !row.screenshot && !row.has_scr
  */
 const needsDate = (row) => approving(row) && !String(row.approvedOn ?? '').trim();
 
+/*
+ * Whether this save has anything to say about the approval date: the work is
+ * being approved now, or the box was changed. Otherwise it is not sent at all.
+ *
+ * The box is drawn on every approved row, filled with the date stored — or
+ * with today, as a suggestion, when an old approval has none. Sent back from
+ * a row nobody touched, that suggestion was written as the approval date, and
+ * the stored date a colleague had corrected since was written over.
+ */
+const sendsDate = (row) => changed(row)
+    || String(row.approvedOn ?? '') !== String(row.approved_on_value ?? '');
+
 const blocked = computed(() =>
     rows.some((row) => needsReason(row) || needsEvidence(row) || needsDate(row))
 );
@@ -358,7 +370,7 @@ function onScreenshot(row, event) {
                                                 type="date"
                                                 class="ui-input board__date"
                                                 :class="{ 'ui-input--invalid': needsDate(row) }"
-                                                :name="`approved_on[${row.id}]`"
+                                                :name="sendsDate(row) ? `approved_on[${row.id}]` : null"
                                                 v-model="row.approvedOn"
                                                 :max="today">
                                         </label>

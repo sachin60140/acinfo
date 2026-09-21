@@ -525,6 +525,30 @@ class StaleStatusSaveTest extends TestCase
         $this->assertSame('2026-09-05', date('Y-m-d', strtotime($job->fresh()->approved_on)));
     }
 
+    /**
+     * An old approval with no date, untouched, while the clerk moves another
+     * work. The board no longer sends the date box it drew with a suggestion
+     * of today, so the row is left out: not stamped with an invented date, and
+     * not refusing the clerk's save for want of a screenshot.
+     */
+    public function test_an_untouched_approval_with_no_date_is_left_out_of_the_save(): void
+    {
+        $mine = $this->file();
+        $old = $this->approvedWork('2026-09-10');
+        \Illuminate\Support\Facades\DB::table('work_file_item')->where('id', $old->id)->update([
+            'approved_on' => null, 'approval_screenshot' => null,
+        ]);
+
+        $this->actingAs($this->admin)->from(route('workfile.status'))->post(route('workfile.status'), [
+            'statuses' => [$this->job($mine)->id => 'under_verification', $old->id => WorkFileModel::APPROVED],
+            'was' => [$this->job($mine)->id => WorkFileModel::IN_OFFICE, $old->id => WorkFileModel::APPROVED],
+            'was_approved_on' => [$old->id => ''],
+        ])->assertSessionHas('success');
+
+        $this->assertSame('under_verification', $this->job($mine)->fresh()->status);
+        $this->assertNull($old->fresh()->approved_on, 'an approval date was made up');
+    }
+
     /** A work not approved but still carrying an old date, approved now: judged by its status, which has not moved. */
     public function test_approving_a_work_with_a_leftover_date_is_not_mistaken_for_a_stale_page(): void
     {
