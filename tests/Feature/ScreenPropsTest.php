@@ -140,6 +140,26 @@ class ScreenPropsTest extends TestCase
         $doneItem->status = \App\Models\WorkFileModel::APPROVED;
         $doneItem->approved_on = now()->toDateString();
         $doneItem->save();
+
+        // And one the office is doing itself, for In-house Work to list.
+        $kept = new \App\Models\WorkFileModel;
+        $kept->file_no = 'F-PROPS-'.uniqid();
+        $kept->received_date = now()->toDateString();
+        $kept->registration_no = 'BR01PR'.random_int(1000, 9999);
+        $kept->description = 'Props fixture, in-house';
+        $kept->work_type_id = $type->id;
+        $kept->customer_id = $customer->id;
+        $kept->customer_amount = 1000;
+        $kept->status = 'in_office';
+        $kept->save();
+
+        $keptItem = new \App\Models\WorkFileItemModel;
+        $keptItem->work_file_id = $kept->id;
+        $keptItem->work_type_id = $type->id;
+        $keptItem->customer_amount = 1000;
+        $keptItem->status = 'in_office';
+        $keptItem->kept_in_house_on = now()->toDateString();
+        $keptItem->save();
     }
     /**
      * Every screen that mounts something, with a URL that has data behind it.
@@ -176,6 +196,7 @@ class ScreenPropsTest extends TestCase
             'files-dated' => 'admin/files?from=2026-01-01&to=2026-12-31',
             'file-receive' => 'admin/file/receive',
             'file-assign' => 'admin/file/assign',
+            'file-in-house' => 'admin/file/in-house',
             'file-vendor-return' => 'admin/file/vendor-return',
             'file-customer-return' => 'admin/file/customer-return',
             'file-hand-over' => 'admin/file/handover',

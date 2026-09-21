@@ -65,6 +65,8 @@
               // Between receiving papers and sending them out: the order the work happens in.
               ['label' => 'Paper Audit', 'icon' => 'bi-clipboard-check', 'href' => route('workfile.paperaudit'), 'active' => $req->routeIs('workfile.paperaudit', 'workfile.papers')],
               ['label' => 'Give to Vendor', 'icon' => 'bi-truck', 'href' => route('workfile.assign'), 'active' => $req->routeIs('workfile.assign')],
+              // The other way work leaves that screen, so beside it.
+              ['label' => 'In-house Work', 'icon' => 'bi-house-gear', 'href' => route('workfile.inhouse'), 'active' => $req->routeIs('workfile.inhouse')],
               ['label' => 'Return from Vendor', 'icon' => 'bi-arrow-return-left', 'href' => route('workfile.vendorreturn'), 'active' => $req->routeIs('workfile.vendorreturn')],
               ['label' => 'Return to Customer', 'icon' => 'bi-arrow-counterclockwise', 'href' => route('workfile.customerreturn'), 'active' => $req->routeIs('workfile.customerreturn')],
               // Beside Return to Customer and named apart from it: that one is a
