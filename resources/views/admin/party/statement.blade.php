@@ -113,6 +113,10 @@
                             </div>
                         </div>
 
+                        @if ($reminder)
+                            <div data-vue="vue-balance-reminder" data-props="{{ \App\Support\VueProps::encode($reminder) }}"></div>
+                        @endif
+
                         {{--
                             Rendered by Vue. Search, paging and the Copy/CSV/Excel/
                             PDF/Print exports are the grid's, so the DataTables

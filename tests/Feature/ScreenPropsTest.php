@@ -140,7 +140,28 @@ class ScreenPropsTest extends TestCase
         $doneItem->status = \App\Models\WorkFileModel::APPROVED;
         $doneItem->approved_on = now()->toDateString();
         $doneItem->save();
+
+        /*
+         * And a customer who owes something, for the statement. It offers a
+         * balance reminder only then, and a database where the first party
+         * happened to be settled — a fresh one on the build server — would
+         * read as the reminder having gone missing.
+         */
+        \Illuminate\Support\Facades\DB::table('party_ledger')->insert([
+            'party_id' => $customer->id,
+            'txn_date' => now()->toDateString(),
+            'entry_type' => 'debit',
+            'amount' => 1000,
+            'particular' => 'Props fixture charge',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->owing = $customer->id;
     }
+
+    /** The customer seedWork() left owing, whose statement is recorded. */
+    private ?int $owing = null;
     /**
      * Every screen that mounts something, with a URL that has data behind it.
      */
@@ -159,7 +180,7 @@ class ScreenPropsTest extends TestCase
             'party-add' => 'admin/party/add/customer',
             'party-entry' => 'admin/party/entry/customer',
             'party-edit' => $party ? 'admin/party/edit/'.$party->id : null,
-            'party-statement' => $party ? 'admin/party/statement/'.$party->id : null,
+            'party-statement' => 'admin/party/statement/'.$this->owing,
             'files' => 'admin/files',
             /*
              * Filtered variants, because a view variable used only inside an

@@ -152,6 +152,7 @@ class PartyModel extends Model
         }
 
         return [
+            'id' => (int) $oldest->id,
             'name' => $oldest->name,
             'amount' => round((float) $oldest->balance, 2),
             'since' => date('d-m-Y', strtotime($oldest->first_entry)),
