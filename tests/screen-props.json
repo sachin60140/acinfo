@@ -242,6 +242,7 @@
                 }
             },
             "documents": "[]",
+            "drawn": "string",
             "errors": "[]",
             "expenseTypes": {
                 "list_of": {
@@ -320,6 +321,7 @@
                     "label": "string"
                 }
             },
+            "wasStatus": "string",
             "workTypes": {
                 "list_of": {
                     "id": "number",

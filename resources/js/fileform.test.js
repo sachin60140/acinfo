@@ -318,3 +318,69 @@ describe('taking a work off a file', () => {
             .toEqual(['TR — 3,000.00', 'HPA']);
     });
 });
+
+/*
+ * What the edit page was drawn from goes with the save, so the server can
+ * tell a colleague changed the file since and refuse rather than write the
+ * old values back over theirs. Nothing of it on the receive screen.
+ */
+describe('saving an edit page that may be out of date', () => {
+    it('posts what the page was drawn from, and the status it showed', () => {
+        const host = mount({ drawn: 'abc123', wasStatus: 'in_office' });
+
+        expect(host.querySelector('input[type="hidden"][name="drawn"]').value).toBe('abc123');
+        expect(host.querySelector('input[type="hidden"][name="was_status"]').value).toBe('in_office');
+    });
+
+    it('posts neither on the receive screen, where there is no file yet', () => {
+        const host = mount({ isEdit: false, drawn: '', wasStatus: '' });
+
+        expect(host.querySelector('input[name="drawn"]')).toBe(null);
+        expect(host.querySelector('input[name="was_status"]')).toBe(null);
+    });
+});
+
+/*
+ * A double click sent the form twice: the first save went through and the
+ * second was refused as coming from a page out of date. One press, one save.
+ */
+describe('pressing Update File twice', () => {
+    it('sends the form once', () => {
+        const host = mount({ drawn: 'abc123', wasStatus: 'in_office' });
+        const form = host.querySelector('form#file_form');
+
+        const first = new window.Event('submit', { cancelable: true });
+        const second = new window.Event('submit', { cancelable: true });
+
+        form.dispatchEvent(first);
+        form.dispatchEvent(second);
+
+        expect(first.defaultPrevented).toBe(false);
+        expect(second.defaultPrevented).toBe(true);
+    });
+
+    it('greys the button out while it saves', async () => {
+        const host = mount({ drawn: 'abc123', wasStatus: 'in_office' });
+        const button = [...host.querySelectorAll('button[type="submit"]')].find((b) => b.textContent.includes('Update File'));
+
+        host.querySelector('form#file_form').dispatchEvent(new window.Event('submit', { cancelable: true }));
+        await nextTick();
+
+        expect(button.disabled).toBe(true);
+    });
+
+    it('lets it be pressed again on a page brought back with Back', async () => {
+        const host = mount({ drawn: 'abc123', wasStatus: 'in_office' });
+        const button = [...host.querySelectorAll('button[type="submit"]')].find((b) => b.textContent.includes('Update File'));
+
+        host.querySelector('form#file_form').dispatchEvent(new window.Event('submit', { cancelable: true }));
+        await nextTick();
+
+        const shown = new window.Event('pageshow');
+        Object.defineProperty(shown, 'persisted', { value: true });
+        window.dispatchEvent(shown);
+        await nextTick();
+
+        expect(button.disabled).toBe(false);
+    });
+});

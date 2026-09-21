@@ -13,7 +13,7 @@
  * moving a balance that someone has already seen, and the panel says where the
  * two statements land before the save rather than after it.
  */
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { balance, money, side } from '../money';
 import FilePreview from './FilePreview.vue';
 import CardSection from './CardSection.vue';
@@ -31,6 +31,10 @@ const props = defineProps({
     indexUrl: { type: String, required: true },
     isEdit: { type: Boolean, default: false },
     statuses: { type: Object, default: () => ({}) },
+    // What the edit page was drawn from, so a save can tell the file changed
+    // under it. Nothing on the receive screen, where there is no file yet.
+    drawn: { type: String, default: '' },
+    wasStatus: { type: String, default: '' },
     workTypes: { type: Array, default: () => [] },
     customers: { type: Array, default: () => [] },
     vendors: { type: Array, default: () => [] },
@@ -202,6 +206,37 @@ const serverAsked = computed(() => Boolean(props.errors.price_remark));
 const askingWhy = computed(() => priceChanges.value.length > 0 || serverAsked.value);
 
 const needsPriceReason = computed(() => askingWhy.value && priceRemark.value.trim() === '');
+
+/*
+ * One save per press.
+ *
+ * A double click sent the form twice. The first save went through and the
+ * second, no longer matching the file, was refused with a message saying
+ * nothing was saved — and a reader who believed it added the same expense
+ * again. So the second submit is stopped here; the server tells a repeat it
+ * was already saved as well, for an Enter pressed again after this page has
+ * gone. Released when the browser brings the page back from its history, or
+ * the button would stay dead on a page returned to with Back.
+ */
+const submitting = ref(false);
+
+function onSubmit(event) {
+    if (submitting.value) {
+        event.preventDefault();
+
+        return;
+    }
+
+    submitting.value = true;
+}
+
+function onPageShow(event) {
+    if (event.persisted) {
+        submitting.value = false;
+    }
+}
+
+onBeforeUnmount(() => window.removeEventListener('pageshow', onPageShow));
 
 /*
  * The button bar is stuck to the bottom of the screen and the box is at the end
@@ -593,6 +628,8 @@ function onWorkType() {
 const workTypeField = ref(null);
 
 onMounted(() => {
+    window.addEventListener('pageshow', onPageShow);
+
     // The select carried autofocus as server markup. Inserted by Vue the
     // attribute is no longer dependable, so the focus is placed by hand — and
     // only if the user has not already started somewhere else.
@@ -609,11 +646,16 @@ onMounted(() => {
             class="wf-form"
             :action="action"
             method="POST"
-            enctype="multipart/form-data">
+            enctype="multipart/form-data"
+            @submit="onSubmit">
             <!-- Rendered here rather than passed as a slot: the component is
                  mounted onto a bare element, so there is no server markup to
                  slot in. -->
             <input type="hidden" name="_token" :value="csrf">
+            <template v-if="isEdit && drawn">
+                <input type="hidden" name="drawn" :value="drawn">
+                <input type="hidden" name="was_status" :value="wasStatus">
+            </template>
 
             <div class="ui-card">
                 <div class="ui-card__head">
@@ -1479,7 +1521,7 @@ onMounted(() => {
                     </span>
                     <div class="wf-actions">
                         <a :href="indexUrl" class="ui-btn">Cancel</a>
-                        <button type="submit" class="ui-btn ui-btn--primary" :disabled="needsPriceReason">
+                        <button type="submit" class="ui-btn ui-btn--primary" :disabled="needsPriceReason || submitting">
                             <i class="bi bi-check2-circle"></i> {{ isEdit ? 'Update File' : 'Receive File' }}
                         </button>
                     </div>

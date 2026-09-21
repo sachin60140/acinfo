@@ -1227,6 +1227,31 @@ class WorkFileController extends Controller
      *
      * The path and query survive; nothing else does.
      */
+    /**
+     * What an edit form posted, as one short string: the same page pressed
+     * twice posts the same thing.
+     *
+     * The files attached count as much as the fields typed. Found in review:
+     * left out, a reader who went Back, picked a different PDF or a different
+     * approval screenshot and saved again was told the save was a repeat — and
+     * the new file was thrown away. Each is known by its name, its size and
+     * its contents, which is why this is worked out before anything moves the
+     * uploads into place.
+     */
+    private static function postPrint(Request $req): string
+    {
+        $files = collect(\Illuminate\Support\Arr::dot($req->allFiles()))
+            ->map(fn ($upload) => $upload instanceof \Illuminate\Http\UploadedFile && $upload->isValid()
+                ? [$upload->getClientOriginalName(), $upload->getSize(), (string) sha1_file($upload->getRealPath())]
+                : null)
+            ->all();
+
+        return sha1(json_encode([
+            \Illuminate\Support\Arr::except($req->input(), ['_token']),
+            $files,
+        ]));
+    }
+
     private static function safeReturn($url): ?string
     {
         if (! is_string($url) || trim($url) === '') {
@@ -2514,6 +2539,68 @@ class WorkFileController extends Controller
         $file = WorkFileModel::findOrFail($id);
 
         if ($req->isMethod('POST')) {
+            /*
+             * A page left open while somebody else changed the file.
+             *
+             * The form posts every field it shows, so saving it wrote the file
+             * back as it was when the page was drawn: a return a colleague
+             * made since was undone and its refund taken off the ledger, an
+             * approval lost its date, a corrected price went back. The page
+             * says what it was drawn from; see editFingerprint().
+             *
+             * Checked before anything else, including validation, and sent to
+             * a freshly drawn page without the typed values: those were typed
+             * against the old file, and put back into the form they would
+             * carry its old status straight into the next save.
+             *
+             * A post that carries no fingerprint is a page drawn before this
+             * was added, and is saved as it always was.
+             */
+            $drawn = $req->input('drawn');
+
+            // What this post is, taken now while its uploads are still where
+            // they arrived; see postPrint().
+            $print = self::postPrint($req);
+
+            $current = $file->editFingerprint();
+
+            if (is_string($drawn) && $drawn !== '' && ! hash_equals($current, $drawn)) {
+                /*
+                 * Unless it is this reader's own save, arriving twice — a
+                 * double click, or Enter pressed again. The first went through
+                 * and changed the file, so the second no longer matches it;
+                 * refused, it would say nothing was saved and blame a
+                 * colleague, and anybody believing it would type the change in
+                 * again. The same page, the same answers, and the file exactly
+                 * as that save left it: the second press is told it was saved.
+                 * A different change sent from the same old page is not this,
+                 * and is refused like any other.
+                 */
+                $saved = $req->session()->get('file_saved.'.$file->id);
+
+                if (is_array($saved)
+                    && hash_equals((string) ($saved['from'] ?? ''), $drawn)
+                    && hash_equals((string) ($saved['to'] ?? ''), $current)
+                    && hash_equals((string) ($saved['post'] ?? ''), $print)) {
+                    return redirect()->route('workfile.index')->with(
+                        'success',
+                        'File '.$file->file_no.' was saved. The button was pressed twice, so the second press changed nothing.'
+                    );
+                }
+
+                $was = (string) $req->input('was_status');
+
+                $now = $was !== '' && $was !== $file->status
+                    ? ' (now '.(WorkFileModel::STATUSES[$file->status] ?? $file->status).')'
+                    : '';
+
+                return redirect()->route('workfile.edit', $file->id)->with(
+                    'error',
+                    $file->file_no.' has changed since you opened it'.$now.'. Nothing was saved. '
+                        .'This page now shows it as it is — make your change again.'
+                );
+            }
+
             $req->validate([
                 'file_no' => ['nullable', 'string', 'max:30', Rule::unique('work_file', 'file_no')->ignore($file->id)],
                 'received_date' => 'required|date_format:Y-m-d',
@@ -3086,6 +3173,16 @@ class WorkFileController extends Controller
                 }
             });
 
+            // What this save was, so the same save arriving a second time can
+            // be told apart from a stale page; see the check above.
+            if (is_string($drawn) && $drawn !== '') {
+                $req->session()->put('file_saved.'.$file->id, [
+                    'from' => $drawn,
+                    'to' => $file->fresh()->editFingerprint(),
+                    'post' => $print,
+                ]);
+            }
+
             return redirect()->route('workfile.index')
                 ->with('success', 'File '.$file->file_no.' updated successfully. Ledger entries adjusted to match.');
         }
@@ -3109,6 +3206,16 @@ class WorkFileController extends Controller
             'indexUrl' => route('workfile.index'),
             'isEdit' => $isEdit,
             'statuses' => $statuses,
+
+            /*
+             * What this page is drawn from, posted back so a save can tell the
+             * file has changed under it; see edit(). Carried through a save
+             * sent back for some other reason, so the page still answers for
+             * when it was first drawn rather than for the redraw — the redraw
+             * puts the typed values back, the old status among them.
+             */
+            'drawn' => (string) old('drawn', $file->editFingerprint()),
+            'wasStatus' => (string) old('was_status', $file->status),
 
             /*
              * Option text is built here rather than in the component: what a
