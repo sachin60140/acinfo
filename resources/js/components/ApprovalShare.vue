@@ -10,7 +10,7 @@
 import WhatsAppShare from './WhatsAppShare.vue';
 import { approvalMessage } from '../customerShare';
 
-defineProps({
+const props = defineProps({
     files: { type: Array, required: true },
     todayLabel: { type: String, default: '' },
 });
@@ -25,7 +25,7 @@ defineProps({
                 <span class="approval-share__who">— tell {{ file.customer }}?</span>
             </span>
             <WhatsAppShare
-                :text="approvalMessage(file)"
+                :text="approvalMessage(file, props.todayLabel)"
                 :mobile="file.mobile"
                 :name="file.customer"
                 send-label="Send approval on WhatsApp" />

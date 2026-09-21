@@ -205,7 +205,72 @@ class ApprovalShareTest extends TestCase
         $this->assertSame($file->file_no, session('approved')[0]['fileNo']);
     }
 
+    /** The edit post a page makes for a folder: its works as drawn, and what else is asked. */
+    private function editPost(WorkFileModel $file, array $extra): array
+    {
+        $post = [
+            'file_no' => $file->file_no,
+            'received_date' => '2026-09-01',
+            'work_type_id' => $file->work_type_id,
+            'registration_no' => $file->registration_no,
+            'customer_id' => $file->customer_id,
+            'customer_amount' => $file->customer_amount,
+            'status' => $file->status,
+        ];
+
+        return array_merge($post, $extra);
+    }
+
+    /**
+     * Found in review: approving the one work on the edit screen while adding
+     * another in the same save left the folder Partly Approved, and the
+     * message was not offered. It is, naming the new work as in progress.
+     */
+    public function test_approving_on_the_edit_screen_while_adding_a_work_offers_it(): void
+    {
+        $file = $this->file($this->party(), [$this->tr]);
+        $file->approval_screenshot = 'approval-'.uniqid().'.png';
+        $file->save();
+
+        $this->actingAs($this->admin)->post(route('workfile.edit', $file->id), $this->editPost($file, [
+            'status' => WorkFileModel::APPROVED,
+            'new_works' => [['work_type_id' => $this->hpa->id, 'amount' => 1500]],
+        ]))->assertSessionHas('success');
+
+        $notice = session('approved')[0];
+
+        $this->assertSame([$this->tr->name], array_column($notice['works'], 'work'));
+        $this->assertSame([$this->hpa->name], $notice['pending']);
+    }
+
     // --------------------------------------------------------- not offered
+
+    /**
+     * Found in review: taking the last pending work off a folder turns it
+     * Approval Done with nothing approved in that save. The approval made
+     * weeks before, and offered then, is not offered again as news.
+     */
+    public function test_removing_the_last_pending_work_offers_nothing(): void
+    {
+        $file = $this->file($this->party(), [$this->tr, $this->hpa]);
+        $this->approve([[$this->job($file, $this->tr), '']]);
+
+        $file->refresh();
+        $hpa = $this->job($file, $this->hpa);
+        $items = [];
+
+        foreach ($file->items as $item) {
+            $items[$item->id] = ['work_type_id' => $item->work_type_id, 'customer_amount' => $item->customer_amount];
+        }
+
+        $this->actingAs($this->admin)->post(route('workfile.edit', $file->id), $this->editPost($file, [
+            'items' => $items,
+            'remove_works' => [$hpa->id],
+        ]))->assertSessionHas('success')->assertSessionMissing('approved');
+
+        $this->assertSame(WorkFileModel::APPROVED, $file->fresh()->status, 'the premise: the folder is now approved');
+    }
+
 
     public function test_nothing_is_offered_when_nothing_was_approved(): void
     {

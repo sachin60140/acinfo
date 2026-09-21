@@ -33,10 +33,18 @@ describe('the approval message', () => {
     });
 
     it('asks them to collect the papers and says what is owed', () => {
-        const text = approvalMessage(NOTICE);
+        const text = approvalMessage(NOTICE, '21-09-2026');
 
         expect(text).toContain('Your papers are ready to collect.');
-        expect(text).toContain('Balance due: ₹2,500.00');
+        expect(text).toContain('Total balance on your account as of 21-09-2026: ₹2,500.00');
+    });
+
+    /* Found in review: a bare "Balance due" under one vehicle reads as that vehicle's price. */
+    it('says the balance is the whole account, not this file', () => {
+        const text = approvalMessage({ ...NOTICE, balance: 23500 }, '21-09-2026');
+
+        expect(text).toContain('on your account');
+        expect(text).not.toMatch(/^Balance due/m);
     });
 
     it('names what is still in progress, and does not call the papers ready then', () => {
@@ -47,8 +55,8 @@ describe('the approval message', () => {
     });
 
     it('says nothing about a balance that is paid', () => {
-        expect(approvalMessage({ ...NOTICE, balance: 0 })).not.toContain('Balance due');
-        expect(approvalMessage({ ...NOTICE, balance: -300 })).not.toContain('Balance due');
+        expect(approvalMessage({ ...NOTICE, balance: 0 })).not.toContain('balance');
+        expect(approvalMessage({ ...NOTICE, balance: -300 })).not.toContain('balance');
     });
 
     it('never names a vendor or reads a remark, whatever the notice carries', () => {

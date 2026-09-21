@@ -138,8 +138,9 @@ export function receiptMessage({ name, amount, dateLabel = '', mode = '', refere
  * @param {{customer:string, vehicle?:string, fileNo?:string,
  *          works:Array<{work:string, on?:string}>, pending?:string[],
  *          papersReady?:boolean, balance?:number}} notice
+ * @param {string} today dd-mm-yyyy
  */
-export function approvalMessage(notice) {
+export function approvalMessage(notice, today = '') {
     const works = notice.works ?? [];
 
     if (! works.length) {
@@ -173,8 +174,13 @@ export function approvalMessage(notice) {
         closing.push('Your papers are ready to collect.');
     }
 
+    /*
+     * The whole account, and said to be: a dealer with a dozen files reading
+     * "Balance due: ₹23,500" under one ₹3,000 transfer takes it for the price
+     * of these papers. Dated, as the receipt's balance is.
+     */
     if (due > 0.005) {
-        closing.push(`Balance due: ${rupees(due)}`);
+        closing.push(`Total balance on your account${today ? ` as of ${today}` : ''}: ${rupees(due)}`);
     }
 
     if (closing.length) {

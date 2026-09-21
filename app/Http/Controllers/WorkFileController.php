@@ -2858,8 +2858,13 @@ class WorkFileController extends Controller
                 return back()->withInput()->with('error', 'Approval Done needs a screenshot of the approval. Attach one and save again.');
             }
 
-            // To tell whether this save approved the file; see below.
-            $statusBefore = $file->status;
+            // The works not approved before this save, to tell which it
+            // approved; see below.
+            $unapprovedBefore = $file->items()
+                ->where('status', '<>', WorkFileModel::APPROVED)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
 
             DB::transaction(function () use ($file, $req, $removing, $priceChanges) {
                 if ($req->hasFile('approval_screenshot')) {
@@ -3190,14 +3195,26 @@ class WorkFileController extends Controller
             });
 
             /*
-             * Approved on this screen — a folder of one work, whose status is
-             * set here — so the list it lands on offers to tell the customer,
-             * as the board and the Work Report do.
+             * Work approved on this screen — a folder of one work, whose status
+             * is set here — so the list it lands on offers to tell the
+             * customer, as the board and the Work Report do.
+             *
+             * Decided by the works, as the board decides it, and not by the
+             * folder. Found in review: taking the last pending work off a
+             * folder turns it Approval Done with nothing approved, and offered
+             * a weeks-old approval as news; approving a work while adding
+             * another leaves the folder Partly Approved, and offered nothing.
              */
-            if ($statusBefore !== WorkFileModel::APPROVED && $file->fresh()->status === WorkFileModel::APPROVED) {
-                session()->flash('approved', WorkFileModel::approvalNotices(
-                    $file->items()->where('status', WorkFileModel::APPROVED)->pluck('id')->map(fn ($id) => (int) $id)->all()
-                ));
+            $approvedNow = $unapprovedBefore
+                ? WorkFileItemModel::whereIn('id', $unapprovedBefore)
+                    ->where('status', WorkFileModel::APPROVED)
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all()
+                : [];
+
+            if ($approvedNow) {
+                session()->flash('approved', WorkFileModel::approvalNotices($approvedNow));
             }
 
             // What this save was, so the same save arriving a second time can
