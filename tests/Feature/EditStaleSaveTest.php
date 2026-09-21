@@ -316,6 +316,30 @@ class EditStaleSaveTest extends TestCase
         $this->assertSame('BR01ZZ7777', $file->fresh()->registration_no);
     }
 
+    /**
+     * Found in review: the same page and the same typed answers, but a
+     * different file attached — Back, the right screenshot picked, saved
+     * again. That is a different change, not a repeat, and must not be told it
+     * was saved while its file is thrown away.
+     */
+    public function test_a_repeat_with_a_different_file_attached_is_not_taken_for_a_repeat(): void
+    {
+        $file = $this->file();
+        $page = $this->draw($file);
+
+        $this->saveFrom($file, $page, ['registration_no' => 'BR01ZZ9191'])->assertSessionHas('success');
+
+        $this->saveFrom($file, $page, [
+            'registration_no' => 'BR01ZZ9191',
+            'approval_screenshot' => \Illuminate\Http\UploadedFile::fake()->image('the-right-one.png'),
+        ])
+            ->assertRedirect(route('workfile.edit', $file->id))
+            ->assertSessionHas('error');
+
+        $this->assertStringContainsString('has changed since you opened it', session('error'));
+        $this->assertNull($file->fresh()->approval_screenshot);
+    }
+
     // ------------------------------------------------------ what the refusal says
 
     public function test_it_says_what_the_file_is_now_and_what_to_do(): void

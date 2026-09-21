@@ -1193,12 +1193,27 @@ class WorkFileController extends Controller
      */
     /**
      * What an edit form posted, as one short string: the same page pressed
-     * twice posts the same thing. The token is left out, and so are uploads,
-     * which are not in the input.
+     * twice posts the same thing.
+     *
+     * The files attached count as much as the fields typed. Found in review:
+     * left out, a reader who went Back, picked a different PDF or a different
+     * approval screenshot and saved again was told the save was a repeat — and
+     * the new file was thrown away. Each is known by its name, its size and
+     * its contents, which is why this is worked out before anything moves the
+     * uploads into place.
      */
     private static function postPrint(Request $req): string
     {
-        return sha1(json_encode(\Illuminate\Support\Arr::except($req->input(), ['_token'])));
+        $files = collect(\Illuminate\Support\Arr::dot($req->allFiles()))
+            ->map(fn ($upload) => $upload instanceof \Illuminate\Http\UploadedFile && $upload->isValid()
+                ? [$upload->getClientOriginalName(), $upload->getSize(), (string) sha1_file($upload->getRealPath())]
+                : null)
+            ->all();
+
+        return sha1(json_encode([
+            \Illuminate\Support\Arr::except($req->input(), ['_token']),
+            $files,
+        ]));
     }
 
     private static function safeReturn($url): ?string
@@ -2400,6 +2415,10 @@ class WorkFileController extends Controller
              */
             $drawn = $req->input('drawn');
 
+            // What this post is, taken now while its uploads are still where
+            // they arrived; see postPrint().
+            $print = self::postPrint($req);
+
             $current = $file->editFingerprint();
 
             if (is_string($drawn) && $drawn !== '' && ! hash_equals($current, $drawn)) {
@@ -2419,7 +2438,7 @@ class WorkFileController extends Controller
                 if (is_array($saved)
                     && hash_equals((string) ($saved['from'] ?? ''), $drawn)
                     && hash_equals((string) ($saved['to'] ?? ''), $current)
-                    && hash_equals((string) ($saved['post'] ?? ''), self::postPrint($req))) {
+                    && hash_equals((string) ($saved['post'] ?? ''), $print)) {
                     return redirect()->route('workfile.index')->with(
                         'success',
                         'File '.$file->file_no.' was saved. The button was pressed twice, so the second press changed nothing.'
@@ -3017,7 +3036,7 @@ class WorkFileController extends Controller
                 $req->session()->put('file_saved.'.$file->id, [
                     'from' => $drawn,
                     'to' => $file->fresh()->editFingerprint(),
-                    'post' => self::postPrint($req),
+                    'post' => $print,
                 ]);
             }
 
