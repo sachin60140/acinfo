@@ -178,14 +178,19 @@ function onAction(row) {
 </template>
 
 <style>
-/* The vendor's name on the left and the ways to send them their list on the
-   right, on the band that already says whose files these are. */
+/* The ways to send a vendor their list sit right beside their name, on the band
+   that already says whose files these are.
+
+   Beside it, not at the far end. This report is wider than the screen and
+   scrolls sideways in its own box, and a band's heading spans the whole table —
+   so pushed to its right edge, Send on WhatsApp landed past what was visible
+   and could only be reached by scrolling the table first. */
 .wr-band {
     align-items: center;
     display: flex;
     flex-wrap: wrap;
-    gap: var(--s-2) var(--s-3);
-    justify-content: space-between;
+    gap: var(--s-2) var(--s-4);
+    justify-content: flex-start;
 }
 
 .wr-band__share {
