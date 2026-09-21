@@ -1143,6 +1143,8 @@
     "party-entry": {
         "vue-party-entry": {
             "action": "string",
+            "adjustable": "bool",
+            "billsUrl": "string",
             "csrf": "string",
             "dateField": "string",
             "indexUrl": "string",
@@ -1154,6 +1156,7 @@
                 "payment_mode": "string",
                 "ref_no": "string"
             },
+            "initialAlloc": "[]",
             "label": "string",
             "parties": {
                 "list_of": {
@@ -1166,6 +1169,7 @@
             "paymentModes": {
                 "list_of": "string"
             },
+            "paymentSide": "string",
             "sideHint": "string",
             "statementUrl": "string"
         }
@@ -1270,6 +1274,7 @@
             "emptyText": "string",
             "lead": {
                 "list_of": {
+                    "against": "null",
                     "balance": "number",
                     "credit": "null",
                     "debit": "null",
@@ -1285,6 +1290,7 @@
             "perPage": "number",
             "rows": {
                 "list_of": {
+                    "against": "null",
                     "balance": "number",
                     "credit": "null",
                     "debit": "number",
@@ -1300,6 +1306,7 @@
             "sortable": "bool",
             "tail": {
                 "list_of": {
+                    "against": "null",
                     "balance": "number",
                     "credit": "number",
                     "debit": "number",

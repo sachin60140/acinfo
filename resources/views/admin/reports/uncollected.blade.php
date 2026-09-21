@@ -125,8 +125,9 @@
                 --}}
                 <div class="alert alert-light border small mb-3">
                     <i class="bi bi-info-circle"></i>
-                    Money is received against the account, not against a file, so the oldest charge is
-                    treated as paid first. Refunds are the exception: they sit against their own file.
+                    A payment adjusted against files settles those files. Money that was not adjusted is received
+                    against the account, so the oldest charge is treated as paid first. Refunds sit against their
+                    own file.
                 </div>
 
                 <div data-vue="vue-uncollected-report" data-props="{{ \App\Support\VueProps::encode($screenProps) }}"></div>

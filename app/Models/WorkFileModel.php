@@ -4398,6 +4398,33 @@ class WorkFileModel extends Model
      * Every job on the file, named. "HPA, TR" rather than a made-up work type
      * called HPA + TR, which is what the list had to hold before.
      */
+    /**
+     * The works on this file as a party paying for them knows them.
+     *
+     * Never a cancelled one — the charge on the statement leaves those out.
+     * For a vendor, only the works they were given: a folder split between two
+     * vendors is none of the other's business. A folder whose vendor is set on
+     * the folder and on none of its works (some screens still save it so) is
+     * that vendor's in full. Found in review: the two places that name works
+     * against a payment disagreed about both.
+     */
+    public function worksFor(?int $vendorId = null): string
+    {
+        $live = $this->items->reject(fn ($item) => $item->status === self::CANCELLED);
+
+        if ($vendorId !== null) {
+            $theirs = $live->where('vendor_id', $vendorId);
+
+            if ($theirs->isEmpty() && $live->every(fn ($item) => ! $item->vendor_id) && (int) $this->vendor_id === $vendorId) {
+                $theirs = $live;
+            }
+
+            $live = $theirs;
+        }
+
+        return $live->map(fn ($item) => $item->workType?->name)->filter()->implode(', ');
+    }
+
     public function workLabel(): string
     {
         return $this->items->map(fn ($item) => $item->workType?->name)->filter()->implode(', ');

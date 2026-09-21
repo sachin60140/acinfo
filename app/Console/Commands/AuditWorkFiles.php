@@ -43,6 +43,7 @@ class AuditWorkFiles extends Command
         });
 
         $this->checkOrphans($note);
+        $this->checkAdjustments($note);
 
         $this->line("Read $files files.");
 
@@ -63,6 +64,72 @@ class AuditWorkFiles extends Command
         $this->warn(count($problems).' disagreements. None of this is changed by running the audit.');
 
         return self::FAILURE;
+    }
+
+    /**
+     * Payments adjusted against files, against the payments and the files.
+     *
+     * Nothing on the screens can make most of these, and the engine caps what
+     * it reads — a line can never settle more than its payment or its file. So
+     * they are here for what a hand in the database, or a bug, might leave:
+     * a payment adjusted for more than it was, lines on something that is not
+     * a payment, and a line whose party is not the payment's. And one that
+     * ordinary use does make, worth knowing about: a file adjusted against
+     * that no longer charges the party who paid — cancelled, or given to
+     * somebody else — whose share of that payment is now on account.
+     */
+    private function checkAdjustments(callable $note): void
+    {
+        if (! \App\Models\PartyLedgerModel::adjustable()) {
+            return;
+        }
+
+        $lines = \Illuminate\Support\Facades\DB::table('party_ledger_allocation as a')
+            ->join('party_ledger as e', 'e.id', '=', 'a.entry_id')
+            ->join('party as p', 'p.id', '=', 'e.party_id')
+            ->join('work_file as f', 'f.id', '=', 'a.work_file_id')
+            ->whereNull('a.released_at')
+            ->get([
+                'a.entry_id', 'a.party_id', 'a.work_file_id', 'a.amount',
+                'e.party_id as entry_party', 'e.entry_type', 'e.work_file_id as entry_file', 'e.amount as entry_amount',
+                'p.party_type', 'f.file_no',
+            ]);
+
+        foreach ($lines->groupBy('entry_id') as $entryId => $mine) {
+            $first = $mine->first();
+            $label = 'payment #'.$entryId;
+            $paymentSide = $first->party_type === 'customer' ? 'credit' : 'debit';
+
+            if ($first->entry_file || $first->entry_type !== $paymentSide) {
+                $note($label, 'is adjusted against files but is not a payment');
+            }
+
+            $sum = round($mine->sum(fn ($line) => (float) $line->amount), 2);
+
+            if ($sum > (float) $first->entry_amount + 0.005) {
+                $note($label, "is adjusted against $sum of files but was for {$first->entry_amount}");
+            }
+
+            foreach ($mine as $line) {
+                if ((int) $line->party_id !== (int) $line->entry_party) {
+                    $note($label, "has a line against {$line->file_no} recorded for a different party");
+                }
+            }
+        }
+
+        // Adjusted against a file that no longer charges the one who paid.
+        $billing = \Illuminate\Support\Facades\DB::table('party_ledger')
+            ->whereNotNull('work_file_id')
+            ->whereIn('file_role', ['customer', 'vendor'])
+            ->get(['work_file_id', 'party_id'])
+            ->map(fn ($row) => $row->work_file_id.':'.$row->party_id)
+            ->flip();
+
+        foreach ($lines as $line) {
+            if (! isset($billing[$line->work_file_id.':'.$line->party_id])) {
+                $note($line->file_no, "is adjusted against payment #{$line->entry_id}, but no longer charges that party — that share of the payment is on account");
+            }
+        }
     }
 
     /**

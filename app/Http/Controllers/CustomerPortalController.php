@@ -700,6 +700,9 @@ class CustomerPortalController extends Controller
          */
         $remarks = PartyLedgerModel::fileRemarks($data['getRecords']);
 
+        // Which of their files each payment was for, when the office said.
+        $against = PartyLedgerModel::againstFor($data['getRecords']->pluck('id')->all());
+
         foreach ($data['getRecords'] as $entry) {
             $running += $entry->signedAmount();
             $isDebit = $entry->entry_type === 'debit';
@@ -716,6 +719,7 @@ class CustomerPortalController extends Controller
                 'credit' => $isDebit ? null : (float) $entry->amount,
                 'balance' => round($running, 2),
                 'remarks' => $remarks[$entry->work_file_id] ?? null,
+                'against' => PartyLedgerModel::againstText($against[$entry->id] ?? []),
             ];
         }
 
@@ -736,6 +740,7 @@ class CustomerPortalController extends Controller
             'credit' => null,
             'balance' => round((float) $data['opening'], 2),
             'remarks' => null,
+            'against' => null,
         ]];
 
         $closing = [[
@@ -747,11 +752,13 @@ class CustomerPortalController extends Controller
             'credit' => (float) $data['credits'],
             'balance' => round((float) $data['closing'], 2),
             'remarks' => null,
+            'against' => null,
         ]];
 
         // Only when there is one to show, so a customer with none is not handed
         // an empty column on screen or a column of commas in the spreadsheet.
         $hasRemarks = (bool) $remarks;
+        $hasAgainst = (bool) $against;
 
         $props = [
             // Also the export filename and the heading on the PDF and printout.
@@ -766,6 +773,9 @@ class CustomerPortalController extends Controller
                 ['key' => 'debit', 'label' => 'Debit', 'type' => 'money', 'class' => 'ui-money--dr'],
                 ['key' => 'credit', 'label' => 'Credit', 'type' => 'money', 'class' => 'ui-money--cr'],
                 ['key' => 'balance', 'label' => 'Balance', 'type' => 'balance', 'class' => 'ui-money--strong'],
+
+                // Which of their files a payment was for, when any was said.
+                ...($hasAgainst ? [['key' => 'against', 'label' => 'Against', 'width' => '14rem']] : []),
 
                 // The note on the file the entry came from, when any entry has
                 // one. Last, so it never pushes the figures off a phone.
