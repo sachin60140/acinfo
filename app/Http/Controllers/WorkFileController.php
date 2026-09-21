@@ -1127,6 +1127,53 @@ class WorkFileController extends Controller
     }
 
     /**
+     * The office's own to-do list: work it said it is doing itself, not done.
+     *
+     * Keep in-house took that work off Give to Vendor, and it then showed up
+     * nowhere except inside its folder. A vendor's work has the vendor report
+     * to be chased from; this is the same list for the counter.
+     *
+     * Read-only. The work moves on through Update Status like any other, and
+     * falls off here the moment it is approved.
+     */
+    public function inHouse(Request $req)
+    {
+        $rows = WorkFileModel::inHouseWork();
+
+        $totals = [
+            'works' => $rows->count(),
+            'files' => $rows->pluck('file_id')->unique()->count(),
+            'charged' => (float) $rows->sum('charged'),
+            'oldest' => (int) $rows->max('days'),
+        ];
+
+        $props = [
+            'title' => 'In-house Work',
+            'perPage' => 100,
+            'emptyText' => 'Nothing is being done in-house. Work appears here once it is marked '
+                .'"Keep in-house" on Give to Vendor.',
+            'totals' => ['charged' => 'sum'],
+            'columns' => [
+                ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
+                ['key' => 'registration_no', 'label' => 'Vehicle'],
+                ['key' => 'customer', 'label' => 'Customer', 'type' => 'link', 'linkTo' => 'customer_url'],
+                ['key' => 'work', 'label' => 'Work'],
+                // How long the customer has been waiting, which is the order
+                // the work wants doing in.
+                ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_raw', 'sub' => 'days_text'],
+                ['key' => 'kept_on', 'label' => 'Kept In-house', 'sortBy' => 'kept_raw'],
+                ['key' => 'status', 'label' => 'Status', 'type' => 'badge'],
+                ['key' => 'charged', 'label' => 'Charged', 'type' => 'money'],
+            ],
+            'rows' => $rows->values(),
+        ];
+
+        return Screen::make('admin.work.in-house', 'vue-inhouse-work', $props, [
+            'totals' => $totals,
+        ])->toResponse($req);
+    }
+
+    /**
      * Give a batch of files back to their customers.
      *
      * The charge each customer already carries stays on their statement and a

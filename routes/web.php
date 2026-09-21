@@ -125,6 +125,8 @@ Route::group(['middleware' => 'admin'], function () {
     Route::match(['get', 'post'], 'admin/file/assign', [WorkFileController::class, 'assign'])->name('workfile.assign');
     // The other thing that can happen to work on that screen: the office keeps it.
     Route::post('admin/file/keep-in-house', [WorkFileController::class, 'keepInHouse'])->name('workfile.keepinhouse');
+    // And the list of what it kept, until each of it is done.
+    Route::get('admin/file/in-house', [WorkFileController::class, 'inHouse'])->name('workfile.inhouse');
 
     Route::match(['get', 'post'], 'admin/file/vendor-return', [WorkFileController::class, 'vendorReturn'])->name('workfile.vendorreturn');
 

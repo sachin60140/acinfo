@@ -1129,6 +1129,83 @@ class WorkFileModel extends Model
     }
 
     /**
+     * Work the office is doing itself and has not finished, oldest first.
+     *
+     * One row per work rather than per folder, because in-house is a fact about
+     * a work: a folder can have its transfer with a vendor and its termination
+     * being done at this counter, and only the second belongs on this list.
+     *
+     * Only work somebody has said is in-house — kept_in_house_on — and never
+     * work that merely has no vendor. Most of that is waiting to be given out,
+     * which is what Give to Vendor lists; putting it here too would fill the
+     * office's own to-do list with work it is about to hand to somebody else.
+     *
+     * Oldest first by the day the papers came in, because that is how long the
+     * customer has been waiting, and so the order the work wants doing in.
+     *
+     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     */
+    public static function inHouseWork()
+    {
+        return DB::table('work_file_item as i')
+            ->join('work_file as f', 'f.id', '=', 'i.work_file_id')
+            ->join('work_type as t', 't.id', '=', 'i.work_type_id')
+            ->join('party as c', 'c.id', '=', 'f.customer_id')
+            ->whereNotNull('i.kept_in_house_on')
+            /*
+             * Not given to anybody since. Changing a folder's vendor on the
+             * edit screen reaches every work on it and leaves this mark where
+             * it was, so the vendor is what decides it.
+             */
+            ->whereNull('i.vendor_id')
+            ->whereNotIn('i.status', [self::APPROVED, self::RETURNED, self::CANCELLED])
+            // A cancelled folder takes its work with it.
+            ->where('f.status', '<>', self::CANCELLED)
+            ->orderBy('f.received_date')
+            ->orderBy('f.id')
+            ->orderBy('i.id')
+            ->get([
+                'i.id',
+                'i.status',
+                'i.customer_amount',
+                'i.kept_in_house_on',
+                'f.id as file_id',
+                'f.file_no',
+                'f.registration_no',
+                'f.received_date',
+                't.name as work',
+                'c.id as customer_id',
+                'c.name as customer',
+            ])
+            ->map(function ($work) {
+                $days = max(0, (int) floor((strtotime('today') - strtotime(date('Y-m-d', strtotime($work->received_date)))) / 86400));
+
+                return [
+                    'id' => (int) $work->id,
+                    'file_id' => (int) $work->file_id,
+                    'file_no' => $work->file_no,
+                    'edit_url' => route('workfile.edit', $work->file_id),
+                    'registration_no' => $work->registration_no,
+                    'customer' => $work->customer,
+                    'customer_id' => (int) $work->customer_id,
+                    'customer_url' => route('party.statement', $work->customer_id),
+                    'work' => $work->work,
+                    'received' => date('d-m-Y', strtotime($work->received_date)),
+                    // Sorted on rather than shown, for the reason every date is.
+                    'received_raw' => date('Y-m-d', strtotime($work->received_date)),
+                    'days' => $days,
+                    'days_text' => $days === 0 ? 'today' : ($days === 1 ? '1 day' : $days.' days'),
+                    'kept_on' => date('d-m-Y', strtotime($work->kept_in_house_on)),
+                    'kept_raw' => date('Y-m-d', strtotime($work->kept_in_house_on)),
+                    'status' => self::STATUSES[$work->status] ?? $work->status,
+                    // Coloured the way the status board colours it.
+                    'status_key' => $work->status,
+                    'charged' => (float) $work->customer_amount,
+                ];
+            });
+    }
+
+    /**
      * Files that are done and not paid for, oldest first.
      *
      * The rows behind a customer's outstanding balance. Which files a payment

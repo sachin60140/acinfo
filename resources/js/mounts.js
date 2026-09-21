@@ -89,6 +89,7 @@ export const components = {
     'vue-profit-report': DataGrid,
     'vue-expense-report': DataGrid,
     'vue-vendor-report': DataGrid,
+    'vue-inhouse-work': DataGrid,
     // Banded by customer, with a message for each band.
     'vue-uncollected-report': UncollectedReport,
     'vue-balance-reminder': BalanceReminder,

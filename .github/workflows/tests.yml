@@ -18,7 +18,12 @@ on:
 jobs:
   tests:
     name: PHP and JS
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest, which moves to Ubuntu 26 on 19 October
+    # 2026. A red build should mean the code broke, not that GitHub changed
+    # the machine under it — the PHP extensions and MySQL client this suite
+    # was last proven against are 24.04's. Move it on purpose, in its own
+    # commit, when there is a reason to.
+    runs-on: ubuntu-24.04
 
     services:
       # 8.4, as the office runs. The suite leans on MySQL directly — GROUP_CONCAT
@@ -48,7 +53,7 @@ jobs:
       DB_PASSWORD: ''
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: PHP
         uses: shivammathur/setup-php@v2
@@ -58,13 +63,13 @@ jobs:
           coverage: none
 
       - name: Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm
 
       - name: Composer cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: vendor
           key: composer-${{ hashFiles('composer.lock') }}
