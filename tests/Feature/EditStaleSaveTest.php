@@ -238,6 +238,84 @@ class EditStaleSaveTest extends TestCase
         $this->assertEquals(3500, $file->fresh()->customer_amount);
     }
 
+    /**
+     * A document's name is what the customer sees it as, and the form sends
+     * back every name box as it was drawn. Found in review: a name a colleague
+     * gave since was put back to the scanner's.
+     */
+    public function test_a_document_named_since_is_not_put_back(): void
+    {
+        $file = $this->file();
+
+        $doc = new \App\Models\WorkFileDocumentModel;
+        $doc->work_file_id = $file->id;
+        $doc->path = 'uploads/test-'.uniqid().'.pdf';
+        $doc->original_name = 'SCAN0001.pdf';
+        $doc->save();
+
+        $page = $this->draw($file);
+
+        // A colleague names it.
+        $doc->title = 'Form 30';
+        $doc->save();
+
+        $this->saveFrom($file, $page, [
+            'registration_no' => 'BR01ZZ5555',
+            'document_names' => [$doc->id => 'SCAN0001'],
+        ])->assertSessionHas('error');
+
+        $this->assertSame('Form 30', $doc->fresh()->title);
+    }
+
+    // ------------------------------------------------- the same save, twice
+
+    /**
+     * A double click sends the form twice. The first save changes the file,
+     * so the second no longer matches it — and refused, it said nothing was
+     * saved and that a colleague had changed the file. It is told it was saved.
+     */
+    public function test_the_same_save_sent_twice_is_told_it_was_saved(): void
+    {
+        $expense = new \App\Models\ExpenseTypeModel;
+        $expense->name = 'Challan '.uniqid();
+        $expense->is_active = 1;
+        $expense->save();
+
+        $file = $this->file();
+        $page = $this->draw($file);
+
+        $typed = [
+            'registration_no' => 'BR01ZZ6666',
+            'new_expenses' => [['expense_type_id' => $expense->id, 'amount' => 150, 'spent_on' => '2026-09-10', 'remark' => '']],
+        ];
+
+        $this->saveFrom($file, $page, $typed)->assertRedirect(route('workfile.index'))->assertSessionHas('success');
+
+        $this->saveFrom($file, $page, $typed)
+            ->assertRedirect(route('workfile.index'))
+            ->assertSessionHas('success');
+
+        $this->assertStringContainsString('was saved', session('success'));
+        $this->assertSame('BR01ZZ6666', $file->fresh()->registration_no);
+        $this->assertSame(1, $file->expenses()->count(), 'the expense was added twice');
+    }
+
+    /** A different change from the same old page is not a repeat, and is refused like any stale page. */
+    public function test_a_different_change_from_the_same_old_page_is_still_refused(): void
+    {
+        $file = $this->file();
+        $page = $this->draw($file);
+
+        $this->saveFrom($file, $page, ['registration_no' => 'BR01ZZ7777'])->assertSessionHas('success');
+
+        // Back to the old page, and something else changed on it.
+        $this->saveFrom($file, $page, ['registration_no' => 'BR01ZZ8888'])
+            ->assertRedirect(route('workfile.edit', $file->id))
+            ->assertSessionHas('error');
+
+        $this->assertSame('BR01ZZ7777', $file->fresh()->registration_no);
+    }
+
     // ------------------------------------------------------ what the refusal says
 
     public function test_it_says_what_the_file_is_now_and_what_to_do(): void

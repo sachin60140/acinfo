@@ -4123,7 +4123,8 @@ class WorkFileModel extends Model
      * The page carries this from when it was drawn and the save compares it
      * with the file as it is now. It covers what the form can overwrite — the
      * file's own fields, each work's status, type, prices, vendor and in-house
-     * mark, the return, and the expenses — and nothing that merely touches
+     * mark, the return, the expenses and the names given to its documents —
+     * the name is what the customer sees a PDF as — and nothing that merely touches
      * updated_at, so a save is refused because the file changed and never
      * because something brushed past it.
      */
@@ -4154,6 +4155,13 @@ class WorkFileModel extends Model
             (string) $expense->remark,
         ])->all();
 
+        // The name each document goes by. The form sends back every box, and a
+        // name a colleague gave since would otherwise be put back as it was.
+        $documents = $this->documents()->orderBy('id')->get()->map(fn ($doc) => [
+            (int) $doc->id,
+            (string) $doc->title,
+        ])->all();
+
         return sha1(json_encode([
             'file_no' => (string) $this->file_no,
             'received' => $day($this->received_date),
@@ -4172,6 +4180,7 @@ class WorkFileModel extends Model
             'remarks' => (string) $this->remarks,
             'works' => $works,
             'expenses' => $expenses,
+            'documents' => $documents,
         ]));
     }
 

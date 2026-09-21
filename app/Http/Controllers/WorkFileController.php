@@ -1191,6 +1191,16 @@ class WorkFileController extends Controller
      *
      * The path and query survive; nothing else does.
      */
+    /**
+     * What an edit form posted, as one short string: the same page pressed
+     * twice posts the same thing. The token is left out, and so are uploads,
+     * which are not in the input.
+     */
+    private static function postPrint(Request $req): string
+    {
+        return sha1(json_encode(\Illuminate\Support\Arr::except($req->input(), ['_token'])));
+    }
+
     private static function safeReturn($url): ?string
     {
         if (! is_string($url) || trim($url) === '') {
@@ -2390,7 +2400,32 @@ class WorkFileController extends Controller
              */
             $drawn = $req->input('drawn');
 
-            if (is_string($drawn) && $drawn !== '' && ! hash_equals($file->editFingerprint(), $drawn)) {
+            $current = $file->editFingerprint();
+
+            if (is_string($drawn) && $drawn !== '' && ! hash_equals($current, $drawn)) {
+                /*
+                 * Unless it is this reader's own save, arriving twice — a
+                 * double click, or Enter pressed again. The first went through
+                 * and changed the file, so the second no longer matches it;
+                 * refused, it would say nothing was saved and blame a
+                 * colleague, and anybody believing it would type the change in
+                 * again. The same page, the same answers, and the file exactly
+                 * as that save left it: the second press is told it was saved.
+                 * A different change sent from the same old page is not this,
+                 * and is refused like any other.
+                 */
+                $saved = $req->session()->get('file_saved.'.$file->id);
+
+                if (is_array($saved)
+                    && hash_equals((string) ($saved['from'] ?? ''), $drawn)
+                    && hash_equals((string) ($saved['to'] ?? ''), $current)
+                    && hash_equals((string) ($saved['post'] ?? ''), self::postPrint($req))) {
+                    return redirect()->route('workfile.index')->with(
+                        'success',
+                        'File '.$file->file_no.' was saved. The button was pressed twice, so the second press changed nothing.'
+                    );
+                }
+
                 $was = (string) $req->input('was_status');
 
                 $now = $was !== '' && $was !== $file->status
@@ -2975,6 +3010,16 @@ class WorkFileController extends Controller
                     );
                 }
             });
+
+            // What this save was, so the same save arriving a second time can
+            // be told apart from a stale page; see the check above.
+            if (is_string($drawn) && $drawn !== '') {
+                $req->session()->put('file_saved.'.$file->id, [
+                    'from' => $drawn,
+                    'to' => $file->fresh()->editFingerprint(),
+                    'post' => self::postPrint($req),
+                ]);
+            }
 
             return redirect()->route('workfile.index')
                 ->with('success', 'File '.$file->file_no.' updated successfully. Ledger entries adjusted to match.');
