@@ -32,6 +32,15 @@ class PartyLedgerModel extends Model
     public const PAYMENT_MODES = ['Cash', 'Bank Transfer', 'UPI', 'Cheque', 'NEFT / RTGS', 'Credit / Invoice', 'Adjustment'];
 
     /**
+     * The modes that mean money actually changed hands.
+     *
+     * A customer credit booked as "Credit / Invoice" or "Adjustment" is the
+     * office correcting its books, not the customer paying, and thanking them
+     * for a payment they never made is worse than saying nothing.
+     */
+    public const MONEY_MODES = ['Cash', 'Bank Transfer', 'UPI', 'Cheque', 'NEFT / RTGS'];
+
+    /**
      * A balance the way a ledger prints it: magnitude plus the side it falls on,
      * never a minus sign. "1,200.00 Cr" reads correctly to anyone who keeps
      * books; "-1,200.00" has to be interpreted against a convention first.

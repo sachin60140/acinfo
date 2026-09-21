@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp, nextTick } from 'vue';
 import BalanceReminder from './components/BalanceReminder.vue';
+import CustomerReceipt from './components/CustomerReceipt.vue';
 import UncollectedReport from './components/UncollectedReport.vue';
-import { balanceMessage, readyMessage } from './customerShare';
+import { balanceMessage, readyMessage, receiptMessage } from './customerShare';
 
 /*
  * Reminding a customer of finished work and money owed, on WhatsApp.
@@ -220,5 +221,67 @@ describe('on a customer statement', () => {
         const host = mount(BalanceReminder, { name: 'Arman Qadri', mobile: '9835230001', balance: 0 });
 
         expect(host.querySelector('.balance-reminder')).toBeNull();
+    });
+});
+
+// ------------------------------------------------------------------ receipts
+
+const PAID = { name: 'Arman Qadri', mobile: '9835230001', amount: 5000, dateLabel: '21-09-2026', mode: 'UPI', reference: '412345678901', balance: 2500, todayLabel: '21-09-2026' };
+
+describe('the payment receipt', () => {
+    it('says what was received, when, how, and their reference', () => {
+        const lines = receiptMessage(PAID).split('\n');
+
+        expect(lines[0]).toBe('*Payment received — Arman Qadri*');
+        expect(lines[1]).toBe('₹5,000.00 received on 21-09-2026 (UPI)');
+        expect(lines[2]).toBe('Ref: 412345678901');
+    });
+
+    it('says where the account stands after it, whichever way that is', () => {
+        expect(receiptMessage(PAID)).toContain('Balance due as of 21-09-2026: ₹2,500.00');
+        expect(receiptMessage({ ...PAID, balance: 0 })).toContain('Your account is fully settled as of 21-09-2026.');
+        expect(receiptMessage({ ...PAID, balance: -500 })).toContain('Paid in advance as of 21-09-2026: ₹500.00');
+    });
+
+    /* A payment booked with last month's date, and today's balance beside it. */
+    it('dates the balance, so a backdated payment is not read as last month\'s balance', () => {
+        const text = receiptMessage({ ...PAID, dateLabel: '01-08-2026' });
+
+        expect(text).toContain('received on 01-08-2026');
+        expect(text).toContain('Balance due as of 21-09-2026');
+    });
+
+    it('leaves out a reference nobody wrote down', () => {
+        expect(receiptMessage({ ...PAID, reference: '  ' })).not.toContain('Ref:');
+    });
+
+    /* The particular is the office's own description of the entry. */
+    it('never reads the particular, whatever it is handed', () => {
+        const text = receiptMessage({ ...PAID, particular: 'Paid late again, watch him', office_note: 'slow payer' });
+
+        expect(text).not.toContain('watch him');
+        expect(text).not.toContain('slow payer');
+    });
+
+    it('says nothing about no money', () => {
+        expect(receiptMessage({ ...PAID, amount: 0 })).toBe('');
+    });
+});
+
+describe('after a payment is saved', () => {
+    it('opens a chat on the customer with the receipt filled in, and sends nothing itself', async () => {
+        const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+        const host = mount(CustomerReceipt, PAID);
+
+        expect(host.textContent).toContain('5,000.00 received from Arman Qadri');
+
+        host.querySelector('.wa-share__send').click();
+        await nextTick();
+
+        const url = open.mock.calls[0][0];
+
+        expect(url.startsWith('https://wa.me/919835230001?text=')).toBe(true);
+        expect(decodeURIComponent(url)).toContain('*Payment received — Arman Qadri*');
+        expect(host.querySelector('.wa-share__send').textContent).toContain('Send receipt on WhatsApp');
     });
 });

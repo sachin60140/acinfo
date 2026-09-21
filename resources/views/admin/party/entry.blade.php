@@ -21,6 +21,10 @@
     <section class="section dashboard party-page">
         @include('admin.party._alerts')
 
+        @if ($receipt)
+            <div data-vue="vue-customer-receipt" data-props="{{ \App\Support\VueProps::encode($receipt) }}"></div>
+        @endif
+
         @if (! $partyCount)
             <div class="card">
                 <div class="card-body pt-4">
