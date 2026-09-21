@@ -13,7 +13,7 @@
  * moving a balance that someone has already seen, and the panel says where the
  * two statements land before the save rather than after it.
  */
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { balance, money, side } from '../money';
 import FilePreview from './FilePreview.vue';
 import CardSection from './CardSection.vue';
@@ -256,10 +256,34 @@ const worksCharged = computed(() =>
 );
 
 // A work with no rate agreed leaves the folder's cost short of complete, so it
-// is counted and said rather than quietly summed as nothing.
+// is counted and said rather than quietly summed as nothing. Not a work the
+// office is doing itself: it goes to no vendor, and has no rate to agree.
 const worksUnpriced = computed(
-    () => keeping.value.filter((work) => String(work.vendor_amount).trim() === '').length
+    () => keeping.value.filter((work) => ! work.in_house && String(work.vendor_amount).trim() === '').length
 );
+
+/*
+ * The works' own boxes, from the totals at the top.
+ *
+ * On a file of several works the charge and the vendor's rate are each work's,
+ * set in Works on This File, and the figures at the top are only their sums.
+ * Found in use: with that card folded away the vendor's figure could not be
+ * typed into and nothing said where it could — "unable to update the vendor
+ * price". The button opens the card and puts the cursor in the box: the first
+ * work still without a rate, or the first work.
+ */
+const worksCard = ref(null);
+
+async function toWorks(field) {
+    worksCard.value?.show();
+    await nextTick();
+
+    const boxes = [...(worksCard.value?.$el?.querySelectorAll(`[data-work-field="${field}"]`) ?? [])];
+    const box = boxes.find((input) => String(input.value).trim() === '') ?? boxes[0];
+
+    box?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    box?.focus();
+}
 
 const worksCost = computed(() =>
     keeping.value.reduce((sum, work) => sum + (Number(work.vendor_amount) || 0), 0)
@@ -925,6 +949,9 @@ onMounted(() => {
                             <div class="wf-derived">
                                 <span class="ui-money ui-money--dr ui-money--strong">{{ money(worksCharged) }}</span>
                                 <span class="ui-hint">{{ works.length }} works</span>
+                                <button type="button" class="ui-btn ui-btn--sm wf-derived__go" @click="toWorks('charge')">
+                                    <i class="bi bi-pencil"></i> Change per work
+                                </button>
                             </div>
                             <input type="hidden" name="customer_amount" :value="worksCharged">
                         </div>
@@ -990,6 +1017,9 @@ onMounted(() => {
                                 <span v-if="worksUnpriced" class="ui-hint">
                                     {{ worksUnpriced }} still without a rate
                                 </span>
+                                <button type="button" class="ui-btn ui-btn--sm wf-derived__go" @click="toWorks('rate')">
+                                    <i class="bi bi-pencil"></i> {{ worksUnpriced ? 'Set rates' : 'Change per work' }}
+                                </button>
                             </div>
                         </div>
 
@@ -1056,6 +1086,7 @@ onMounted(() => {
             -->
             <CardSection
                 v-if="isEdit"
+                ref="worksCard"
                 title="Works on This File"
                 hint="Correct a type or a price here. Statuses move on the status board, a work at a time."
                 :summary="worksSummary"
@@ -1096,6 +1127,7 @@ onMounted(() => {
                                             step="0.01"
                                             class="ui-input ui-input--amount"
                                             :name="going(work) ? null : `items[${work.id}][customer_amount]`"
+                                            data-work-field="charge"
                                             v-model="work.customer_amount"
                                             placeholder="0.00">
                                     </td>
@@ -1107,6 +1139,7 @@ onMounted(() => {
                                             step="0.01"
                                             class="ui-input ui-input--amount"
                                             :name="going(work) ? null : `items[${work.id}][vendor_amount]`"
+                                            :data-work-field="work.in_house || going(work) ? null : 'rate'"
                                             v-model="work.vendor_amount"
                                             placeholder="Not agreed">
                                     </td>
@@ -1885,9 +1918,14 @@ onMounted(() => {
 
 /* A figure the file works out for itself, standing where its box used to be so
    the row does not go ragged when a folder holds several works. */
+.wf-derived__go {
+    margin-left: auto;
+}
+
 .wf-derived {
     align-items: baseline;
     display: flex;
+    flex-wrap: wrap;
     gap: var(--s-2);
     min-height: 2.5rem;
 }
