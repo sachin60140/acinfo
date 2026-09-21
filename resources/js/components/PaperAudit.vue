@@ -12,6 +12,7 @@
  * still pending when the form arrives.
  */
 import { computed, ref } from 'vue';
+import { copyText, pendingMessage, whatsappNumber, whatsappUrl } from '../paperShare';
 
 const props = defineProps({
     action: { type: String, required: true },
@@ -50,6 +51,63 @@ const shownPending = computed(() => props.pending.filter(matches));
 const shownStuck = computed(() => props.stuck.filter(matches));
 
 const isPicked = (row) => picked.value.includes(row.id);
+
+/*
+ * Sending the list to the customer.
+ *
+ * What is shown, not what is ticked. The ticks on this card mean "received" and
+ * feed Mark received, so a list sent by ticking would leave six papers ticked
+ * for sending, and the next Mark received — pressed for the two that actually
+ * arrived — would mark all eight. Searching a vehicle or a customer narrows the
+ * list to their file in one step, which is the step the office takes anyway.
+ */
+const shownCustomers = computed(() => {
+    const byId = new Map();
+
+    for (const row of shownPending.value) {
+        byId.set(row.customer_id ?? row.customer, row);
+    }
+
+    return byId;
+});
+
+// The one customer these papers belong to, or null when the list spans several.
+const oneCustomer = computed(() => (shownCustomers.value.size === 1 ? [...shownCustomers.value.values()][0] : null));
+
+const shareNumber = computed(() => (oneCustomer.value ? whatsappNumber(oneCustomer.value.customer_mobile) : null));
+
+const shareText = computed(() => pendingMessage(shownPending.value));
+
+/* "+91 98352 30000", so the office can see where it is going before it goes. */
+const shownNumber = computed(() => (shareNumber.value
+    ? `+91 ${shareNumber.value.slice(2, 7)} ${shareNumber.value.slice(7)}`
+    : ''));
+
+const shareHint = computed(() => {
+    if (! oneCustomer.value) {
+        return `These papers are for ${shownCustomers.value.size} customers. Search one of them to send it straight to them — or send it and choose the chat.`;
+    }
+
+    return shareNumber.value
+        ? `Opens a chat with ${oneCustomer.value.customer} on ${shownNumber.value}. Nothing is sent until you press Send in WhatsApp.`
+        : `${oneCustomer.value.customer} has no mobile number WhatsApp can use, so you will choose the chat yourself.`;
+});
+
+const copied = ref(false);
+
+async function copyList() {
+    copied.value = await copyText(shareText.value);
+
+    if (copied.value) {
+        setTimeout(() => {
+            copied.value = false;
+        }, 2500);
+    }
+}
+
+function sendOnWhatsApp() {
+    window.open(whatsappUrl(shareNumber.value, shareText.value), '_blank', 'noopener');
+}
 
 /*
  * Rows the search hides stay on the form, ticks and all — hidden with v-show,
@@ -209,6 +267,36 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                 </div>
             </div>
 
+            <!--
+                The list, for the customer.
+
+                type="button" on both, and it matters: this card is the Mark
+                received form, so a button left to its default would submit it
+                and mark every ticked paper received on the way to WhatsApp.
+            -->
+            <div v-if="shownPending.length" class="pau-share">
+                <div class="pau-share__row">
+                    <span class="pau-share__what">
+                        <i class="bi bi-send"></i>
+                        Send {{ shownPending.length === 1 ? 'this paper' : `these ${shownPending.length} papers` }}
+                        <template v-if="oneCustomer"> to {{ oneCustomer.customer }}</template>
+                    </span>
+
+                    <div class="pau-share__actions">
+                        <button type="button" class="ui-btn ui-btn--sm" @click="copyList">
+                            <i class="bi" :class="copied ? 'bi-check2' : 'bi-clipboard'"></i>
+                            {{ copied ? 'Copied' : 'Copy list' }}
+                        </button>
+                        <button type="button" class="ui-btn ui-btn--sm pau-share__wa" @click="sendOnWhatsApp">
+                            <i class="bi bi-whatsapp"></i>
+                            Send on WhatsApp
+                        </button>
+                    </div>
+                </div>
+
+                <p class="ui-hint pau-share__hint">{{ shareHint }}</p>
+            </div>
+
             <div v-if="! pending.length" class="ui-card__body pau-none">
                 No papers are pending.
             </div>
@@ -331,6 +419,52 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
 </template>
 
 <style>
+/* A bar of its own between the heading and the table, so sending the list reads
+   as a separate thing from receiving papers — which is what the rest of this
+   card is for. */
+.pau-share {
+    background: var(--n-025);
+    border-bottom: 1px solid var(--n-100);
+    padding: var(--s-3) var(--s-5);
+}
+
+.pau-share__row {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-3);
+    justify-content: space-between;
+}
+
+.pau-share__what {
+    align-items: center;
+    color: var(--ink-800);
+    display: inline-flex;
+    font-weight: 600;
+    gap: var(--s-2);
+}
+
+.pau-share__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+}
+
+/* WhatsApp's own green, so the button is recognisable before it is read. */
+.pau-share__wa {
+    background: #25d366;
+    border-color: #1ebe5b;
+    color: #fff;
+}
+
+.pau-share__wa:hover {
+    background: #1ebe5b;
+    color: #fff;
+}
+
+.pau-share__hint {
+    margin: var(--s-1) 0 0;
+}
 /* Every class carries the pau- prefix: a short unscoped name in a component's
    style block is global. See StylesheetTest. */
 
