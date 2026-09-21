@@ -106,6 +106,27 @@ const billsState = ref('idle');
 const showCovered = ref(false);
 const dropped = ref(false);
 
+/*
+ * Covered files kept on screen because something was typed in them. Found in
+ * the fourth review: drawn only while their amount was above nothing, a row
+ * vanished the moment its box was emptied to be retyped, and what was typed
+ * next went nowhere. Pinned when the list loads, on Reset, and when the list
+ * is narrowed; let go only when the party changes.
+ */
+const pinned = ref(new Set());
+
+function pinTyped() {
+    const next = new Set(pinned.value);
+
+    for (const key of Object.keys(alloc)) {
+        if (String(alloc[key] ?? '') !== '') {
+            next.add(String(key));
+        }
+    }
+
+    pinned.value = next;
+}
+
 const showAdjust = computed(() =>
     props.adjustable && Boolean(selected.value) && entry.entry_type === props.paymentSide
 );
@@ -146,6 +167,7 @@ async function loadBills() {
             bills.value = data.bills ?? [];
             billsState.value = 'ready';
             dropUnlisted();
+            pinTyped();
         }
     } catch {
         if (ticket === asked) {
@@ -170,10 +192,18 @@ watch(() => [entry.party_id, entry.entry_type], (now, before) => {
 
         showCovered.value = false;
         dropped.value = false;
+        pinned.value = new Set();
     }
 
     loadBills();
 }, { immediate: true });
+
+// Narrowed: whatever has something in its box stays where the reader left it.
+watch(showCovered, (on) => {
+    if (! on) {
+        pinTyped();
+    }
+});
 
 /*
  * An amount against a file that is not open at all — a refused save put it
@@ -201,10 +231,12 @@ const isCovered = (bill) => Number(bill.due) <= 0.005;
 const coveredCount = computed(() => bills.value.filter(isCovered).length);
 
 const visibleBills = computed(() =>
-    bills.value.filter((bill) => showCovered.value || ! isCovered(bill) || amountOf(bill) > 0)
+    bills.value.filter((bill) => showCovered.value || ! isCovered(bill) || pinned.value.has(String(bill.id)))
 );
 
-const allocated = computed(() => bills.value.reduce((sum, bill) => sum + amountOf(bill), 0));
+// What is posted, and only that: a line is posted only with an amount above
+// nothing, so nothing else is counted either.
+const allocated = computed(() => bills.value.reduce((sum, bill) => sum + Math.max(0, amountOf(bill)), 0));
 
 const onAccount = computed(() => Math.max(0, (Number(entry.amount) || 0) - allocated.value));
 

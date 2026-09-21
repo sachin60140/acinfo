@@ -451,3 +451,51 @@ describe('the covered files after a refused save', () => {
         expect(section(host).textContent).not.toContain('Also show 0');
     });
 });
+
+/* Found in the fourth review. */
+describe('editing a covered file\'s amount', () => {
+    const COVERED_BILLS = [
+        { id: 70, fileNo: 'F-00070', vehicle: 'BR01OLD001', works: 'TR', received: '01-01-2026', charged: 3000, returned: 0, adjusted: 0, open: 3000, due: 0, ahead: 0, editUrl: '/admin/file/edit/70' },
+        { id: 71, fileNo: 'F-00071', vehicle: 'BR01NEW002', works: 'TR', received: '01-03-2026', charged: 5000, returned: 0, adjusted: 0, open: 5000, due: 5000, ahead: 0, editUrl: '/admin/file/edit/71' },
+    ];
+    const CO = { id: 8, name: 'Covered Co', mobile: '9835230008', current_balance: 5000 };
+
+    it('keeps the row while its box is emptied and retyped', async () => {
+        BILLS[8] = COVERED_BILLS;
+
+        const host = mount({
+            parties: [...PARTIES, CO],
+            initial: { party_id: '8', entry_type: 'credit', amount: '5000', payment_mode: 'UPI', ref_no: '', particular: 'Paid' },
+            initialAlloc: { 70: '3000', 71: '2000' },
+        });
+        await settle();
+
+        await type(host, box('F-00070'), '');
+        expect(host.querySelector(box('F-00070'))).not.toBe(null);
+
+        await type(host, box('F-00070'), '2500');
+        expect(host.querySelector('input[name="alloc[70][amount]"]').value).toBe('2500');
+    });
+
+    it('counts only what is posted, so a negative hidden nowhere skews the totals', async () => {
+        BILLS[8] = COVERED_BILLS;
+
+        const host = mount({ parties: [...PARTIES, CO] });
+        await pick(host, 8);
+        await type(host, 'input[name="amount"]', '3000');
+
+        const toggle = () => host.querySelector('.adjust__toggle input');
+        toggle().click();
+        await settle();
+        await type(host, box('F-00070'), '-500');
+        await type(host, box('F-00071'), '3400');
+        toggle().click();
+        await settle();
+
+        // Still drawn, so the browser's own check refuses the negative...
+        expect(host.querySelector(box('F-00070'))).not.toBe(null);
+        // ...and the totals are what is posted: 3,400 against a 3,000 payment.
+        expect(section(host).textContent).toContain('more than the payment');
+        expect(saveButton(host).disabled).toBe(true);
+    });
+});
