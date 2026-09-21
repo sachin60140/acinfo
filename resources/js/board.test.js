@@ -218,3 +218,57 @@ describe('finding work on the board', () => {
             .toContain('1 not shown by the search — it is still saved');
     });
 });
+
+/*
+ * What each work said when the board was drawn goes with every save, so the
+ * server can leave alone a row a colleague has moved on since and refuse a
+ * change made against a status that is no longer true.
+ */
+describe('saving from a board that may be out of date', () => {
+    it('posts, for every work, the status it showed when drawn', () => {
+        const host = mount();
+
+        const was = Object.fromEntries(
+            [...host.querySelectorAll('input[type="hidden"][name^="was["]')].map((input) => [input.name, input.value])
+        );
+
+        expect(was).toEqual({ 'was[11]': 'file_dispatch', 'was[21]': 'file_dispatch', 'was[22]': 'file_dispatch' });
+    });
+
+    it('posts the approval date it drew for an approved work, and none for the rest', () => {
+        const approved = JSON.parse(JSON.stringify(FILES));
+        approved[0].items[0].status = 'approval_done';
+        approved[0].items[0].approved_on = '20-08-2026';
+        approved[0].items[0].approved_on_value = '2026-08-20';
+        approved[0].items[0].approved_on_iso = '2026-08-20';
+
+        const host = mount(approved);
+
+        expect(host.querySelector('input[name="was_approved_on[11]"]').value).toBe('2026-08-20');
+        // Not approved when drawn: the date box holds today as a suggestion, which is not a date the work had.
+        expect(host.querySelector('input[name="was_approved_on[21]"]').value).toBe('');
+    });
+
+    it('posts no date for an approval that never had one, whatever the box suggests', () => {
+        const approved = JSON.parse(JSON.stringify(FILES));
+        approved[0].items[0].status = 'approval_done';
+        approved[0].items[0].approved_on_value = '2026-08-21';
+        approved[0].items[0].approved_on_iso = null;
+
+        const host = mount(approved);
+
+        expect(host.querySelector('input[name="was_approved_on[11]"]').value).toBe('');
+    });
+
+    it('keeps posting the drawn status after a different one is chosen', async () => {
+        const host = mount();
+
+        const select = host.querySelector('select[name="statuses[11]"]');
+        select.value = 'in_office';
+        select.dispatchEvent(new window.Event('change'));
+        await nextTick();
+
+        expect(host.querySelector('input[name="was[11]"]').value).toBe('file_dispatch');
+        expect(host.querySelector('select[name="statuses[11]"]').value).toBe('in_office');
+    });
+});

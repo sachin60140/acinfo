@@ -471,6 +471,7 @@
                     "items": {
                         "list_of": {
                             "approved_on": "null",
+                            "approved_on_iso": "null",
                             "approved_on_value": "string",
                             "customer_amount": "number",
                             "has_screenshot": "bool",

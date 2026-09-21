@@ -88,6 +88,10 @@
     </div><!-- End Page Title -->
 
     <section class="section dashboard party-page">
+        {{-- The Update dialog saves and comes back here; this is where it says
+             whether the save went through, or why not. --}}
+        @include('admin.party._alerts')
+
 
         <div class="card no-print">
             <div class="card-body pt-4">

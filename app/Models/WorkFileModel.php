@@ -4110,7 +4110,10 @@ class WorkFileModel extends Model
         return $statuses;
     }
 
-    public static function statusFromItems($items): string
+    /**
+     * @param  string|null  $current  the folder's status now, so a return can be kept
+     */
+    public static function statusFromItems($items, ?string $current = null): string
     {
         $open = $items->filter(fn ($item) => in_array($item->status, self::OPEN_STATUSES, true));
         $approved = $items->filter(fn ($item) => $item->status === self::APPROVED);
@@ -4134,6 +4137,30 @@ class WorkFileModel extends Model
         }
 
         if ($items->every(fn ($item) => $item->status === self::RETURNED)) {
+            return self::RETURNED;
+        }
+
+        /*
+         * A returned folder with a cancelled work on it stays returned.
+         *
+         * Return to Customer sends back the works still standing and leaves a
+         * cancelled one cancelled — it was charged nothing, so there is nothing
+         * to give back. Counted in above, that cancelled work made such a
+         * folder read as Approval Done the next time anything on it was saved,
+         * even a remark: the return's date was cleared, the refund taken off
+         * the ledger, and the customer charged again for papers in their hand.
+         *
+         * Stays, and never becomes. Papers go back a whole folder at a time,
+         * through Return to Customer, which records the day and the amount
+         * agreed. A roll-up that turned a folder into a return would have to
+         * make both up — today, and the whole charge — and the folders it
+         * would do it to are the ones the old rule already un-returned, whose
+         * agreed refund is recorded nowhere now. Those are left as they are
+         * for the office to put right; files:audit names them.
+         */
+        $standing = $items->reject(fn ($item) => $item->status === self::CANCELLED);
+
+        if ($current === self::RETURNED && $standing->every(fn ($item) => $item->status === self::RETURNED)) {
             return self::RETURNED;
         }
 
@@ -4191,7 +4218,8 @@ class WorkFileModel extends Model
                 : $out->pluck('vendor_returned_on')->filter()->max();
         }
 
-        $this->status = self::statusFromItems($items);
+        // What it is now, so a return is kept; see statusFromItems().
+        $this->status = self::statusFromItems($items, $this->status);
 
         /*
          * Evidence belongs to the job that was approved, but the files list

@@ -313,6 +313,16 @@ function onScreenshot(row, event) {
                                 </td>
 
                                 <td data-label="Status">
+                                    <!-- What this work said when the board was drawn, so
+                                         a save cannot put back a status a colleague has
+                                         moved it on from since; see status(). -->
+                                    <input type="hidden" :name="`was[${row.id}]`" :value="row.status">
+                                    <!-- And the approval date it had, as stored — not
+                                         the box's suggestion of today when there is none. -->
+                                    <input
+                                        type="hidden"
+                                        :name="`was_approved_on[${row.id}]`"
+                                        :value="row.approved_on_iso || ''">
                                     <select
                                         class="ui-select"
                                         :name="`statuses[${row.id}]`"
