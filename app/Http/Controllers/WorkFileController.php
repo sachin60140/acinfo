@@ -1202,6 +1202,8 @@ class WorkFileController extends Controller
             'approvedKey' => WorkFileModel::APPROVED,
             'reasonKeys' => [WorkFileModel::CANCELLED, WorkFileModel::RETURNED],
             'today' => now()->toDateString(),
+            // What a refused save held, so the dialog opens again with it.
+            'restore' => \App\Support\UpdateDialog::restore(),
         ];
 
         return Screen::make('admin.work.in-house', 'vue-inhouse-work', $props, [

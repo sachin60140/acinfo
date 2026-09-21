@@ -389,6 +389,7 @@
             "reasonKeys": {
                 "list_of": "string"
             },
+            "restore": "null",
             "returnTo": "string",
             "rows": {
                 "list_of": {
@@ -1425,6 +1426,7 @@
             "reasonKeys": {
                 "list_of": "string"
             },
+            "restore": "null",
             "returnTo": "string",
             "rows": {
                 "list_of": {
@@ -1530,6 +1532,7 @@
             "reasonKeys": {
                 "list_of": "string"
             },
+            "restore": "null",
             "returnTo": "string",
             "rows": {
                 "list_of": {

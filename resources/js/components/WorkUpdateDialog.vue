@@ -36,6 +36,15 @@ const props = defineProps({
     // The states the server refuses without a reason.
     reasonKeys: { type: Array, default: () => ['cancelled', 'paper_returned'] },
     today: { type: String, default: '' },
+
+    /*
+     * What was typed into a save the server refused, from the page it sent
+     * the reader back to: { statuses, was, remarks, approved_on }, keyed by
+     * work. Put back the first time the dialog opens, so a refusal — a
+     * missing screenshot, a work changed since — does not also cost the
+     * remark. See restoreInto() for what is and is not put back.
+     */
+    restore: { type: Object, default: null },
 });
 
 const emit = defineEmits(['close']);
@@ -68,6 +77,69 @@ function reset() {
             hasShot: Boolean(work.has_screenshot),
         }])
     );
+}
+
+/*
+ * Put back what the refused save held, once.
+ *
+ * A remark always: it is what somebody typed and nothing depends on it. A
+ * status only when the reader had chosen a different one and the work is
+ * still where it was when they chose it — a work a colleague moved since was
+ * refused for exactly that, and filling the old choice back in would send it
+ * straight back the way it came. An approval date with the approval it
+ * belongs to. Uploads cannot be put back; the note says so.
+ */
+const restored = ref(false);
+// Why the save was refused, shown at the top of the dialog; see UpdateDialog.
+const refusal = ref('');
+// Works whose chosen status was held back: { id: { chosen, now } }.
+const withheld = ref({});
+let restoreSpent = false;
+
+function restoreInto() {
+    restored.value = false;
+    refusal.value = '';
+    withheld.value = {};
+
+    if (restoreSpent || ! props.restore) {
+        return;
+    }
+
+    restoreSpent = true;
+
+    const back = props.restore;
+
+    refusal.value = String(back.reason ?? '').trim();
+
+    for (const work of works.value) {
+        const entry = form.value[work.id];
+        const remark = back.remarks?.[work.id];
+        const chosen = back.statuses?.[work.id];
+        const drawn = back.was?.[work.id];
+
+        if (typeof remark === 'string' && remark.trim() !== '') {
+            entry.remark = remark;
+            restored.value = true;
+        }
+
+        if (chosen && chosen !== drawn && drawn === work.status && chosen in props.statuses) {
+            entry.status = chosen;
+            restored.value = true;
+
+            const on = back.approved_on?.[work.id];
+
+            if (chosen === props.approvedKey && on) {
+                entry.approved_on = on;
+            }
+        } else if (chosen && chosen !== drawn && drawn !== undefined && drawn !== work.status) {
+            // Chosen against a status a colleague has moved it on from. Said
+            // on the work itself, so it is decided again rather than lost.
+            withheld.value[work.id] = {
+                chosen: props.statuses[chosen] ?? chosen,
+                now: work.status_label || props.statuses[work.status] || work.status,
+            };
+        }
+    }
 }
 
 const moved = (work) => form.value[work.id] && form.value[work.id].status !== form.value[work.id].was;
@@ -151,6 +223,7 @@ watch(open, async (isOpen) => {
 
     if (isOpen) {
         reset();
+        restoreInto();
         document.addEventListener('keydown', onKey);
         await nextTick();
         firstField.value?.focus();
@@ -191,10 +264,27 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div class="wu__body">
+                        <div v-if="refusal" class="wu__refused" role="alert">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            {{ refusal }}
+                        </div>
+
+                        <div v-if="restored || Object.keys(withheld).length" class="ui-hint wu__restored">
+                            <i class="bi bi-arrow-counterclockwise"></i>
+                            <template v-if="Object.keys(withheld).length">Some of what you typed has been put back — see below.</template>
+                            <template v-else>What you typed has been put back.</template>
+                            Attach any screenshot again — files cannot be kept.
+                        </div>
+
                         <div v-for="(work, i) in works" :key="work.id" class="wu__work">
                             <div class="wu__workhead">
                                 <strong>{{ work.work_type }}</strong>
                                 <span class="ui-badge" :data-state="work.status">{{ work.status_label }}</span>
+                            </div>
+
+                            <div v-if="withheld[work.id]" class="ui-hint wu__withheld">
+                                This work is now {{ withheld[work.id].now }} — your choice of
+                                {{ withheld[work.id].chosen }} was not put back. Decide again.
                             </div>
 
                             <div class="wu__fields">
@@ -427,5 +517,22 @@ onBeforeUnmount(() => {
     .wu__actions .ui-btn {
         flex: 1 1 auto;
     }
+}
+
+/* Why the last save was refused, where the reader is looking: over the dialog,
+   not behind its backdrop. */
+.wu__refused {
+    background: var(--cr-050);
+    border: 1px solid var(--cr-700);
+    border-radius: var(--r-md);
+    color: var(--cr-700);
+    font-weight: 600;
+    margin-bottom: var(--s-3);
+    padding: var(--s-2) var(--s-3);
+}
+
+.wu__withheld {
+    color: var(--cr-700);
+    margin-bottom: var(--s-2);
 }
 </style>
