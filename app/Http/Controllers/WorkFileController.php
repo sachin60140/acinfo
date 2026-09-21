@@ -1469,7 +1469,7 @@ class WorkFileController extends Controller
             ->get(['p.id', 'p.work_file_id', 'p.note', 'p.office_note', 'p.updated_at', 'pt.name as paper',
                 'f.file_no', 'f.registration_no', 'f.received_date', 'c.name as customer',
                 // Who to send the list to. The customer is the one bringing the papers.
-                'c.id as customer_id', 'c.mobile as customer_mobile']);
+                'c.id as customer_id', 'c.mobile as customer_mobile', 'c.whatsapp as customer_whatsapp']);
 
         // Which works each pending paper is holding, in one query.
         $holding = $pending->isEmpty() ? collect() : DB::table('work_file_paper_item as pi')
@@ -1558,7 +1558,9 @@ class WorkFileController extends Controller
                 'registration_no' => $line->registration_no,
                 'customer' => $line->customer,
                 'customer_id' => (int) $line->customer_id,
-                'customer_mobile' => $line->customer_mobile,
+                // Their WhatsApp number when one is saved, as everywhere else a
+                // chat is opened.
+                'customer_mobile' => $line->customer_whatsapp ?: $line->customer_mobile,
                 'paper' => $line->paper,
                 'works' => $holding->get($line->id, collect())->pluck('name')->filter()->unique()->values()->all(),
                 'note' => $line->note,
