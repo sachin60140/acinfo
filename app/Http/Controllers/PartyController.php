@@ -516,7 +516,9 @@ class PartyController extends Controller
                 ? 'Debit = sale / amount charged · Credit = payment received'
                 : 'Debit = payment made to vendor · Credit = purchase / bill received',
             'paymentModes' => PartyLedgerModel::PAYMENT_MODES,
-            'parties' => PartyModel::selectList($type)->map(fn ($p) => [
+            // The party a refused save or a Correct brings back stays offered,
+            // inactive or not — or the entry could not be typed again for them.
+            'parties' => PartyModel::selectList($type, old('party_id') ?: null)->map(fn ($p) => [
                 'id' => $p->id,
                 'name' => $p->name,
                 'mobile' => $p->mobile,
@@ -712,8 +714,15 @@ class PartyController extends Controller
 
             $reversal = new PartyLedgerModel;
             $reversal->party_id = $entry->party_id;
-            // Today, so a statement already sent is not changed after the fact.
-            $reversal->txn_date = now()->toDateString();
+            /*
+             * Today, so a statement already sent is not changed after the fact.
+             * Never before the entry it takes back, though. Found in review: a
+             * post-dated entry reversed today put the reversal first, and every
+             * period statement until that date showed money owed that was not.
+             * Nothing dated ahead can have been sent yet, so the later date
+             * keeps the rule's reason.
+             */
+            $reversal->txn_date = max(now()->toDateString(), date('Y-m-d', strtotime($entry->txn_date)));
             $reversal->entry_type = $entry->entry_type === 'debit' ? 'credit' : 'debit';
             $reversal->amount = $entry->amount;
             $reversal->payment_mode = PartyLedgerModel::REVERSAL_MODE;

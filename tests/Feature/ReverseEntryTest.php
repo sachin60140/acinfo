@@ -143,6 +143,19 @@ class ReverseEntryTest extends TestCase
         $this->assertEqualsWithDelta($before, PartyLedgerModel::currentBalance($this->customer->id), 0.001);
     }
 
+    /** Post-dated: never reversed before it was made, or statements up to its date would be wrong. */
+    public function test_a_post_dated_entry_is_reversed_on_its_own_date_not_before_it(): void
+    {
+        $ahead = now()->addDays(10)->toDateString();
+        $entry = $this->pay(3000, [], $ahead);
+
+        $this->reverse($entry)->assertSessionHas('success');
+
+        $reversal = PartyLedgerModel::where('reverses_id', $entry->id)->firstOrFail();
+
+        $this->assertSame($ahead, date('Y-m-d', strtotime($reversal->txn_date)), 'reversed before it was made');
+    }
+
     /** A reversed payment settles nothing: the file it paid is owed again. */
     public function test_a_reversed_payment_no_longer_settles_its_files(): void
     {
@@ -236,7 +249,33 @@ class ReverseEntryTest extends TestCase
         $this->assertStringContainsString('2026-09-12', $props['dateField']);
     }
 
+    /** A customer deactivated since: the Entry screen still offers them, or it could not be typed again. */
+    public function test_correct_for_a_deactivated_party_still_offers_that_party(): void
+    {
+        $entry = $this->pay(2000);
+
+        $this->customer->is_active = 0;
+        $this->customer->save();
+
+        $this->reverse($entry, 'Wrong amount', true)->assertRedirect(route('party.entry', 'customer'));
+
+        $props = $this->actingAs($this->admin)->getJson(route('party.entry', 'customer'))->json('props');
+
+        $this->assertContains($this->customer->id, array_map('intval', array_column($props['parties'], 'id')), 'the party was not offered');
+    }
+
     // ------------------------------------------------------------ statements
+
+    /** Ctrl+P on the statement: the office's notes and the Change buttons stay off the paper. */
+    public function test_the_printed_statement_leaves_out_the_office_notes_and_change(): void
+    {
+        $html = $this->actingAs($this->admin)->get(route('party.statement', $this->customer->id))->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression(
+            '/@media print\s*\{.*\.party-statement \.grid__cellnote,\s*\.party-statement \.grid__action\s*\{\s*display: none !important;/s',
+            $html
+        );
+    }
 
     public function test_the_statement_offers_change_only_on_entries_that_can_be_taken_back(): void
     {

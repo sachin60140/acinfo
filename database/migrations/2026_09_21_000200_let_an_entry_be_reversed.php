@@ -55,7 +55,9 @@ return new class extends Migration
             && DB::table('party_ledger')->whereNotNull('reverses_id')->exists()) {
             throw new RuntimeException(
                 'Entries have been reversed. Rolling this back would leave each reversal and the entry it took back '
-                .'as two unexplained rows. Delete nothing; reverse the reversals first if that is really what is wanted.'
+                .'as two unexplained rows, so it is refused while any reversal exists. There is no way to undo a '
+                .'reversal from the application; removing the pairs means deleting ledger rows by hand, knowing that '
+                .'every balance and statement they touch will change.'
             );
         }
 

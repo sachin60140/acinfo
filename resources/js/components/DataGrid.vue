@@ -847,7 +847,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                 <!-- What else the cell has to say. The note is a
                                      statement, the sub may be a link: an attachment
                                      is worth naming and worth opening. -->
-                                <div v-if="column.note && row[column.note]" class="ui-sub">
+                                <div v-if="column.note && row[column.note]" class="ui-sub grid__cellnote">
                                     {{ row[column.note] }}
                                 </div>
 

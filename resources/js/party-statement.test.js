@@ -123,6 +123,52 @@ describe('the Change dialog', () => {
         expect([...dialog().querySelectorAll('button[type="submit"]')].find((b) => b.textContent.trim().endsWith('Reverse')).value).toBe('0');
     });
 
+    it('keeps the office note under its own class, for print to leave out', () => {
+        const host = mount();
+        const note = [...host.querySelectorAll('.ui-sub')].find((d) => d.textContent.includes('Why: Duplicate'));
+
+        expect(note.classList).toContain('grid__cellnote');
+    });
+
+    it('posts once however many times it is pressed', async () => {
+        const host = mount();
+
+        changeButtons(host)[0].click();
+        await nextTick();
+
+        const why = dialog().querySelector('textarea[name="reason"]');
+        why.value = 'Duplicate';
+        why.dispatchEvent(new window.Event('input'));
+        await nextTick();
+
+        const first = new window.Event('submit', { cancelable: true });
+        const second = new window.Event('submit', { cancelable: true });
+
+        dialog().dispatchEvent(first);
+        dialog().dispatchEvent(second);
+        await nextTick();
+
+        expect(first.defaultPrevented).toBe(false);
+        expect(second.defaultPrevented).toBe(true);
+        expect(submit('Reverse and enter it again').disabled).toBe(true);
+    });
+
+    it('closes on Escape wherever focus is, and goes back to its button', async () => {
+        const host = mount();
+        const button = changeButtons(host)[0];
+
+        button.focus();
+        button.click();
+        await nextTick();
+
+        document.activeElement.blur();
+        document.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await nextTick();
+
+        expect(dialog()).toBe(null);
+        expect(document.activeElement).toBe(button);
+    });
+
     it('closes without posting anything', async () => {
         const host = mount();
 

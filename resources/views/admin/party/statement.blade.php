@@ -16,6 +16,17 @@
             .grid__pages {
                 display: none !important;
             }
+
+            /*
+             * The office's own notes under Particulars — why an entry was
+             * reversed — and the Change buttons. Found in review: the grid's
+             * exports left them out but the browser's print did not, and a
+             * printed statement is the one handed over the counter.
+             */
+            .party-statement .grid__cellnote,
+            .party-statement .grid__action {
+                display: none !important;
+            }
         }
     </style>
 @endsection
