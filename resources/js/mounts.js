@@ -23,6 +23,7 @@ import Dashboard from './components/Dashboard.vue';
 import FileForm from './components/FileForm.vue';
 import GiveToVendor from './components/GiveToVendor.vue';
 import Loader from './components/Loader.vue';
+import PartyAdjust from './components/PartyAdjust.vue';
 import PartyEntry from './components/PartyEntry.vue';
 import PartyForm from './components/PartyForm.vue';
 import PasswordToggle from './components/PasswordToggle.vue';
@@ -62,6 +63,7 @@ export const components = {
     // Ledger and reference data.
     'vue-dashboard': Dashboard,
     'vue-party-entry': PartyEntry,
+    'vue-party-adjust': PartyAdjust,
     'vue-party-form': PartyForm,
     'vue-work-types': WorkTypes,
     'vue-file-form': FileForm,

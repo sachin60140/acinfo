@@ -151,6 +151,15 @@ class VueMountTest extends TestCase
         $entry->particular = 'Mount test entry';
         $entry->save();
 
+        $payment = new PartyLedgerModel;
+        $payment->party_id = $party->id;
+        $payment->txn_date = now()->toDateString();
+        $payment->entry_type = 'credit';
+        $payment->amount = 500;
+        $payment->payment_mode = 'UPI';
+        $payment->particular = 'Mount test payment';
+        $payment->save();
+
         return [
             'admin/dashboard',
             'admin/parties/customer',
@@ -159,6 +168,7 @@ class VueMountTest extends TestCase
             'admin/party/entry/customer',
             'admin/party/edit/'.$party->id,
             'admin/party/statement/'.$party->id,
+            'admin/party/adjust/'.$payment->id,
             'admin/files',
             'admin/file/receive',
             'admin/file/assign',

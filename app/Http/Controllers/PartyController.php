@@ -8,6 +8,7 @@ use App\Models\WorkFileModel;
 use App\Support\Screen;
 use App\Support\WhatsApp;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
@@ -346,29 +347,10 @@ class PartyController extends Controller
              * is for. What it does not cover settles the oldest charges, as
              * every payment did before; see PartyLedgerModel::settle().
              */
-            // Rounded before anything is judged, so an amount too small to be
-            // a paisa is no line at all rather than a line of 0.00.
-            $lines = collect((array) $req->input('alloc', []))
-                ->filter(fn ($line) => is_array($line))
-                ->map(fn ($line) => [
-                    'work_file_id' => (int) ($line['work_file_id'] ?? 0),
-                    'amount' => round((float) ($line['amount'] ?? 0), 2),
-                ])
-                ->filter(fn ($line) => $line['amount'] > 0)
-                ->values();
-
-            /*
-             * Counted after the empty boxes are gone. Found in review: the
-             * screen once posted a box for every file listed, and a limit on
-             * the raw count refused every payment from a party with more than
-             * two hundred files — even one adjusted against nothing.
-             */
-            if ($lines->count() > 200) {
-                return back()->withInput()->withErrors(['alloc' => 'A payment can be adjusted against at most 200 files at a time.']);
-            }
+            $lines = self::allocLines($req);
 
             // A customer pays with a credit; the office pays a vendor with a debit.
-            $paymentSide = $type === 'customer' ? 'credit' : 'debit';
+            $paymentSide = self::paymentSide($type);
 
             if ($lines->isNotEmpty()) {
                 if ($req->entry_type !== $paymentSide) {
@@ -383,19 +365,10 @@ class PartyController extends Controller
                         'alloc' => 'Adjusting against files needs the database update that came with it (php artisan migrate).',
                     ]);
                 }
+            }
 
-                if ($lines->pluck('work_file_id')->duplicates()->isNotEmpty()) {
-                    return back()->withInput()->withErrors(['alloc' => 'A file can be adjusted against only once in one payment.']);
-                }
-
-                $against = round($lines->sum('amount'), 2);
-
-                if ($against > (float) $req->amount + 0.005) {
-                    return back()->withInput()->withErrors([
-                        'alloc' => 'The files come to '.number_format($against, 2, '.', ',')
-                            .', more than the payment of '.number_format((float) $req->amount, 2, '.', ',').'.',
-                    ]);
-                }
+            if ($refused = self::allocRefusal($lines, (float) $req->amount)) {
+                return back()->withInput()->withErrors(['alloc' => $refused]);
             }
 
             $entry = DB::transaction(function () use ($req, $lines, $type) {
@@ -406,28 +379,9 @@ class PartyController extends Controller
                  */
                 PartyModel::whereKey($req->party_id)->lockForUpdate()->first();
 
-                if ($lines->isNotEmpty()) {
-                    // Checked here, under the lock, against what the ledger says —
-                    // never against what the page showed.
-                    $bills = PartyLedgerModel::bills((int) $req->party_id, $type === 'customer' ? 'debit' : 'credit')['files'];
-                    $names = DB::table('work_file')->whereIn('id', $lines->pluck('work_file_id'))->pluck('file_no', 'id');
-                    $problems = [];
-
-                    foreach ($lines as $line) {
-                        $bill = $bills[$line['work_file_id']] ?? null;
-                        $name = $names[$line['work_file_id']] ?? 'That file';
-
-                        if (! $bill || $bill['charged'] <= 0.005) {
-                            $problems[] = $name.' is not one of this '.strtolower(PartyModel::label($type))."'s files.";
-                        } elseif ($line['amount'] > $bill['open'] + 0.005) {
-                            $problems[] = $name.' has only '.number_format($bill['open'], 2, '.', ',').' left to adjust.';
-                        }
-                    }
-
-                    if ($problems) {
-                        throw ValidationException::withMessages(['alloc' => implode(' ', $problems)]);
-                    }
-                }
+                // Checked here, under the lock, against what the ledger says —
+                // never against what the page showed.
+                self::checkAgainstLedger((int) $req->party_id, $type, $lines);
 
                 $entry = new PartyLedgerModel;
                 $entry->party_id = $req->party_id;
@@ -445,17 +399,8 @@ class PartyController extends Controller
 
                 $entry->save();
 
-                foreach ($lines as $line) {
-                    DB::table('party_ledger_allocation')->insert([
-                        'entry_id' => $entry->id,
-                        'party_id' => (int) $req->party_id,
-                        'work_file_id' => $line['work_file_id'],
-                        'amount' => $line['amount'],
-                        'created_by' => Auth::id(),
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
-                }
+                // Its lines at its own moment, so they are known as written with it.
+                self::allocate($entry->id, (int) $req->party_id, $lines, $entry->created_at);
 
                 return $entry;
             });
@@ -568,6 +513,567 @@ class PartyController extends Controller
         ])->toResponse($req);
     }
 
+    /** The side a party pays on: a customer's Credit, the office's Debit to a vendor. */
+    private static function paymentSide(string $type): string
+    {
+        return $type === 'customer' ? 'credit' : 'debit';
+    }
+
+    /**
+     * The files a payment is posted against, as lines.
+     *
+     * Rounded before anything is judged, so an amount too small to be a paisa
+     * is no line at all rather than a line of 0.00; an empty box is no line.
+     *
+     * @return Collection<int, array{work_file_id: int, amount: float}>
+     */
+    private static function allocLines(Request $req): Collection
+    {
+        return collect((array) $req->input('alloc', []))
+            ->filter(fn ($line) => is_array($line))
+            ->map(fn ($line) => [
+                'work_file_id' => (int) ($line['work_file_id'] ?? 0),
+                'amount' => round((float) ($line['amount'] ?? 0), 2),
+            ])
+            ->filter(fn ($line) => $line['amount'] > 0)
+            ->values();
+    }
+
+    /** What is wrong with the lines on their own, before the ledger is read. */
+    private static function allocRefusal(Collection $lines, float $amount): ?string
+    {
+        /*
+         * Counted after the empty boxes are gone. Found in review: the screen
+         * once posted a box for every file listed, and a limit on the raw count
+         * refused every payment from a party with more than two hundred files —
+         * even one adjusted against nothing.
+         */
+        if ($lines->count() > 200) {
+            return 'A payment can be adjusted against at most 200 files at a time.';
+        }
+
+        if ($lines->pluck('work_file_id')->duplicates()->isNotEmpty()) {
+            return 'A file can be adjusted against only once in one payment.';
+        }
+
+        $against = round($lines->sum('amount'), 2);
+
+        if ($against > $amount + 0.005) {
+            return 'The files come to '.number_format($against, 2, '.', ',')
+                .', more than the payment of '.number_format($amount, 2, '.', ',').'.';
+        }
+
+        return null;
+    }
+
+    /**
+     * Each line against what the ledger says is open on that file — never what
+     * the page showed. Called under the party's lock.
+     *
+     * With $except, a saved payment being adjusted again: open is read with its
+     * own adjustments left out and every other payment's kept. And what it is
+     * adjusted against already ($keep, read under the lock) may stay as it is
+     * or be lowered without being judged again. Found in review: judged again,
+     * a line on a file cancelled or moved since — which the ledger keeps for
+     * when the file is charged again — refused every change to the payment, or
+     * was let go by a save that meant only to add another file. Keeping or
+     * lowering a line takes nothing from any other payment that it does not
+     * already take.
+     *
+     * @param  array<int, string>  $keep  file id => amount
+     */
+    private static function checkAgainstLedger(int $partyId, string $type, Collection $lines, ?int $except = null, array $keep = []): void
+    {
+        $lines = $lines->reject(fn ($line) => isset($keep[$line['work_file_id']])
+            && $line['amount'] <= (float) $keep[$line['work_file_id']] + 0.005);
+
+        if ($lines->isEmpty()) {
+            return;
+        }
+
+        $bills = PartyLedgerModel::bills($partyId, $type === 'customer' ? 'debit' : 'credit', $except)['files'];
+        $names = DB::table('work_file')->whereIn('id', $lines->pluck('work_file_id'))->pluck('file_no', 'id');
+        $problems = [];
+
+        foreach ($lines as $line) {
+            $bill = $bills[$line['work_file_id']] ?? null;
+            $name = $names[$line['work_file_id']] ?? 'That file';
+
+            if (! $bill || $bill['charged'] <= 0.005) {
+                $problems[] = $name.' is not one of this '.strtolower(PartyModel::label($type))."'s files.";
+            } elseif ($line['amount'] > max($bill['open'], (float) ($keep[$line['work_file_id']] ?? 0)) + 0.005) {
+                $problems[] = $name.' has only '.number_format(max($bill['open'], (float) ($keep[$line['work_file_id']] ?? 0)), 2, '.', ',').' left to adjust.';
+            }
+        }
+
+        if ($problems) {
+            throw ValidationException::withMessages(['alloc' => implode(' ', $problems)]);
+        }
+    }
+
+    /**
+     * The lines, written against the payment, all stamped with one moment —
+     * the same one a re-adjustment lets the old lines go at, so the office
+     * note can tell what was let go by that save.
+     */
+    private static function allocate(int $entryId, int $partyId, Collection $lines, $at = null): void
+    {
+        $at ??= now();
+
+        foreach ($lines as $line) {
+            DB::table('party_ledger_allocation')->insert([
+                'entry_id' => $entryId,
+                'party_id' => $partyId,
+                'work_file_id' => $line['work_file_id'],
+                'amount' => $line['amount'],
+                'created_by' => Auth::id(),
+                'created_at' => $at,
+                'updated_at' => $at,
+            ]);
+        }
+    }
+
+    /**
+     * Why a saved entry cannot be adjusted against files, or null when it can:
+     * an ordinary payment typed on the Entry screen, standing.
+     */
+    private static function adjustRefusal(PartyLedgerModel $entry, string $type): ?string
+    {
+        if ($entry->work_file_id) {
+            $fileNo = DB::table('work_file')->where('id', $entry->work_file_id)->value('file_no');
+
+            return 'This entry comes from file '.$fileNo.' and belongs to it already.';
+        }
+
+        if ($entry->entry_type !== self::paymentSide($type)) {
+            return 'Only a payment is adjusted against files — a '
+                .(self::paymentSide($type) === 'credit' ? 'Credit' : 'Debit').' on a '.strtolower(PartyModel::label($type))."'s account.";
+        }
+
+        if (PartyLedgerModel::reversible()) {
+            if ($entry->reverses_id || $entry->entry_kind) {
+                return 'Entry #'.$entry->id.' is not an ordinary payment, and is not adjusted against files.';
+            }
+
+            if (PartyLedgerModel::where('reverses_id', $entry->id)->exists()) {
+                return 'Entry #'.$entry->id.' has been reversed, and settles nothing.';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * What a payment is adjusted against now: file id => amount, to the paisa.
+     *
+     * @return array<int, string>
+     */
+    private static function liveLines(int $entryId): array
+    {
+        return DB::table('party_ledger_allocation')
+            ->where('entry_id', $entryId)
+            ->whereNull('released_at')
+            ->get(['work_file_id', 'amount'])
+            ->mapWithKeys(fn ($line) => [(int) $line->work_file_id => number_format((float) $line->amount, 2, '.', '')])
+            ->sortKeys()
+            ->all();
+    }
+
+    /**
+     * Posted lines in the same form, so the two compare as sets.
+     *
+     * @return array<int, string>
+     */
+    private static function plainLines(Collection $lines): array
+    {
+        return $lines
+            ->mapWithKeys(fn ($line) => [$line['work_file_id'] => number_format($line['amount'], 2, '.', '')])
+            ->sortKeys()
+            ->all();
+    }
+
+    /** A fingerprint of a payment's lines, for telling whether they moved under a page. */
+    private static function linesPrint(array $lines): string
+    {
+        return sha1(json_encode($lines));
+    }
+
+    /**
+     * Lines as the office reads them: "F-00050 BR01AB1234 6,000.00 · …".
+     *
+     * By file number, which is what the office works by, and for every line —
+     * a file cancelled or moved since included, which againstFor() leaves out
+     * because the customer is not told of it.
+     *
+     * @param  array<int, string|float>  $lines  file id => amount
+     * @param  Collection|null  $files  the files, when already read
+     */
+    private static function linesText(array $lines, ?Collection $files = null): string
+    {
+        $files ??= DB::table('work_file')->whereIn('id', array_keys($lines))->get(['id', 'file_no', 'registration_no'])->keyBy('id');
+
+        return implode(' · ', array_map(function ($fileId) use ($lines, $files) {
+            $file = $files[$fileId] ?? null;
+
+            return trim(($file->file_no ?? 'File #'.$fileId).' '.($file->registration_no ?? ''))
+                .' '.number_format((float) $lines[$fileId], 2, '.', ',');
+        }, array_keys($lines)));
+    }
+
+    /**
+     * When the files a payment is for were last changed, by whom, and what it
+     * was for before — for the office, beside the entry on its statement.
+     *
+     * A change is a line let go other than by a reversal, or a line written
+     * after the payment itself was. Nothing is said of a payment adjusted when
+     * it was typed and never since.
+     *
+     * @param  array<int, int>  $entryIds  standing entries only; a reversal
+     *     lets go of lines too, and says so itself
+     * @return array<int, string>  entry id => "Files changed 21-09-2026 by Ravi — was F-00050 6,000.00"
+     */
+    private static function adjustHistory(array $entryIds): array
+    {
+        if (! $entryIds || ! PartyLedgerModel::adjustable()) {
+            return [];
+        }
+
+        $rows = DB::table('party_ledger_allocation as a')
+            ->join('party_ledger as e', 'e.id', '=', 'a.entry_id')
+            ->whereIn('a.entry_id', $entryIds)
+            ->orderBy('a.id')
+            ->get(['a.entry_id', 'a.work_file_id', 'a.amount', 'a.created_at', 'a.created_by', 'a.released_at', 'a.released_by', 'e.created_at as entry_created']);
+
+        $events = [];
+
+        foreach ($rows as $row) {
+            if ($row->released_at) {
+                $events[$row->entry_id][] = ['at' => (string) $row->released_at, 'by' => $row->released_by];
+            }
+
+            /*
+             * Written with the payment, or later. A payment's own lines carry
+             * its moment exactly; the two seconds' grace is for those written
+             * before they did, a call apart. Found in review: a minute's grace
+             * missed a payment typed on account and put on a file straight
+             * after. A payment older than the table was never adjusted when it
+             * was typed.
+             */
+            $entryCreated = $row->entry_created ? strtotime((string) $row->entry_created) : null;
+
+            if ($row->created_at && ($entryCreated === null || strtotime((string) $row->created_at) > $entryCreated + 2)) {
+                $events[$row->entry_id][] = ['at' => (string) $row->created_at, 'by' => $row->created_by];
+            }
+        }
+
+        if (! $events) {
+            return [];
+        }
+
+        $latest = array_map(function ($list) {
+            usort($list, fn ($a, $b) => strcmp($b['at'], $a['at']));
+
+            return $list[0];
+        }, $events);
+
+        $names = DB::table('users')->whereIn('id', array_filter(array_column($latest, 'by')))->pluck('name', 'id');
+
+        // Every file any of them was on, read once for the whole statement.
+        $files = DB::table('work_file')
+            ->whereIn('id', $rows->whereNotNull('released_at')->pluck('work_file_id')->unique()->all())
+            ->get(['id', 'file_no', 'registration_no'])
+            ->keyBy('id');
+
+        $out = [];
+
+        foreach ($latest as $entryId => $event) {
+            // What was let go at that moment is what it was for before.
+            $was = [];
+
+            foreach ($rows as $row) {
+                if ((int) $row->entry_id === (int) $entryId && (string) $row->released_at === $event['at']) {
+                    $was[(int) $row->work_file_id] = $row->amount;
+                }
+            }
+
+            $who = $event['by'] && isset($names[$event['by']]) ? ' by '.$names[$event['by']] : '';
+
+            $out[(int) $entryId] = 'Files changed '.date('d-m-Y', strtotime($event['at'])).$who
+                .' — was '.($was ? self::linesText($was, $files) : 'on account');
+        }
+
+        return $out;
+    }
+
+    /**
+     * What the Adjust screen says about one of a payment's own lines, or null
+     * when there is nothing to say: its file is open to it and the line
+     * settles all of itself.
+     *
+     * Found over two reviews: said from the view with the payment left out,
+     * a file whose charge was given back was said to be kept, and a file
+     * re-priced below an older payment's line was said to be held by "other
+     * payments" when that payment settled all of it and the others nothing.
+     * What the line settles, and what the others do, are read from the ledger
+     * as it is; the view with the payment left out says only whether the file
+     * is still open to it.
+     *
+     * @param  array<string, float>|null  $view  the file with this payment left out
+     * @param  array<string, float>|null  $real  the file in the ledger as it is
+     * @param  float  $took  what this line settles now
+     */
+    private static function keptWhy(?array $view, ?array $real, float $amount, float $took, string $type): ?string
+    {
+        if (! $view || $view['charged'] <= 0.005) {
+            return $type === 'vendor'
+                ? "No longer this vendor's — cancelled, or given to another vendor. Kept for when it is theirs again; until then it counts as on account."
+                : 'Not charged to this customer now — cancelled, or given to another customer. Kept for when it is charged again; until then it counts as on account.';
+        }
+
+        $settlesAll = $took >= $amount - 0.005;
+
+        if ($settlesAll && $view['open'] > 0.005) {
+            return null;
+        }
+
+        $money = fn ($value) => number_format($value, 2, '.', ',');
+        $charged = ($real['charged'] ?? $view['charged']) - ($real['returned'] ?? $view['returned']);
+        $others = ($real['adjusted'] ?? 0) - $took;
+
+        $cause = match (true) {
+            $charged <= 0.005 => 'Its charge was given back.',
+            $others > 0.005 => $took > 0.005 ? 'Other payments are adjusted against the rest of it.' : 'Other payments are adjusted against it.',
+            $took >= $charged - 0.005 => 'It is charged only '.$money($charged).' now.',
+            default => 'Nothing more is open on it.',
+        };
+
+        if ($settlesAll) {
+            return $cause.' This payment keeps its '.$money($amount).' on it.';
+        }
+
+        return $took <= 0.005
+            ? $cause.' This payment\'s '.$money($amount).' settles nothing on it now, and counts as on account.'
+            : $cause.' Only '.$money($took).' of this payment\'s '.$money($amount).' settles it now; the rest counts as on account.';
+    }
+
+    /**
+     * The period a statement was filtered to, carried to the Adjust screen and
+     * back so every way back lands where the office was. Only well-formed
+     * dates, and quietly dropped otherwise: a leftover in a link is no reason
+     * to refuse the page.
+     *
+     * @return array{from?: string, to?: string}
+     */
+    private static function period(Request $req): array
+    {
+        $out = [];
+
+        foreach (['from', 'to'] as $key) {
+            // from[]=… is not a date either, and is no reason for an error page.
+            $value = $req->query($key);
+
+            if (! is_string($value)) {
+                continue;
+            }
+
+            $date = \DateTime::createFromFormat('!Y-m-d', $value);
+
+            if ($date && $date->format('Y-m-d') === $value) {
+                $out[$key] = $value;
+            }
+        }
+
+        return isset($out['from'], $out['to']) && $out['from'] > $out['to'] ? [] : $out;
+    }
+
+    /**
+     * Set or change the files a payment already saved is for.
+     *
+     * A payment typed before payments could be adjusted, or adjusted against
+     * the wrong file, is put right here. No money moves: the entry stays as it
+     * is and only what it is adjusted against changes. What it was adjusted
+     * against before is released rather than deleted, with who and when, so
+     * the record of it stays, and the statement says so; what it is adjusted
+     * against now is written anew.
+     *
+     * Checked as the Entry screen checks a new payment, against the files as
+     * they stood when it came in (PartyLedgerModel::bills()) — except that what
+     * it is adjusted against already may stay as it is or be lowered.
+     */
+    public function adjust(Request $req, $id)
+    {
+        abort_unless(PartyLedgerModel::adjustable(), 404);
+
+        $entry = PartyLedgerModel::findOrFail($id);
+        $party = PartyModel::findOrFail($entry->party_id);
+        $type = $party->party_type;
+
+        $period = self::period($req);
+        $statementUrl = route('party.statement', ['id' => $party->id] + $period);
+        $selfUrl = route('party.adjust', ['id' => $entry->id] + $period);
+
+        if ($req->isMethod('POST')) {
+            $req->validate([
+                'alloc' => 'nullable|array',
+                'alloc.*.work_file_id' => 'required|integer',
+                'alloc.*.amount' => 'nullable|numeric|min:0|max:99999999',
+                'drawn' => 'nullable|string|max:64',
+            ], [
+                'alloc.*.amount.numeric' => 'An amount against a file must be a number.',
+            ]);
+
+            $lines = self::allocLines($req);
+
+            if ($refused = self::allocRefusal($lines, (float) $entry->amount)) {
+                return back()->withInput()->withErrors(['alloc' => $refused]);
+            }
+
+            [$outcome, $posted] = DB::transaction(function () use ($req, $entry, $type, $lines) {
+                // In the order reverse() takes them, so the two never wait on
+                // each other the wrong way round.
+                $entry = PartyLedgerModel::whereKey($entry->id)->lockForUpdate()->firstOrFail();
+                PartyModel::whereKey($entry->party_id)->lockForUpdate()->first();
+
+                if ($refused = self::adjustRefusal($entry, $type)) {
+                    throw ValidationException::withMessages(['alloc' => $refused]);
+                }
+
+                $live = self::liveLines($entry->id);
+                $posted = self::plainLines($lines);
+
+                // Already so — pressed twice, or a colleague made the same change.
+                if ($posted === $live) {
+                    return ['unchanged', $posted];
+                }
+
+                /*
+                 * Changed since this page was drawn. Found in review: a page
+                 * left open, saved, quietly let go of what a colleague had
+                 * just put the payment against — the set posted replaces the
+                 * set there is, and the page had never shown it.
+                 */
+                if (! hash_equals(self::linesPrint($live), (string) $req->input('drawn'))) {
+                    return ['stale', $posted];
+                }
+
+                self::checkAgainstLedger((int) $entry->party_id, $type, $lines, (int) $entry->id, $live);
+
+                /*
+                 * One moment for the whole save. Found in review: stamped a
+                 * call at a time, a save that crossed a second let its old
+                 * lines go at one second and wrote the new ones at the next,
+                 * and the office note read "was on account" for a payment
+                 * that had been on a file.
+                 */
+                $at = now();
+
+                DB::table('party_ledger_allocation')
+                    ->where('entry_id', $entry->id)
+                    ->whereNull('released_at')
+                    ->update(['released_at' => $at, 'released_by' => Auth::id(), 'updated_at' => $at]);
+
+                self::allocate((int) $entry->id, (int) $entry->party_id, $lines, $at);
+
+                return ['saved', $posted];
+            });
+
+            $now = self::liveLines($entry->id);
+            $nowText = $now ? 'adjusted against '.self::linesText($now) : 'on account, settling the oldest files first';
+
+            if ($outcome === 'stale') {
+                return redirect($selfUrl)->withErrors(['alloc' => 'Someone changed what entry #'.$entry->id
+                    .' is adjusted against since this page was opened. It is now '.$nowText.'. Nothing was saved'
+                    .($posted ? ' — you had '.self::linesText($posted) : '').'. Make the change again below if it is still wanted.']);
+            }
+
+            if ($outcome === 'unchanged') {
+                return redirect($statementUrl)->with('success', 'Nothing changed: entry #'.$entry->id.' is '.$nowText.'.');
+            }
+
+            return redirect($statementUrl)->with('success', 'Entry #'.$entry->id.' is now '.$nowText.'.');
+        }
+
+        if ($refused = self::adjustRefusal($entry, $type)) {
+            return redirect($statementUrl)->withErrors(['alloc' => $refused]);
+        }
+
+        $live = self::liveLines($entry->id);
+        $label = PartyModel::label($type);
+
+        /*
+         * Each line it has now, and whether the list the screen fetches will
+         * carry its file. One that will not — the file cancelled or moved since,
+         * or all of it taken by other payments' adjustments — is still drawn,
+         * from here, to be kept, lowered or let go by the office and never by
+         * the screen on its own.
+         */
+        $side = $type === 'customer' ? 'debit' : 'credit';
+        $bills = PartyLedgerModel::bills($party->id, $side, $entry->id)['files'];
+        $files = DB::table('work_file')->whereIn('id', array_keys($live))->get(['id', 'file_no', 'registration_no'])->keyBy('id');
+
+        /*
+         * What each of its lines settles now. Found in review: a line on a file
+         * whose charge was given back was said to keep what it had, when it
+         * settled nothing and its money was on account.
+         */
+        $ledger = PartyLedgerModel::bills($party->id, $side);
+        $took = $ledger['took'][$entry->id] ?? [];
+
+        $currentLines = collect($live)->map(function ($amount, $fileId) use ($bills, $ledger, $files, $type, $took) {
+            return [
+                'id' => (int) $fileId,
+                'fileNo' => (string) ($files[$fileId]->file_no ?? 'File #'.$fileId),
+                'vehicle' => (string) ($files[$fileId]->registration_no ?? ''),
+                'amount' => (float) $amount,
+                // What it settles now: Full goes no further, and the page says
+                // what of it counts as on account.
+                'settles' => (float) ($took[$fileId] ?? 0),
+                'why' => self::keptWhy($bills[$fileId] ?? null, $ledger['files'][$fileId] ?? null, (float) $amount, (float) ($took[$fileId] ?? 0), $type),
+            ];
+        })->values()->all();
+
+        // A refused save's amounts come back rather than what is saved.
+        $refusedAlloc = $req->session()->hasOldInput()
+            ? collect((array) old('alloc', []))
+                ->filter(fn ($line) => is_array($line) && ($line['amount'] ?? '') !== '')
+                ->mapWithKeys(fn ($line) => [(int) ($line['work_file_id'] ?? 0) => (string) $line['amount']])
+                ->all()
+            : null;
+
+        $props = [
+            'action' => $selfUrl,
+            'csrf' => csrf_token(),
+            'label' => $label,
+            'statementUrl' => $statementUrl,
+            'billsUrl' => route('party.bills', ['id' => '__ID__']),
+            'party' => ['id' => (int) $party->id, 'name' => $party->name, 'mobile' => (string) $party->mobile],
+            'entry' => [
+                'id' => (int) $entry->id,
+                'date' => date('d-m-Y', strtotime($entry->txn_date)),
+                'side' => $entry->entry_type === 'debit' ? 'Dr' : 'Cr',
+                'amount' => (float) $entry->amount,
+                'mode' => (string) $entry->payment_mode,
+                'reference' => (string) $entry->ref_no,
+                'particular' => (string) $entry->particular,
+            ],
+            'current' => (object) $live,
+            'currentLines' => $currentLines,
+            'initialAlloc' => (object) ($refusedAlloc ?? $live),
+            // What the page was drawn from; a save is refused if it has moved.
+            // A refused save keeps the one its page had, or it would pass.
+            'drawn' => (string) old('drawn', self::linesPrint($live)),
+            'history' => self::adjustHistory([$entry->id])[$entry->id] ?? null,
+        ];
+
+        return Screen::make('admin.party.adjust', 'vue-party-adjust', $props, [
+            'type' => $type,
+            'label' => $label,
+            'partyName' => $party->name,
+            'entryId' => (int) $entry->id,
+            'statementUrl' => $statementUrl,
+        ])->toResponse($req);
+    }
+
     /**
      * A party's files that a payment can still be adjusted against.
      *
@@ -588,7 +1094,17 @@ class PartyController extends Controller
         }
 
         $isCustomer = $party->party_type === 'customer';
-        $ledger = PartyLedgerModel::bills($party->id, $isCustomer ? 'debit' : 'credit');
+
+        /*
+         * A payment already saved, being adjusted again: the files as if it had
+         * never been typed. Only one of this party's own — any other id is
+         * ignored, and the list is the plain one.
+         */
+        $except = $req->filled('except')
+            ? PartyLedgerModel::whereKey((int) $req->query('except'))->where('party_id', $party->id)->value('id')
+            : null;
+
+        $ledger = PartyLedgerModel::bills($party->id, $isCustomer ? 'debit' : 'credit', $except ? (int) $except : null);
         $settled = $ledger['files'];
 
         /*
@@ -758,7 +1274,11 @@ class PartyController extends Controller
                 ->with('success', 'Entry #'.$entry->id.' has been reversed. Enter it again correctly below.');
         }
 
-        return back()->with('success', 'Entry #'.$entry->id.' has been reversed. The reversal is dated today.');
+        // Said as it is: today, unless the entry was dated ahead of today.
+        $dated = PartyLedgerModel::where('reverses_id', $entry->id)->value('txn_date');
+
+        return back()->with('success', 'Entry #'.$entry->id.' has been reversed. The reversal is dated '
+            .(date('Y-m-d', strtotime($dated)) === now()->toDateString() ? 'today' : date('d-m-Y', strtotime($dated))).'.');
     }
 
     /**
@@ -766,12 +1286,15 @@ class PartyController extends Controller
      * manual entry, not a reversal, not already reversed), and, for the
      * office only, what happened to it.
      *
-     * @return array{change: ?string, row_state: ?string, office_note: ?string}
+     * And whether it can be adjusted against files: a payment, standing, typed
+     * by hand. The Change dialog offers that when adjust_url is set.
+     *
+     * @return array{change: ?string, row_state: ?string, office_note: ?string, adjust_url: ?string}
      */
-    private static function changeFields($entry, $reversedBy, bool $reversible): array
+    private static function changeFields($entry, $reversedBy, bool $reversible, string $paymentSide, array $history = [], array $period = []): array
     {
         if (! $reversible) {
-            return ['change' => null, 'row_state' => null, 'office_note' => null];
+            return ['change' => null, 'row_state' => null, 'office_note' => null, 'adjust_url' => null];
         }
 
         $reversal = $reversedBy[$entry->id] ?? null;
@@ -781,6 +1304,7 @@ class PartyController extends Controller
                 'change' => null,
                 'row_state' => 'is-reversed',
                 'office_note' => 'Reversed by #'.$reversal->id.' on '.date('d-m-Y', strtotime($reversal->txn_date)),
+                'adjust_url' => null,
             ];
         }
 
@@ -789,13 +1313,20 @@ class PartyController extends Controller
                 'change' => null,
                 'row_state' => 'is-reversal',
                 'office_note' => $entry->note ? 'Why: '.$entry->note : null,
+                'adjust_url' => null,
             ];
         }
+
+        $byHand = ! $entry->work_file_id && ! $entry->entry_kind;
 
         return [
             'change' => $entry->work_file_id ? null : 'Change',
             'row_state' => null,
-            'office_note' => null,
+            // When its files were last changed, and what it was for before.
+            'office_note' => $history[$entry->id] ?? null,
+            'adjust_url' => $byHand && $entry->entry_type === $paymentSide
+                ? route('party.adjust', ['id' => $entry->id] + $period)
+                : null,
         ];
     }
 
@@ -843,6 +1374,14 @@ class PartyController extends Controller
                 ->get(['id', 'reverses_id', 'txn_date'])->keyBy('reverses_id')
             : collect();
 
+        // When each standing payment's files were last changed, all at once.
+        $history = $reversible
+            ? self::adjustHistory($data['getRecords']->pluck('id')->reject(fn ($id) => isset($reversedBy[$id]))->values()->all())
+            : [];
+
+        // Carried to the Adjust screen, so its way back keeps the period.
+        $period = array_filter(['from' => $from, 'to' => $to]);
+
         foreach ($data['getRecords'] as $entry) {
             $running += $entry->signedAmount();
             $isDebit = $entry->entry_type === 'debit';
@@ -864,7 +1403,7 @@ class PartyController extends Controller
                 'remarks' => $remarks[$entry->work_file_id] ?? null,
                 // The files a payment was adjusted against, when it was.
                 'against' => PartyLedgerModel::againstText($against[$entry->id] ?? []),
-            ] + self::changeFields($entry, $reversedBy, $reversible);
+            ] + self::changeFields($entry, $reversedBy, $reversible, self::paymentSide($party->party_type), $history, $period);
         }
 
         /*
@@ -891,6 +1430,7 @@ class PartyController extends Controller
             'change' => null,
             'row_state' => null,
             'office_note' => null,
+            'adjust_url' => null,
         ]];
 
         $closing = [[
@@ -908,6 +1448,7 @@ class PartyController extends Controller
             'change' => null,
             'row_state' => null,
             'office_note' => null,
+            'adjust_url' => null,
         ]];
 
         // Only when there is one to show. A column of empty cells is clutter on

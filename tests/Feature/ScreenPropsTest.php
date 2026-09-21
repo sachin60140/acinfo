@@ -178,10 +178,25 @@ class ScreenPropsTest extends TestCase
         ]);
 
         $this->owing = $customer->id;
+
+        // And a payment of theirs, for the screen that adjusts one against files.
+        $this->payment = \Illuminate\Support\Facades\DB::table('party_ledger')->insertGetId([
+            'party_id' => $customer->id,
+            'txn_date' => now()->toDateString(),
+            'entry_type' => 'credit',
+            'amount' => 400,
+            'payment_mode' => 'UPI',
+            'particular' => 'Props fixture payment',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     /** The customer seedWork() left owing, whose statement is recorded. */
     private ?int $owing = null;
+
+    /** A payment of theirs. */
+    private ?int $payment = null;
     /**
      * Every screen that mounts something, with a URL that has data behind it.
      */
@@ -201,6 +216,7 @@ class ScreenPropsTest extends TestCase
             'party-entry' => 'admin/party/entry/customer',
             'party-edit' => $party ? 'admin/party/edit/'.$party->id : null,
             'party-statement' => 'admin/party/statement/'.$this->owing,
+            'party-adjust' => 'admin/party/adjust/'.$this->payment,
             'files' => 'admin/files',
             /*
              * Filtered variants, because a view variable used only inside an

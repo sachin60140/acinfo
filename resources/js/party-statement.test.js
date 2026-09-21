@@ -32,23 +32,24 @@ const row = (id, over = {}) => ({
     change: 'Change',
     row_state: null,
     office_note: null,
+    adjust_url: null,
     ...over,
 });
 
 const ROWS = [
-    row(11),
+    row(11, { adjust_url: '/admin/party/adjust/11' }),
     row(12, { particular: 'TR - BR01AB1234', debit: 3000, credit: null, change: null }),
     row(13, { change: null, row_state: 'is-reversed', office_note: 'Reversed by #14 on 21-09-2026' }),
     row(14, { particular: 'Reversal of entry #13 of 10-09-2026', debit: 5000, credit: null, change: null, row_state: 'is-reversal', office_note: 'Why: Duplicate' }),
 ];
 
-function mount() {
+function mount(rows = ROWS) {
     const host = document.createElement('div');
     document.body.appendChild(host);
 
     const app = createApp(PartyStatement, {
         columns: COLUMNS,
-        rows: ROWS,
+        rows,
         sortable: false,
         rowClass: 'row_state',
         action: '/admin/party/reverse/__ID__',
@@ -167,6 +168,48 @@ describe('the Change dialog', () => {
 
         expect(dialog()).toBe(null);
         expect(document.activeElement).toBe(button);
+    });
+
+    it('offers to adjust a payment against files, with no reason asked', async () => {
+        const host = mount();
+
+        changeButtons(host)[0].click();
+        await nextTick();
+
+        const link = [...dialog().querySelectorAll('a')].find((a) => a.textContent.includes('Adjust'));
+
+        expect(link.getAttribute('href')).toBe('/admin/party/adjust/11');
+    });
+
+    it('puts it first where it is offered, with nothing else in bold', async () => {
+        const host = mount();
+
+        changeButtons(host)[0].click();
+        await nextTick();
+
+        const link = [...dialog().querySelectorAll('a')].find((a) => a.textContent.includes('Adjust'));
+
+        expect(document.activeElement).toBe(link);
+        expect([...dialog().querySelectorAll('.ui-btn--primary')]).toEqual([link]);
+    });
+
+    it('asks why first where only a reversal is offered', async () => {
+        const host = mount([row(21, { debit: 500, credit: null })]);
+
+        changeButtons(host)[0].click();
+        await nextTick();
+
+        expect(document.activeElement).toBe(dialog().querySelector('textarea[name="reason"]'));
+        expect(submit('Reverse and enter it again').classList).toContain('ui-btn--primary');
+    });
+
+    it('does not offer it where the server did not — a charge typed by hand', async () => {
+        const host = mount([row(21, { debit: 500, credit: null })]);
+
+        changeButtons(host)[0].click();
+        await nextTick();
+
+        expect([...dialog().querySelectorAll('a')].some((a) => a.textContent.includes('Adjust'))).toBe(false);
     });
 
     it('closes without posting anything', async () => {

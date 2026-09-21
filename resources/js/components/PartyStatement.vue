@@ -45,6 +45,7 @@ const gridProps = computed(() => ({
 const entry = ref(null);
 const reason = ref('');
 const reasonBox = ref(null);
+const adjustLink = ref(null);
 
 /*
  * One press, one reversal. Found in review: a double click sent two; the
@@ -68,7 +69,13 @@ async function onAction(row) {
     reason.value = '';
     submitting.value = false;
     await nextTick();
-    reasonBox.value?.focus();
+    /*
+     * Where a payment's files can be changed, that comes first. Found in
+     * review: with the reason box taking the focus and Reverse and enter it
+     * again the one bold button, the office reached for a reversal — a new
+     * line on the customer's statement — when only the files were wrong.
+     */
+    (row.adjust_url ? adjustLink.value : reasonBox.value)?.focus();
 }
 
 function close() {
@@ -170,7 +177,22 @@ const blocked = computed(() => reason.value.trim() === '');
                             <div v-if="entry.against" class="ui-hint">Against: {{ entry.against }}</div>
                         </div>
 
+                        <!-- No money moves, so no reason is asked for. A link,
+                             so the reason box below cannot stand in its way. -->
+                        <div v-if="entry.adjust_url" class="ps-dialog__adjust">
+                            <div>
+                                <strong>Only the files it is for are wrong?</strong>
+                                <div class="ui-hint">
+                                    No money moves and no line is added; only what it is adjusted against changes.
+                                </div>
+                            </div>
+                            <a ref="adjustLink" :href="entry.adjust_url" class="ui-btn ui-btn--primary">
+                                <i class="bi bi-diagram-3"></i> Adjust against files
+                            </a>
+                        </div>
+
                         <p class="ui-hint">
+                            <strong>Amount, date or party wrong?</strong>
                             An entry is never deleted. Reversing it adds a line on the other side for the same amount,
                             dated today — or on the entry's own date, if that is later — so the balance is as if it had
                             never been typed and a statement already sent stays as it was.
@@ -188,8 +210,13 @@ const blocked = computed(() => reason.value.trim() === '');
                                 rows="2"
                                 maxlength="255"
                                 required
-                                placeholder="e.g. Typed for the wrong customer"></textarea>
-                            <div class="ui-hint">Kept for the office. The customer sees only that the entry was reversed.</div>
+                                placeholder="e.g. Typed on the wrong account"></textarea>
+                            <!-- Said of either party: found in review saying "the
+                                 customer" on a vendor's statement. -->
+                            <div class="ui-hint">
+                                Kept for the office: shown under the reversal on this screen only. Printed, exported and
+                                portal statements show only that the entry was reversed.
+                            </div>
                         </div>
                     </div>
 
@@ -198,7 +225,13 @@ const blocked = computed(() => reason.value.trim() === '');
                         <button type="submit" name="correct" value="0" class="ui-btn ui-btn--danger" :disabled="blocked || submitting">
                             <i class="bi bi-arrow-counterclockwise"></i> Reverse
                         </button>
-                        <button type="submit" name="correct" value="1" class="ui-btn ui-btn--primary" :disabled="blocked || submitting">
+                        <button
+                            type="submit"
+                            name="correct"
+                            value="1"
+                            class="ui-btn"
+                            :class="{ 'ui-btn--primary': !entry.adjust_url }"
+                            :disabled="blocked || submitting">
                             <i class="bi bi-pencil-square"></i> Reverse and enter it again
                         </button>
                     </div>
@@ -279,6 +312,23 @@ const blocked = computed(() => reason.value.trim() === '');
     display: grid;
     gap: var(--s-3);
     padding: var(--s-4);
+}
+
+/* The button drops under the words on a phone rather than squeezing them to a
+   word a line. */
+.ps-dialog__adjust {
+    align-items: center;
+    border: 1px solid var(--n-200);
+    border-radius: var(--r-md);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    justify-content: space-between;
+    padding: var(--s-2) var(--s-3);
+}
+
+.ps-dialog__adjust > div {
+    flex: 1 1 14rem;
 }
 
 .ps-dialog__entry {

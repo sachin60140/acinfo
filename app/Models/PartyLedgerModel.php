@@ -230,30 +230,47 @@ class PartyLedgerModel extends Model
      * a file open for 5,000 and due nothing: paying 5,000 "for that file"
      * settles it and moves the advance on to the next.
      *
+     * With $except, one payment already saved, being adjusted again: the files
+     * as they stood when it came in. Its own money and its own adjustments are
+     * left out, every other payment's adjustments are kept — so "open" is what
+     * it may take without taking from any of them — and only money received
+     * before it counts as settling the oldest files, so "due" is what was still
+     * owed when it was paid. Found in review: counting every other payment,
+     * money received in March settled January's file first, and Fill oldest
+     * first put a January receipt on a file charged six weeks after it.
+     *
      * @return array{files: array<int, array{charged: float, returned: float, adjusted: float, open: float, due: float, seq: int}>, unadjusted: array<int, float>}
      */
-    public static function bills(int $partyId, string $chargeSide = 'debit'): array
+    public static function bills(int $partyId, string $chargeSide = 'debit', ?int $except = null): array
     {
-        return self::settleAll([$partyId], $chargeSide)[$partyId]
-            ?? ['files' => [], 'unadjusted' => [], 'loose' => []];
+        return self::settleAll([$partyId], $chargeSide, $except)[$partyId]
+            ?? ['files' => [], 'unadjusted' => [], 'loose' => [], 'took' => []];
     }
 
     /**
      * @param  array<int, int>  $partyIds
      * @return array<int, array{files: array<int, array<string, float>>, unadjusted: array<int, float>}>
      */
-    private static function settleAll(array $partyIds, string $chargeSide): array
+    private static function settleAll(array $partyIds, string $chargeSide, ?int $except = null): array
     {
         if (! $partyIds) {
             return [];
         }
 
+        // Where the payment left out stands in the ledger's order.
+        $before = $except
+            ? DB::table('party_ledger')->where('id', $except)->value('txn_date')
+            : null;
+
+        $cut = $before !== null ? [substr((string) $before, 0, 10), (int) $except] : null;
+
         $entries = DB::table('party_ledger')
             ->whereIn('party_id', $partyIds)
+            ->when($except, fn ($q) => $q->where('id', '!=', $except))
             ->orderBy('txn_date')
             ->orderBy('id')
             ->get(array_merge(
-                ['id', 'party_id', 'work_file_id', 'entry_type', 'amount'],
+                ['id', 'party_id', 'txn_date', 'work_file_id', 'entry_type', 'amount'],
                 self::reversible() ? ['reverses_id'] : []
             ))
             ->groupBy('party_id');
@@ -264,6 +281,7 @@ class PartyLedgerModel extends Model
                 ->join('party_ledger as e', 'e.id', '=', 'a.entry_id')
                 ->whereIn('a.party_id', $partyIds)
                 ->whereNull('a.released_at')
+                ->when($except, fn ($q) => $q->where('a.entry_id', '!=', $except))
                 ->orderBy('e.txn_date')
                 ->orderBy('e.id')
                 ->orderBy('a.id')
@@ -274,7 +292,7 @@ class PartyLedgerModel extends Model
         $out = [];
 
         foreach ($entries as $partyId => $rows) {
-            $out[(int) $partyId] = self::settle($rows, $allocations[$partyId] ?? collect(), $chargeSide);
+            $out[(int) $partyId] = self::settle($rows, $allocations[$partyId] ?? collect(), $chargeSide, $cut);
         }
 
         return $out;
@@ -294,9 +312,17 @@ class PartyLedgerModel extends Model
      *
      * With nothing adjusted, 2 does nothing and this is exactly the rule there
      * was before.
+     *
+     * With $cut — [date, id] of a payment being adjusted again — only money
+     * that came in before it reaches 3; see bills().
      */
-    private static function settle($rows, $allocations, string $chargeSide): array
+    private static function settle($rows, $allocations, string $chargeSide, ?array $cut = null): array
     {
+        // In the ledger's own order: by date, then by id.
+        $counts = fn ($row) => $cut === null
+            || ($day = substr((string) $row->txn_date, 0, 10)) < $cut[0]
+            || ($day === $cut[0] && (int) $row->id < $cut[1]);
+
         /*
          * An entry taken back and the reversal that took it back are read as if
          * neither had happened: the two cancel exactly, so the balance is
@@ -320,6 +346,8 @@ class PartyLedgerModel extends Model
         $byFile = [];
         $files = [];
         $held = [];
+        // The payments whose leftover settles the oldest; all of them, unless cut.
+        $pooled = [];
         $pool = 0.0;
 
         $file = function (int $id) use (&$files) {
@@ -380,13 +408,23 @@ class PartyLedgerModel extends Model
                 $taken = $take($fileId, $amount);
                 $file($fileId);
                 $files[$fileId]['returned'] += $taken;
-                $pool += max(0, $amount - $taken);
+
+                if ($counts($row)) {
+                    $pool += max(0, $amount - $taken);
+                }
 
                 continue;
             }
 
             $held[(int) $row->id] = $amount;
+
+            if ($counts($row)) {
+                $pooled[(int) $row->id] = true;
+            }
         }
+
+        // What each payment's line on each file actually settles.
+        $took = [];
 
         foreach ($allocations as $allocation) {
             $entry = (int) $allocation->entry_id;
@@ -398,6 +436,7 @@ class PartyLedgerModel extends Model
 
             $taken = $take($fileId, min((float) $allocation->amount, $held[$entry]));
             $held[$entry] -= $taken;
+            $took[$entry][$fileId] = ($took[$entry][$fileId] ?? 0) + $taken;
 
             if ($taken > 0) {
                 $file($fileId);
@@ -413,7 +452,7 @@ class PartyLedgerModel extends Model
         }
 
         // Oldest first, which is the order they were read in.
-        $pool += array_sum(array_map(fn ($left) => max(0, $left), $held));
+        $pool += array_sum(array_map(fn ($left) => max(0, $left), array_intersect_key($held, $pooled)));
 
         foreach ($charges as $i => $charge) {
             if ($pool <= 0.005) {
@@ -448,6 +487,8 @@ class PartyLedgerModel extends Model
             // Each payment, and how much of it no adjustment has taken.
             'unadjusted' => array_map(fn ($left) => round(max(0, $left), 2), $held),
             'loose' => $loose,
+            // Each payment's lines, file by file, as far as they settle anything.
+            'took' => array_map(fn ($lines) => array_map(fn ($amount) => round($amount, 2), $lines), $took),
         ];
     }
 
