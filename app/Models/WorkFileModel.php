@@ -102,6 +102,12 @@ class WorkFileModel extends Model
           AND ppn.state = 'pending'
           AND ppnw.status NOT IN ('approval_done', 'paper_returned', 'cancelled'))";
 
+    /**
+     * How long a line on a file's history can be: work_file_status_log.remark is
+     * a varchar(255), counted in characters rather than bytes under utf8mb4.
+     */
+    public const REMARK_LIMIT = 255;
+
     public const IN_OFFICE = 'in_office';
 
     public const DISPATCHED = 'file_dispatch';
@@ -364,7 +370,23 @@ class WorkFileModel extends Model
         $log->work_file_item_id = $itemId;
         $log->from_status = $from;
         $log->to_status = $this->status;
-        $log->remark = $remark ?: null;
+        /*
+         * Never allowed to fail the save it is describing.
+         *
+         * The column is 255 characters. Remarks somebody types are held to
+         * less by the form that takes them, but a remark the application
+         * writes for itself is built from whatever the data happens to hold —
+         * and when one ran long, the database refused the line and took the
+         * operator's paper checklist down with it. Shortened here as a last
+         * resort, with an ellipsis so it reads as cut rather than as finished.
+         * papersRemark() should mean this never happens; this is what makes
+         * sure the next one cannot either.
+         */
+        $log->remark = ($remark === null || $remark === '')
+            ? null
+            : (mb_strlen($remark) > self::REMARK_LIMIT
+                ? rtrim(mb_substr($remark, 0, self::REMARK_LIMIT - 1)).'…'
+                : $remark);
         // Set only for something that happened without a move: a handover.
         $log->event = $event;
         $log->user_id = Auth::id();
@@ -865,28 +887,83 @@ class WorkFileModel extends Model
     /**
      * What a checklist save says on the file's history — and on the customer's.
      * Paper names only: the notes belong to their lines.
+     *
+     * Short enough to fit, always. It used to list every name, into a column of
+     * 255 characters, and a transfer with eleven papers still to come ran to
+     * nearly three hundred: the database refused the line, and the save it was
+     * describing went down with it. The checklist the office had just filled in
+     * was lost because the note about it ran long.
+     *
+     * So a list that will not fit names what it can and counts the rest — "and 8
+     * more" — trying a roomier version first and a tighter one only when it has
+     * to. The whole list is still one click away on the checklist itself, which
+     * is where anybody who needs all eleven names goes to read them.
      */
     private static function papersRemark(bool $firstLook, array $moved, array $stillPending): string
     {
-        $parts = [];
+        $build = function (int $room) use ($firstLook, $moved, $stillPending): string {
+            $parts = [];
 
-        if ($firstLook) {
-            $parts[] = 'Papers checked.';
+            if ($firstLook) {
+                $parts[] = 'Papers checked.';
+            }
+
+            if (! empty($moved['received']) && ! $firstLook) {
+                $parts[] = 'Received: '.self::listedWithin($moved['received'], $room).'.';
+            }
+
+            if (! empty($moved['not_needed']) && ! $firstLook) {
+                $parts[] = 'Not needed: '.self::listedWithin($moved['not_needed'], $room).'.';
+            }
+
+            $parts[] = $stillPending
+                ? 'Pending: '.self::listedWithin($stillPending, $room).'.'
+                : 'All papers received.';
+
+            return implode(' ', $parts);
+        };
+
+        // From roomiest to tightest in small steps, so the line keeps every name
+        // it has space for rather than jumping straight to a stub.
+        foreach (range(self::REMARK_LIMIT, 30, -15) as $room) {
+            $remark = $build($room);
+
+            if (mb_strlen($remark) <= self::REMARK_LIMIT) {
+                return $remark;
+            }
         }
 
-        if (! empty($moved['received']) && ! $firstLook) {
-            $parts[] = 'Received: '.implode(', ', $moved['received']).'.';
+        // Three long lists at once and still over: logStatus() has the last word.
+        return $remark;
+    }
+
+    /**
+     * As many of these names as fit in $room characters, and a count of the rest.
+     *
+     * Always at least one name, so a line never reads "Pending: and 11 more".
+     * In the order given, which is the checklist's own order — the first names
+     * on it are the ones the office looks for first.
+     */
+    private static function listedWithin(array $names, int $room): string
+    {
+        $names = array_values($names);
+        $shown = [];
+
+        foreach ($names as $i => $name) {
+            $left = count($names) - $i - 1;
+            $tail = $left ? ' and '.$left.' more' : '';
+            $trying = implode(', ', [...$shown, $name]);
+
+            if ($shown && mb_strlen($trying.$tail) > $room) {
+                break;
+            }
+
+            $shown[] = $name;
         }
 
-        if (! empty($moved['not_needed']) && ! $firstLook) {
-            $parts[] = 'Not needed: '.implode(', ', $moved['not_needed']).'.';
-        }
+        $more = count($names) - count($shown);
 
-        $parts[] = $stillPending
-            ? 'Pending: '.implode(', ', $stillPending).'.'
-            : 'All papers received.';
-
-        return implode(' ', $parts);
+        return implode(', ', $shown).($more ? ' and '.$more.' more' : '');
     }
 
     // ------------------------------------------------------------- handing over
