@@ -16,6 +16,17 @@
             .grid__pages {
                 display: none !important;
             }
+
+            /*
+             * The office's own notes under Particulars — why an entry was
+             * reversed — and the Change buttons. Found in review: the grid's
+             * exports left them out but the browser's print did not, and a
+             * printed statement is the one handed over the counter.
+             */
+            .party-statement .grid__cellnote,
+            .party-statement .grid__action {
+                display: none !important;
+            }
         }
     </style>
 @endsection
@@ -83,15 +94,9 @@
                             </div>
                         </form>
 
-                        @if ($errors->any())
-                            <div class="alert alert-danger">
-                                <ul class="mb-0 ps-3">
-                                    @foreach ($errors->all() as $error)
-                                        <li>{{ $error }}</li>
-                                    @endforeach
-                                </ul>
-                            </div>
-                        @endif
+                        {{-- The shared messages: a filter refused, and now an entry
+                             reversed from the Change dialog, or why it could not be. --}}
+                        @include('admin.party._alerts')
 
                         {{-- Opening and closing stay outside the table: the Balance
                              column starts from the opening figure and the table can

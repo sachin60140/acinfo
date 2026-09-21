@@ -1261,6 +1261,7 @@
             "todayLabel": "string"
         },
         "vue-party-statement": {
+            "action": "string",
             "columns": [
                 "id:text",
                 "txn_date:text",
@@ -1269,37 +1270,46 @@
                 "ref_no:link",
                 "debit:money",
                 "credit:money",
-                "balance:balance"
+                "balance:balance",
+                "change:action:no-export:no-sort"
             ],
+            "csrf": "string",
             "emptyText": "string",
             "lead": {
                 "list_of": {
                     "against": "null",
                     "balance": "number",
+                    "change": "null",
                     "credit": "null",
                     "debit": "null",
                     "id": "null",
+                    "office_note": "null",
                     "particular": "string",
                     "payment_mode": "null",
                     "ref_no": "null",
                     "ref_url": "null",
                     "remarks": "null",
+                    "row_state": "null",
                     "txn_date": "string"
                 }
             },
             "perPage": "number",
+            "rowClass": "string",
             "rows": {
                 "list_of": {
                     "against": "null",
                     "balance": "number",
+                    "change": "null",
                     "credit": "null",
                     "debit": "number",
                     "id": "number",
+                    "office_note": "null",
                     "particular": "string",
                     "payment_mode": "string",
                     "ref_no": "string",
                     "ref_url": "string",
                     "remarks": "null",
+                    "row_state": "null",
                     "txn_date": "string"
                 }
             },
@@ -1308,14 +1318,17 @@
                 "list_of": {
                     "against": "null",
                     "balance": "number",
+                    "change": "null",
                     "credit": "number",
                     "debit": "number",
                     "id": "null",
+                    "office_note": "null",
                     "particular": "string",
                     "payment_mode": "null",
                     "ref_no": "null",
                     "ref_url": "null",
                     "remarks": "null",
+                    "row_state": "null",
                     "txn_date": "string"
                 }
             },

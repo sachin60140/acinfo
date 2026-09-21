@@ -832,8 +832,10 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                      link that goes nowhere cannot be middle-clicked,
                                      bookmarked or opened in a tab the way its
                                      appearance promises. -->
+                                <!-- onlyIf: offered only on the rows that name it — a statement
+                                     can take back an entry typed by hand, not one a file wrote. -->
                                 <button
-                                    v-else-if="column.type === 'action'"
+                                    v-else-if="column.type === 'action' && (! column.onlyIf || row[column.onlyIf])"
                                     type="button"
                                     class="ui-btn ui-btn--sm"
                                     @click="emit('action', row, column)">
@@ -845,7 +847,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                 <!-- What else the cell has to say. The note is a
                                      statement, the sub may be a link: an attachment
                                      is worth naming and worth opening. -->
-                                <div v-if="column.note && row[column.note]" class="ui-sub">
+                                <div v-if="column.note && row[column.note]" class="ui-sub grid__cellnote">
                                     {{ row[column.note] }}
                                 </div>
 

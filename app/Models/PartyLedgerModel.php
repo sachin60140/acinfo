@@ -166,6 +166,23 @@ class PartyLedgerModel extends Model
     }
 
     /**
+     * Whether an entry can be reversed yet: its columns arrive with a
+     * migration, as the allocation table does.
+     */
+    public static function reversible(): bool
+    {
+        static $known = null;
+
+        return $known ??= self::adjustable() && Schema::hasColumn('party_ledger', 'reverses_id');
+    }
+
+    /** The kind a reversal row is, in entry_kind. */
+    public const REVERSAL = 'reversal';
+
+    /** The payment mode a reversal is written with. */
+    public const REVERSAL_MODE = 'Reversal';
+
+    /**
      * What is still owed, file by file.
      *
      * A payment the office adjusted against files settles those files first —
@@ -235,7 +252,10 @@ class PartyLedgerModel extends Model
             ->whereIn('party_id', $partyIds)
             ->orderBy('txn_date')
             ->orderBy('id')
-            ->get(['id', 'party_id', 'work_file_id', 'entry_type', 'amount'])
+            ->get(array_merge(
+                ['id', 'party_id', 'work_file_id', 'entry_type', 'amount'],
+                self::reversible() ? ['reverses_id'] : []
+            ))
             ->groupBy('party_id');
 
         // In the order the payments were made, then the order they were adjusted.
@@ -277,6 +297,21 @@ class PartyLedgerModel extends Model
      */
     private static function settle($rows, $allocations, string $chargeSide): array
     {
+        /*
+         * An entry taken back and the reversal that took it back are read as if
+         * neither had happened: the two cancel exactly, so the balance is
+         * unmoved either way, and a reversed receipt must not go on settling
+         * files — nor a reversed charge go on being owed.
+         */
+        $paired = [];
+
+        foreach ($rows as $row) {
+            if (! empty($row->reverses_id)) {
+                $paired[(int) $row->id] = true;
+                $paired[(int) $row->reverses_id] = true;
+            }
+        }
+
         $charges = [];
         // Where each file's charges sit in the queue, so taking from one file
         // looks at that file's charges and not the party's whole history.
@@ -311,6 +346,10 @@ class PartyLedgerModel extends Model
         };
 
         foreach ($rows as $row) {
+            if (isset($paired[(int) $row->id])) {
+                continue;
+            }
+
             $amount = (float) $row->amount;
             $fileId = $row->work_file_id ? (int) $row->work_file_id : null;
 
