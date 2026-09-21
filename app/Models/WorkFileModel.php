@@ -3670,6 +3670,28 @@ class WorkFileModel extends Model
                 DB::raw(($isVendor ? 'vendor.mobile' : 'customer.mobile').' as party_mobile')
             );
 
+        // The status and the period narrow both halves of a vendor report the
+        // same way, so they are said once.
+        $narrow = function ($q) use ($status, $from, $to) {
+            if ($status === 'open') {
+                $q->whereIn('work_file.status', self::OPEN_STATUSES);
+            } elseif ($status && array_key_exists($status, self::STATUSES)) {
+                $q->where('work_file.status', $status);
+            }
+
+            if ($from) {
+                $q->whereDate('work_file.received_date', '>=', $from);
+            }
+
+            if ($to) {
+                $q->whereDate('work_file.received_date', '<=', $to);
+            }
+        };
+
+        // Copied before the folder's own vendor is asked about, because a
+        // folder split between two vendors has none.
+        $split = $isVendor ? clone $query : null;
+
         if ($isVendor) {
             $query->whereNotNull('work_file.vendor_id');
         }
@@ -3678,25 +3700,192 @@ class WorkFileModel extends Model
             $query->where($isVendor ? 'work_file.vendor_id' : 'work_file.customer_id', $partyId);
         }
 
-        if ($status === 'open') {
-            $query->whereIn('work_file.status', self::OPEN_STATUSES);
-        } elseif ($status && array_key_exists($status, self::STATUSES)) {
-            $query->where('work_file.status', $status);
-        }
+        $narrow($query);
 
-        if ($from) {
-            $query->whereDate('work_file.received_date', '>=', $from);
-        }
-
-        if ($to) {
-            $query->whereDate('work_file.received_date', '<=', $to);
-        }
-
-        return $query
+        $rows = $query
             ->orderBy('party_name', 'asc')
             ->orderBy('work_file.received_date', 'asc')
             ->orderBy('work_file.id', 'asc')
             ->get();
+
+        if (! $isVendor) {
+            return $rows;
+        }
+
+        /*
+         * And the folders split between vendors, which the query above cannot
+         * see.
+         *
+         * It asks for work_file.vendor_id, and a folder whose works went to two
+         * agents has none of its own — roll-up clears it rather than name one
+         * and put the other's work on his statement. So a vendor holding one
+         * work of a split folder was missing it from their list here, and from
+         * the list the office now sends them on WhatsApp.
+         *
+         * Each such folder is drawn once under every vendor holding any of it,
+         * showing only that vendor's works. Folders with one vendor are left
+         * exactly as they were.
+         */
+        $split->whereNull('work_file.vendor_id')
+            ->whereExists(fn ($q) => $q->select(DB::raw(1))
+                ->from('work_file_item')
+                ->whereColumn('work_file_item.work_file_id', 'work_file.id')
+                ->whereNotNull('work_file_item.vendor_id')
+                ->where('work_file_item.status', '<>', self::CANCELLED));
+
+        $narrow($split);
+
+        $shares = self::splitByVendor($split->get(), $partyId);
+
+        // Nothing split, nothing to change: the report is what it always was.
+        if ($shares->isEmpty()) {
+            return $rows;
+        }
+
+        /*
+         * Back into the order the query gave, which is what groups the bands.
+         * Names compared without case, as the database's collation compares
+         * them — compared byte by byte, "suman" and "Test" would swap and every
+         * existing band after them would move.
+         */
+        return $rows->concat($shares)
+            ->sort(fn ($a, $b) => [mb_strtolower((string) $a->party_name), $a->received_date, $a->id]
+                <=> [mb_strtolower((string) $b->party_name), $b->received_date, $b->id])
+            ->values();
+    }
+
+    /**
+     * A split folder, as one report row per vendor holding any of it.
+     *
+     * Each row is the folder with its money narrowed to that vendor's works:
+     * what the customer is charged for them, what that vendor is owed for them,
+     * the day the first of them went out. Summed, the rows come to the folder's
+     * works once, which is what keeps a report total from counting a split
+     * folder twice.
+     *
+     * The office's own expenses belong to the file and not to either vendor,
+     * so they are shared in proportion to each vendor's charge; so are any
+     * refund and any amount a vendor returned. The last share takes the
+     * rounding, so the shares always add up to the paisa.
+     *
+     * Each row carries the ids of its works, so the screen shows and moves
+     * those and not the whole folder's.
+     *
+     * @param  \Illuminate\Support\Collection  $folders  rows from report()'s own select
+     */
+    private static function splitByVendor($folders, $onlyVendor = null)
+    {
+        if ($folders->isEmpty()) {
+            return collect();
+        }
+
+        $works = DB::table('work_file_item as i')
+            ->join('work_type as t', 't.id', '=', 'i.work_type_id')
+            ->join('party as v', 'v.id', '=', 'i.vendor_id')
+            ->whereIn('i.work_file_id', $folders->pluck('id')->all())
+            ->whereNotNull('i.vendor_id')
+            ->where('i.status', '<>', self::CANCELLED)
+            ->orderBy('i.id')
+            ->get([
+                'i.id', 'i.work_file_id', 'i.vendor_id', 'i.customer_amount', 'i.vendor_amount',
+                'i.vendor_date', 'i.vendor_returned_on',
+                't.name as work', 'v.name as vendor_name', 'v.mobile as vendor_mobile',
+            ])
+            ->groupBy('work_file_id');
+
+        $out = collect();
+
+        foreach ($folders as $folder) {
+            $byVendor = ($works[$folder->id] ?? collect())->groupBy('vendor_id');
+
+            if ($byVendor->isEmpty()) {
+                continue;
+            }
+
+            // Each vendor's weight is what the customer is charged for their works.
+            $weights = $byVendor->map(fn ($mine) => $mine->sum(fn ($w) => (float) $w->customer_amount))->all();
+
+            $expenses = self::apportion((float) ($folder->expenses ?? 0), $weights);
+            $refund = $folder->returned_amount === null ? null : self::apportion((float) $folder->returned_amount, $weights);
+            $sentBack = $folder->vendor_returned_amount === null ? null : self::apportion((float) $folder->vendor_returned_amount, $weights);
+
+            foreach ($byVendor as $vendorId => $mine) {
+                if ($onlyVendor && (int) $vendorId !== (int) $onlyVendor) {
+                    continue;
+                }
+
+                $first = $mine->first();
+                $priced = $mine->filter(fn ($w) => $w->vendor_amount !== null);
+
+                $row = clone $folder;
+
+                $row->vendor_id = (int) $vendorId;
+                $row->vendor_name = $first->vendor_name;
+                $row->party_id = (int) $vendorId;
+                $row->party_name = $first->vendor_name;
+                $row->party_mobile = $first->vendor_mobile;
+
+                $row->customer_amount = round($mine->sum(fn ($w) => (float) $w->customer_amount), 2);
+                $row->vendor_amount = $priced->isEmpty() ? null : round($priced->sum(fn ($w) => (float) $w->vendor_amount), 2);
+
+                // Out since the first of these went; back once all of them are.
+                $row->vendor_date = $mine->pluck('vendor_date')->filter()->min();
+                $row->vendor_returned_on = $mine->contains(fn ($w) => ! $w->vendor_returned_on)
+                    ? null
+                    : $mine->pluck('vendor_returned_on')->filter()->max();
+
+                $row->work_type = $mine->pluck('work')->filter()->implode(', ');
+
+                // So awaitingPrice() asks about these works, not the whole folder's.
+                $row->unpriced_works = $mine->filter(fn ($w) => $w->vendor_amount === null || (float) $w->vendor_amount <= 0)->count();
+                $row->unbilled_works = $mine->filter(fn ($w) => $w->customer_amount === null || (float) $w->customer_amount <= 0)->count();
+
+                $row->expenses = $expenses[$vendorId];
+                $row->returned_amount = $refund === null ? null : $refund[$vendorId];
+                $row->vendor_returned_amount = $sentBack === null ? null : $sentBack[$vendorId];
+
+                $row->split_item_ids = $mine->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+                $out->push($row);
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * A total shared out in proportion to some weights, to the paisa.
+     *
+     * Every share but the last is rounded; the last is whatever is left, so
+     * the shares always add back up to exactly the total. Equal shares when
+     * nothing has any weight at all, rather than dividing by nothing.
+     *
+     * @param  array<int|string, float>  $weights
+     * @return array<int|string, float>
+     */
+    private static function apportion(float $total, array $weights): array
+    {
+        $keys = array_keys($weights);
+        $sum = array_sum($weights);
+        $out = [];
+        $given = 0.0;
+
+        foreach ($keys as $n => $key) {
+            if ($n === count($keys) - 1) {
+                $out[$key] = round($total - $given, 2);
+
+                break;
+            }
+
+            $share = $sum > 0
+                ? round($total * $weights[$key] / $sum, 2)
+                : round($total / count($keys), 2);
+
+            $out[$key] = $share;
+            $given += $share;
+        }
+
+        return $out;
     }
 
     /**
