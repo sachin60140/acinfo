@@ -195,8 +195,13 @@ export function useAdjust(options) {
 
     const isCovered = (bill) => Number(bill.due) <= 0.005;
 
-    // How many are hidden by default; the toggle appears only when there are some.
-    const coveredCount = computed(() => bills.value.filter(isCovered).length);
+    /*
+     * How many the toggle would add; it appears only when there are some. Not
+     * the covered files already drawn because they hold an amount. Found in
+     * review: on the Adjust screen, where a payment's own lines are drawn from
+     * the start, "Also show 1 file" was ticked and showed nothing new.
+     */
+    const coveredCount = computed(() => bills.value.filter((bill) => isCovered(bill) && ! pinned.value.has(String(bill.id))).length);
 
     const visibleBills = computed(() =>
         bills.value.filter((bill) => showCovered.value || ! isCovered(bill) || pinned.value.has(String(bill.id)))

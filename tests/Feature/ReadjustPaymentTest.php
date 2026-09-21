@@ -9,6 +9,7 @@ use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
@@ -311,7 +312,124 @@ class ReadjustPaymentTest extends TestCase
         $this->assertSame([], $this->owed());
     }
 
+    /** Raised on a file it is on already: up to all that is open with its own line left out. */
+    public function test_a_line_it_has_may_be_raised_to_all_that_is_open_without_it(): void
+    {
+        $file = $this->file(3000, '2026-08-01');
+        $entry = $this->pay(3000, [$file->id => 1000]);
+
+        // Counting its own 1,000, only 2,000 would be open.
+        $this->adjust($entry, [$file->id => 3000])->assertSessionHasNoErrors()->assertSessionHas('success');
+
+        $this->assertSame([$file->id => 3000.0], $this->live($entry));
+    }
+
+    /** Lowered on a file cancelled since: allowed, as keeping it is. */
+    public function test_a_line_on_a_file_cancelled_since_may_be_lowered(): void
+    {
+        $cancelled = $this->file(5000, '2026-08-01');
+        $entry = $this->pay(5000, [$cancelled->id => 5000]);
+
+        $cancelled->status = WorkFileModel::CANCELLED;
+        $cancelled->save();
+        $cancelled->items()->update(['status' => WorkFileModel::CANCELLED]);
+        $cancelled->syncLedger();
+
+        $this->adjust($entry, [$cancelled->id => 2000])->assertSessionHasNoErrors()->assertSessionHas('success');
+
+        $this->assertSame([$cancelled->id => 2000.0], $this->live($entry));
+    }
+
+    /** A file whose charge was given back: the line is kept, and said to settle nothing. */
+    public function test_a_line_on_a_file_whose_charge_was_given_back_says_it_settles_nothing(): void
+    {
+        $file = $this->file(3000, '2026-08-01');
+        $entry = $this->pay(3000, [$file->id => 3000]);
+
+        $file->status = WorkFileModel::RETURNED;
+        $file->returned_on = now()->toDateString();
+        $file->save();
+        $file->items()->update(['status' => WorkFileModel::RETURNED]);
+        $file->fresh()->syncLedger();
+
+        $bill = PartyLedgerModel::bills($this->customer->id, 'debit', $entry->id)['files'][$file->id];
+        $this->assertEqualsWithDelta($bill['charged'], $bill['returned'], 0.005, 'the premise: the whole charge given back');
+
+        $why = collect($this->actingAs($this->admin)->getJson(route('party.adjust', $entry->id))->json('props.currentLines'))
+            ->keyBy('id')[$file->id]['why'];
+
+        $this->assertStringContainsString('Its charge was given back', $why);
+        $this->assertStringContainsString('settles nothing', $why);
+    }
+
+    /** One save, one moment: the note says what it was for even when a save crosses a second. */
+    public function test_a_save_that_crosses_a_second_still_says_what_it_was_for(): void
+    {
+        $first = $this->file(3000, '2026-08-01');
+        $second = $this->file(3000, '2026-08-02');
+        $entry = $this->pay(3000, [$first->id => 3000]);
+        $drawn = $this->drawn($entry);
+
+        // An hour on, and every reading of the clock a second after the last.
+        $clock = now()->addHour();
+        Carbon::setTestNow(function () use (&$clock) {
+            return $clock = $clock->copy()->addSecond();
+        });
+
+        try {
+            $this->adjust($entry, [$second->id => 3000], $drawn)->assertSessionHas('success');
+        } finally {
+            Carbon::setTestNow();
+        }
+
+        $history = $this->actingAs($this->admin)->getJson(route('party.adjust', $entry->id))->json('props.history');
+
+        $this->assertStringContainsString('was '.$first->file_no, $history);
+    }
+
     // --------------------------------------------------------- a page left open
+
+    /** Reversed in another tab after its Adjust page was opened: the save is refused, and says why. */
+    public function test_a_payment_reversed_after_its_page_was_opened_is_refused_on_save(): void
+    {
+        $file = $this->file(3000, '2026-08-01');
+        $entry = $this->pay(3000);
+        $drawn = $this->drawn($entry);
+
+        $this->assertNotNull($drawn);
+        $this->actingAs($this->admin)->post(route('party.reverse', $entry->id), ['reason' => 'Duplicate'])->assertSessionHas('success');
+
+        $this->adjust($entry, [$file->id => 3000], $drawn)->assertSessionHasErrors('alloc');
+
+        $this->assertStringContainsString('has been reversed', session('errors')->first('alloc'));
+        $this->assertSame(0, DB::table('party_ledger_allocation')->where('entry_id', $entry->id)->count());
+    }
+
+    /** A refused save keeps the page it came from, so the next try cannot pass over a colleague's change. */
+    public function test_a_refused_save_keeps_the_fingerprint_of_the_page_it_came_from(): void
+    {
+        $a = $this->file(3000, '2026-08-01');
+        $b = $this->file(3000, '2026-08-02');
+        $entry = $this->pay(3000);
+        $drawn = $this->drawn($entry);
+
+        // Refused: more than the payment.
+        $this->adjust($entry, [$a->id => 3000, $b->id => 3000], $drawn)->assertSessionHasErrors('alloc');
+
+        // A colleague puts it on A meanwhile.
+        DB::table('party_ledger_allocation')->insert([
+            'entry_id' => $entry->id, 'party_id' => $this->customer->id, 'work_file_id' => $a->id,
+            'amount' => 3000, 'created_by' => $this->admin->id, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        // The page comes back with what was typed, and the fingerprint it was drawn from.
+        $again = $this->actingAs($this->admin)->getJson(route('party.adjust', $entry->id))->json('props.drawn');
+        $this->assertSame($drawn, $again);
+
+        $this->adjust($entry, [$b->id => 3000], $again)->assertSessionHasErrors('alloc');
+        $this->assertStringContainsString('Someone changed', session('errors')->first('alloc'));
+        $this->assertSame([$a->id => 3000.0], $this->live($entry));
+    }
 
     /** A page left open does not let go of what a colleague has put the payment against since. */
     public function test_a_page_left_open_is_refused_rather_than_overwrite_a_colleagues_change(): void
@@ -440,8 +558,10 @@ class ReadjustPaymentTest extends TestCase
             $this->actingAs($this->admin)->get(route('party.adjust', $entry->id))
                 ->assertRedirect(route('party.statement', $this->customer->id));
 
-            $this->adjust($entry, [$file->id => 100])->assertSessionHasErrors('alloc');
+            // With the fingerprint of a payment with no lines, so only the refusal can stop it.
+            $this->adjust($entry, [$file->id => 100], sha1(json_encode([])))->assertSessionHasErrors('alloc');
 
+            $this->assertStringNotContainsString('Someone changed', session('errors')->first('alloc'), "$what was refused as a stale page");
             $this->assertSame(0, DB::table('party_ledger_allocation')->where('entry_id', $entry->id)->count(), "$what was adjusted");
         }
     }
@@ -461,6 +581,40 @@ class ReadjustPaymentTest extends TestCase
         $this->adjust($entry, [$newer->id => 800])->assertSessionHas('success');
 
         $this->assertSame([$older->id => 1200.0], $this->owed($vendor, 'credit'));
+
+        // Offered on the office's payment to them, not on a bill of theirs typed by hand.
+        $bill = new PartyLedgerModel;
+        $bill->party_id = $vendor->id;
+        $bill->txn_date = '2026-09-10';
+        $bill->entry_type = 'credit';
+        $bill->amount = 300;
+        $bill->particular = 'Bill typed by hand';
+        $bill->save();
+
+        $rows = collect($this->actingAs($this->admin)->getJson(route('party.statement', $vendor->id))->json('props.rows'))->keyBy('id');
+
+        $this->assertSame(route('party.adjust', $entry->id), $rows[$entry->id]['adjust_url']);
+        $this->assertNull($rows[$bill->id]['adjust_url']);
+        $this->actingAs($this->admin)->get(route('party.adjust', $bill->id))->assertRedirect(route('party.statement', $vendor->id));
+    }
+
+    /** A vendor's file given to another vendor since: said as a vendor's, not a customer's. */
+    public function test_a_vendors_line_on_a_file_given_to_another_vendor_is_said_their_way(): void
+    {
+        $vendor = $this->party('vendor');
+        $other = $this->party('vendor');
+        $file = $this->file(3000, '2026-08-01', $vendor, 1200);
+        $entry = $this->pay(1200, [$file->id => 1200], $vendor);
+
+        $file->vendor_id = $other->id;
+        $file->save();
+        $file->items()->update(['vendor_id' => $other->id]);
+        $file->fresh()->syncLedger();
+
+        $why = collect($this->actingAs($this->admin)->getJson(route('party.adjust', $entry->id))->json('props.currentLines'))
+            ->keyBy('id')[$file->id]['why'];
+
+        $this->assertStringContainsString("No longer this vendor's", $why);
     }
 
     // -------------------------------------------------------------- screens
@@ -594,14 +748,29 @@ class ReadjustPaymentTest extends TestCase
             ->assertOk()->assertJsonPath('props.statementUrl', route('party.statement', $this->customer->id));
     }
 
+    /** Stopped by the admin area itself — with a real fingerprint, so nothing else could stop it. */
     public function test_nobody_signed_out_can_adjust(): void
     {
         $file = $this->file(3000, '2026-08-01');
         $entry = $this->pay(3000);
+        $drawn = $this->drawn($entry);
 
         auth()->logout();
 
-        $this->post(route('party.adjust', $entry->id), ['alloc' => $this->lines([$file->id => 3000])])->assertRedirect();
+        $this->get(route('party.adjust', $entry->id))->assertRedirect(url('/admin'));
+        $this->post(route('party.adjust', $entry->id), ['alloc' => $this->lines([$file->id => 3000]), 'drawn' => $drawn])
+            ->assertRedirect(url('/admin'));
+
         $this->assertSame([], $this->live($entry));
+    }
+
+    /** A period that is not a date — not even a string — is left behind, not an error page. */
+    public function test_a_period_that_is_not_a_date_is_left_behind(): void
+    {
+        $entry = $this->pay(3000);
+
+        $this->actingAs($this->admin)->getJson(route('party.adjust', $entry->id).'?from[]=2026-09-01&to=2026-09-30')
+            ->assertOk()
+            ->assertJsonPath('props.statementUrl', route('party.statement', ['id' => $this->customer->id, 'to' => '2026-09-30']));
     }
 }

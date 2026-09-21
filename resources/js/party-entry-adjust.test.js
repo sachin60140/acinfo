@@ -377,7 +377,8 @@ describe('an amount typed against a covered file', () => {
         await settle();
 
         // Narrowed, and the file holding an amount is still drawn and still sent.
-        expect(toggle().checked).toBe(false);
+        // (With nothing left to add, the toggle itself goes.)
+        expect(toggle()?.checked ?? false).toBe(false);
         expect(section(host).textContent).toContain('F-00070');
         expect(host.querySelector('input[name="alloc[70][amount]"]').value).toBe('3000');
     });
@@ -427,7 +428,7 @@ describe('the covered files after a refused save', () => {
         await settle();
 
         const toggle = host.querySelector('.adjust__toggle input');
-        if (toggle.checked) {
+        if (toggle?.checked) {
             toggle.click();
             await settle();
         }

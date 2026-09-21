@@ -244,7 +244,7 @@ class PartyLedgerModel extends Model
     public static function bills(int $partyId, string $chargeSide = 'debit', ?int $except = null): array
     {
         return self::settleAll([$partyId], $chargeSide, $except)[$partyId]
-            ?? ['files' => [], 'unadjusted' => [], 'loose' => []];
+            ?? ['files' => [], 'unadjusted' => [], 'loose' => [], 'took' => []];
     }
 
     /**
@@ -423,6 +423,9 @@ class PartyLedgerModel extends Model
             }
         }
 
+        // What each payment's line on each file actually settles.
+        $took = [];
+
         foreach ($allocations as $allocation) {
             $entry = (int) $allocation->entry_id;
             $fileId = (int) $allocation->work_file_id;
@@ -433,6 +436,7 @@ class PartyLedgerModel extends Model
 
             $taken = $take($fileId, min((float) $allocation->amount, $held[$entry]));
             $held[$entry] -= $taken;
+            $took[$entry][$fileId] = ($took[$entry][$fileId] ?? 0) + $taken;
 
             if ($taken > 0) {
                 $file($fileId);
@@ -483,6 +487,8 @@ class PartyLedgerModel extends Model
             // Each payment, and how much of it no adjustment has taken.
             'unadjusted' => array_map(fn ($left) => round(max(0, $left), 2), $held),
             'loose' => $loose,
+            // Each payment's lines, file by file, as far as they settle anything.
+            'took' => array_map(fn ($lines) => array_map(fn ($amount) => round($amount, 2), $lines), $took),
         ];
     }
 

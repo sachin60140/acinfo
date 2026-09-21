@@ -126,13 +126,15 @@ describe('when it can be saved', () => {
         expect(save(host).disabled).toBe(true);
     });
 
-    it('not when the files could not be loaded', async () => {
+    it('not when the files could not be loaded — and says so once, truly', async () => {
         reply = () => Promise.resolve({ ok: false, status: 500 });
         const host = mount({ current: {}, initialAlloc: { 57: '1000' } });
         await settle();
 
         expect(save(host).disabled).toBe(true);
-        expect(host.textContent).toContain('could not be loaded');
+        expect(host.textContent).toContain('nothing can be changed now');
+        expect(host.textContent).not.toContain('can still be saved');
+        expect(host.textContent.split('could not be loaded').length - 1).toBe(1);
     });
 
     it('not for more than the payment', async () => {
@@ -160,6 +162,24 @@ describe('when it can be saved', () => {
         expect(first.defaultPrevented).toBe(false);
         expect(second.defaultPrevented).toBe(true);
         expect(save(host).disabled).toBe(true);
+    });
+});
+
+describe('the covered files', () => {
+    it('offers no toggle for a covered file already drawn with its line', async () => {
+        const host = mount();
+        await settle();
+
+        expect(host.querySelector('.adjust__toggle')).toBe(null);
+    });
+
+    it('says a vendor payment is money paid, a customer\'s money received', async () => {
+        const vendor = mount({ current: {}, currentLines: [], initialAlloc: {}, entry: { id: 31, date: '10-09-2026', side: 'Dr', amount: 3000, mode: '', reference: '', particular: 'Paid' } });
+        const customer = mount({ current: {}, currentLines: [], initialAlloc: {} });
+        await settle();
+
+        expect(vendor.textContent).toContain('covered by money paid before this payment');
+        expect(customer.textContent).toContain('covered by money received before this payment');
     });
 });
 
@@ -211,6 +231,32 @@ describe('a line on a file no longer open', () => {
         await type(host, box('F-00099'), '600');
         expect(save(host).disabled).toBe(true);
         expect(host.textContent).toContain('can be kept or lowered, not raised');
+    });
+
+    it('Clear empties it too; Fill oldest first leaves it and does not give it twice', async () => {
+        const host = mount({
+            ...cancelled,
+            current: { 50: '2500.00', 99: '500.00' },
+            currentLines: [{ id: 50, fileNo: 'F-00050', vehicle: '', amount: 2500, why: null }, cancelled.currentLines[0]],
+            initialAlloc: { 50: '2500.00', 99: '500.00' },
+        });
+        await settle();
+
+        const button = (label) => [...host.querySelectorAll('button')].find((b) => b.textContent.trim().includes(label));
+
+        button('Fill oldest first').click();
+        await nextTick();
+
+        // 3,000 less the 500 kept goes on the one file still due.
+        expect(posted(host)['alloc[99][amount]']).toBe('500.00');
+        expect(posted(host)['alloc[57][amount]']).toBe('2500.00');
+        expect(host.textContent).not.toContain('more than the payment');
+
+        button('Clear').click();
+        await nextTick();
+
+        expect(posted(host)['alloc[99][amount]']).toBeUndefined();
+        expect(posted(host)['alloc[57][amount]']).toBeUndefined();
     });
 
     it('counts toward the payment, so the files cannot come to more than it', async () => {

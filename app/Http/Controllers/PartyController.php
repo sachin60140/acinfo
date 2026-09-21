@@ -610,9 +610,15 @@ class PartyController extends Controller
         }
     }
 
-    /** The lines, written against the payment. */
-    private static function allocate(int $entryId, int $partyId, Collection $lines): void
+    /**
+     * The lines, written against the payment, all stamped with one moment —
+     * the same one a re-adjustment lets the old lines go at, so the office
+     * note can tell what was let go by that save.
+     */
+    private static function allocate(int $entryId, int $partyId, Collection $lines, $at = null): void
     {
+        $at ??= now();
+
         foreach ($lines as $line) {
             DB::table('party_ledger_allocation')->insert([
                 'entry_id' => $entryId,
@@ -620,8 +626,8 @@ class PartyController extends Controller
                 'work_file_id' => $line['work_file_id'],
                 'amount' => $line['amount'],
                 'created_by' => Auth::id(),
-                'created_at' => now(),
-                'updated_at' => now(),
+                'created_at' => $at,
+                'updated_at' => $at,
             ]);
         }
     }
@@ -699,10 +705,11 @@ class PartyController extends Controller
      * because the customer is not told of it.
      *
      * @param  array<int, string|float>  $lines  file id => amount
+     * @param  Collection|null  $files  the files, when already read
      */
-    private static function linesText(array $lines): string
+    private static function linesText(array $lines, ?Collection $files = null): string
     {
-        $files = DB::table('work_file')->whereIn('id', array_keys($lines))->get(['id', 'file_no', 'registration_no'])->keyBy('id');
+        $files ??= DB::table('work_file')->whereIn('id', array_keys($lines))->get(['id', 'file_no', 'registration_no'])->keyBy('id');
 
         return implode(' · ', array_map(function ($fileId) use ($lines, $files) {
             $file = $files[$fileId] ?? null;
@@ -764,6 +771,13 @@ class PartyController extends Controller
         }, $events);
 
         $names = DB::table('users')->whereIn('id', array_filter(array_column($latest, 'by')))->pluck('name', 'id');
+
+        // Every file any of them was on, read once for the whole statement.
+        $files = DB::table('work_file')
+            ->whereIn('id', $rows->whereNotNull('released_at')->pluck('work_file_id')->unique()->all())
+            ->get(['id', 'file_no', 'registration_no'])
+            ->keyBy('id');
+
         $out = [];
 
         foreach ($latest as $entryId => $event) {
@@ -779,10 +793,44 @@ class PartyController extends Controller
             $who = $event['by'] && isset($names[$event['by']]) ? ' by '.$names[$event['by']] : '';
 
             $out[(int) $entryId] = 'Files changed '.date('d-m-Y', strtotime($event['at'])).$who
-                .' — was '.($was ? self::linesText($was) : 'on account');
+                .' — was '.($was ? self::linesText($was, $files) : 'on account');
         }
 
         return $out;
+    }
+
+    /**
+     * Why a payment's own line is drawn apart on the Adjust screen, or null
+     * when its file is open to it and drawn with the rest.
+     *
+     * @param  array<string, float>|null  $bill  the file as the Adjust screen reads it
+     * @param  float  $took  what the line settles now, in the ledger as it is
+     */
+    private static function keptWhy(?array $bill, float $amount, float $took, string $type): ?string
+    {
+        if (! $bill || $bill['charged'] <= 0.005) {
+            return $type === 'vendor'
+                ? "No longer this vendor's — cancelled, or given to another vendor. Kept for when it is theirs again; until then it counts as on account."
+                : 'Not charged to this customer now — cancelled, or given to another customer. Kept for when it is charged again; until then it counts as on account.';
+        }
+
+        if ($bill['open'] > 0.005) {
+            return null;
+        }
+
+        $cause = $bill['charged'] - $bill['returned'] <= 0.005
+            ? 'Its charge was given back.'
+            : ($bill['adjusted'] > 0.005 ? 'Other payments are adjusted against the rest of it.' : 'Nothing more is open on it.');
+
+        $money = fn ($value) => number_format($value, 2, '.', ',');
+
+        if ($took >= $amount - 0.005) {
+            return $cause.' This payment keeps its '.$money($amount).' on it.';
+        }
+
+        return $took <= 0.005
+            ? $cause.' This payment\'s '.$money($amount).' settles nothing on it now, and counts as on account.'
+            : $cause.' Only '.$money($took).' of this payment\'s '.$money($amount).' settles it now; the rest counts as on account.';
     }
 
     /**
@@ -798,7 +846,13 @@ class PartyController extends Controller
         $out = [];
 
         foreach (['from', 'to'] as $key) {
-            $value = (string) $req->query($key, '');
+            // from[]=… is not a date either, and is no reason for an error page.
+            $value = $req->query($key);
+
+            if (! is_string($value)) {
+                continue;
+            }
+
             $date = \DateTime::createFromFormat('!Y-m-d', $value);
 
             if ($date && $date->format('Y-m-d') === $value) {
@@ -881,12 +935,21 @@ class PartyController extends Controller
 
                 self::checkAgainstLedger((int) $entry->party_id, $type, $lines, (int) $entry->id, $live);
 
+                /*
+                 * One moment for the whole save. Found in review: stamped a
+                 * call at a time, a save that crossed a second let its old
+                 * lines go at one second and wrote the new ones at the next,
+                 * and the office note read "was on account" for a payment
+                 * that had been on a file.
+                 */
+                $at = now();
+
                 DB::table('party_ledger_allocation')
                     ->where('entry_id', $entry->id)
                     ->whereNull('released_at')
-                    ->update(['released_at' => now(), 'released_by' => Auth::id(), 'updated_at' => now()]);
+                    ->update(['released_at' => $at, 'released_by' => Auth::id(), 'updated_at' => $at]);
 
-                self::allocate((int) $entry->id, (int) $entry->party_id, $lines);
+                self::allocate((int) $entry->id, (int) $entry->party_id, $lines, $at);
 
                 return ['saved', $posted];
             });
@@ -921,20 +984,24 @@ class PartyController extends Controller
          * from here, to be kept, lowered or let go by the office and never by
          * the screen on its own.
          */
-        $bills = PartyLedgerModel::bills($party->id, $type === 'customer' ? 'debit' : 'credit', $entry->id)['files'];
+        $side = $type === 'customer' ? 'debit' : 'credit';
+        $bills = PartyLedgerModel::bills($party->id, $side, $entry->id)['files'];
         $files = DB::table('work_file')->whereIn('id', array_keys($live))->get(['id', 'file_no', 'registration_no'])->keyBy('id');
 
-        $currentLines = collect($live)->map(function ($amount, $fileId) use ($bills, $files, $label) {
-            $bill = $bills[$fileId] ?? null;
+        /*
+         * What each of its lines settles now. Found in review: a line on a file
+         * whose charge was given back was said to keep what it had, when it
+         * settled nothing and its money was on account.
+         */
+        $took = PartyLedgerModel::bills($party->id, $side)['took'][$entry->id] ?? [];
 
+        $currentLines = collect($live)->map(function ($amount, $fileId) use ($bills, $files, $type, $took) {
             return [
                 'id' => (int) $fileId,
                 'fileNo' => (string) ($files[$fileId]->file_no ?? 'File #'.$fileId),
                 'vehicle' => (string) ($files[$fileId]->registration_no ?? ''),
                 'amount' => (float) $amount,
-                'why' => ! $bill || $bill['charged'] <= 0.005
-                    ? 'Not charged to this '.strtolower($label).' now — cancelled, or moved. Kept for when it is charged again; until then it counts as on account.'
-                    : ($bill['open'] <= 0.005 ? 'The rest of this file is taken by other payments. This payment keeps what it has on it.' : null),
+                'why' => self::keptWhy($bills[$fileId] ?? null, (float) $amount, (float) ($took[$fileId] ?? 0), $type),
             ];
         })->values()->all();
 

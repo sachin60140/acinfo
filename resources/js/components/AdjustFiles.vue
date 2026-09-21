@@ -17,6 +17,8 @@ const props = defineProps({
     lead: { type: String, default: 'Leave these empty and the payment settles the oldest files first, as before.' },
     // What a covered file is covered by, as this screen can say it.
     coveredBy: { type: String, default: 'money on account' },
+    // What happens when the files cannot be fetched, as this screen can say it.
+    failedText: { type: String, default: 'The files could not be loaded. The payment can still be saved, on account.' },
 });
 
 // Taken apart once, so the template reads each as the ref it is.
@@ -62,7 +64,8 @@ const {
 
         <p class="ui-hint adjust__lead">{{ lead }}</p>
 
-        <label v-if="coveredCount > 0" class="adjust__toggle ui-hint">
+        <!-- Kept while ticked, so what was asked for can be put away again. -->
+        <label v-if="coveredCount > 0 || showCovered" class="adjust__toggle ui-hint">
             <input type="checkbox" v-model="showCovered">
             Also show {{ coveredCount }} {{ coveredCount === 1 ? 'file' : 'files' }} already covered by {{ coveredBy }}
         </label>
@@ -72,9 +75,7 @@ const {
         </div>
 
         <div v-if="billsState === 'loading'" class="ui-hint">Looking up {{ partyName }}'s files…</div>
-        <div v-else-if="billsState === 'failed'" class="ui-hint adjust__error">
-            The files could not be loaded. The payment can still be saved, on account.
-        </div>
+        <div v-else-if="billsState === 'failed'" class="ui-hint adjust__error">{{ failedText }}</div>
         <div v-else-if="!visibleBills.length && !keptRows.length" class="ui-hint">
             Nothing owed on {{ partyName }}'s files — the payment goes on account.
         </div>

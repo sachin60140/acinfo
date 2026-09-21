@@ -210,8 +210,10 @@ const blocked = computed(() => reason.value.trim() === '');
                                 rows="2"
                                 maxlength="255"
                                 required
-                                placeholder="e.g. Typed for the wrong customer"></textarea>
-                            <div class="ui-hint">Kept for the office. The customer sees only that the entry was reversed.</div>
+                                placeholder="e.g. Typed on the wrong account"></textarea>
+                            <!-- Said of either party: found in review saying "the
+                                 customer" on a vendor's statement. -->
+                            <div class="ui-hint">Kept for the office and never shown on the statement, which shows only that the entry was reversed.</div>
                         </div>
                     </div>
 
@@ -309,14 +311,21 @@ const blocked = computed(() => reason.value.trim() === '');
     padding: var(--s-4);
 }
 
+/* The button drops under the words on a phone rather than squeezing them to a
+   word a line. */
 .ps-dialog__adjust {
     align-items: center;
     border: 1px solid var(--n-200);
     border-radius: var(--r-md);
     display: flex;
+    flex-wrap: wrap;
     gap: var(--s-3);
     justify-content: space-between;
     padding: var(--s-2) var(--s-3);
+}
+
+.ps-dialog__adjust > div {
+    flex: 1 1 14rem;
 }
 
 .ps-dialog__entry {

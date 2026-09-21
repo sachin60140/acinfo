@@ -4,9 +4,9 @@
  *
  * The payment itself is shown and not editable: no money moves here, only
  * what it is adjusted against. The files are the party's as they stood when
- * it came in — every other payment's adjustments kept, only money received
- * before it counted as covering them — and start filled in with what it is
- * adjusted against now. See PartyLedgerModel::bills().
+ * it came in — every other payment's adjustments kept, only money from before
+ * it counted as covering them — and start filled in with what it is adjusted
+ * against now. See PartyLedgerModel::bills().
  */
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { money } from '../money';
@@ -63,11 +63,16 @@ const changed = computed(() => plain(adjust.alloc) !== plain(props.current));
  */
 const ready = computed(() => adjust.billsState.value === 'ready');
 
-const hint = computed(() => {
-    if (adjust.billsState.value === 'failed') {
-        return 'The files could not be loaded, so nothing can be changed. Try again in a moment.';
-    }
+// Said once, where the files would be.
+const failedText = 'The files could not be loaded, so nothing can be changed now. Try again in a moment.';
 
+/*
+ * The office pays a vendor and receives from a customer. Found in review: a
+ * vendor's payment was said to be covered by "money received".
+ */
+const coveredBy = computed(() => (props.entry.side === 'Dr' ? 'money paid before this payment' : 'money received before this payment'));
+
+const hint = computed(() => {
     if (! ready.value) {
         return '';
     }
@@ -165,7 +170,8 @@ const nowText = computed(() => (props.currentLines.length
                 :state="adjust"
                 title="Files this payment is for"
                 :optional="false"
-                covered-by="money received before this payment"
+                :covered-by="coveredBy"
+                :failed-text="failedText"
                 lead="Clear every box to put the whole payment on account; it then settles the oldest files first." />
 
             <div class="ui-card__foot" :class="{ 'ui-card__foot--dirty': changed }">
