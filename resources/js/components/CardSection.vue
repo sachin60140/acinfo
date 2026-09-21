@@ -83,6 +83,17 @@ function toggle() {
 }
 
 /*
+ * Opened by something else on the page — a button that says where the thing
+ * it points at is. For this visit only: what the reader chose to fold stays
+ * their choice the next time.
+ */
+function show() {
+    chosen.value = true;
+}
+
+defineExpose({ show });
+
+/*
  * A section forced open by an error stays open once the error is answered,
  * rather than folding itself away under the reader's hands.
  */

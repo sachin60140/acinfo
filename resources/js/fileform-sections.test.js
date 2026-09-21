@@ -153,6 +153,68 @@ describe('what a folded card says about itself', () => {
     });
 });
 
+/*
+ * On a file of several works the charge and the vendor's rate are each work's,
+ * and the figures at the top are their sums. Found in use: with the works
+ * folded away, the vendor's figure could not be typed into and nothing said
+ * where it could.
+ */
+describe('the totals at the top lead to the works', () => {
+    const TWO = {
+        values: { file_no: 'F-00061', status: 'in_office', work_type_id: 1, customer_id: 7, customer_amount: '7500', vendor_id: 3, vendor_amount: '4000' },
+        vendors: [{ id: 3, label: 'Parwez Ji Muzaffarpur' }],
+        items: [
+            { id: 11, work_type_id: 1, work_type: 'HPT', customer_amount: '5000', vendor_amount: '4000', has_vendor: true },
+            { id: 12, work_type_id: 2, work_type: 'TR', customer_amount: '2500', vendor_amount: null, has_vendor: true },
+        ],
+    };
+
+    const button = (host, label) => [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
+
+    beforeEach(() => {
+        localStorage.setItem('acinfo.section.file.works', 'shut');
+    });
+
+    it('opens the works and puts the cursor in the rate still to agree', async () => {
+        const host = mount(TWO);
+
+        expect(shut(host, 'Works on This File')).toBe(true);
+        expect(host.textContent).toContain('1 still without a rate');
+
+        await click(button(host, 'Set rates'));
+
+        expect(shut(host, 'Works on This File')).toBe(false);
+        expect(document.activeElement?.getAttribute('name')).toBe('items[12][vendor_amount]');
+    });
+
+    it('goes to the charges from the charge', async () => {
+        const host = mount(TWO);
+
+        await click([...host.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'Change per work')[0]);
+
+        expect(shut(host, 'Works on This File')).toBe(false);
+        expect(document.activeElement?.getAttribute('name')).toBe('items[11][customer_amount]');
+    });
+
+    it('leaves the fold the reader chose for their next visit', async () => {
+        const host = mount(TWO);
+
+        await click(button(host, 'Set rates'));
+
+        expect(localStorage.getItem('acinfo.section.file.works')).toBe('shut');
+    });
+
+    it('does not count a work the office is doing itself as still without a rate', () => {
+        const host = mount({
+            ...TWO,
+            items: [TWO.items[0], { ...TWO.items[1], has_vendor: false, in_house: true }],
+        });
+
+        expect(host.textContent).not.toContain('still without a rate');
+        expect(button(host, 'Set rates')).toBeUndefined();
+    });
+});
+
 describe('a folded card still posts', () => {
     it('keeps an expense on the form after it is folded away', async () => {
         const host = mount({ expenses: [EXPENSE] });
