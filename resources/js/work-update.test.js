@@ -438,6 +438,44 @@ describe('after a save the server refused', () => {
         expect(field('remarks[11]').value).toBe('Called the RTO');
     });
 
+    /*
+     * Found in review: the dialog said everything had been put back while it
+     * had rightly held back a status, and the reason for the refusal was on
+     * the page behind its backdrop. Both are said in the dialog now.
+     */
+    it('says why the save was refused, and which choice it held back', async () => {
+        mount({
+            restore: {
+                statuses: { 11: 'cancelled' },
+                was: { 11: 'in_office' },
+                remarks: { 11: 'Buyer backed out' },
+                approved_on: {},
+                reason: 'Nothing was saved: this work has changed since the page was opened. Reload the page to see where it stands now, then try again: F-00044 · HPA (now File Dispatch)',
+            },
+        });
+        await settle();
+
+        const text = panel().textContent;
+
+        expect(panel().querySelector('.wu__refused').textContent).toContain('Nothing was saved');
+        expect(text).toContain('This work is now File Dispatch');
+        expect(text).toContain('your choice of Cancelled was not put back');
+        expect(text).toContain('Some of what you typed has been put back');
+        expect(text).not.toContain('What you typed has been put back');
+        expect(field('statuses[11]').value).toBe('file_dispatch');
+    });
+
+    it('says nothing was held back when nothing was', async () => {
+        mount({
+            restore: { statuses: { 11: 'under_verification' }, was: { 11: 'file_dispatch' }, remarks: {}, approved_on: {}, reason: '' },
+        });
+        await settle();
+
+        expect(panel().textContent).toContain('What you typed has been put back');
+        expect(panel().querySelector('.wu__withheld')).toBe(null);
+        expect(panel().querySelector('.wu__refused')).toBe(null);
+    });
+
     it('puts it back once, not every time the dialog is opened', async () => {
         const host = mount({
             restore: { statuses: { 11: 'file_dispatch' }, was: { 11: 'file_dispatch' }, remarks: { 11: 'Once only' }, approved_on: {} },

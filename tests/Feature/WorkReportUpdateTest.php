@@ -252,6 +252,9 @@ class WorkReportUpdateTest extends TestCase
         $this->assertSame('approval_done', $restore['statuses'][$item->id]);
         $this->assertSame('in_office', $restore['was'][$item->id]);
         $this->assertSame('RTO approved it today', $restore['remarks'][$item->id]);
+
+        // And why, for the dialog to say: the page's own message is behind it.
+        $this->assertStringContainsString('Approval Done needs a screenshot', $restore['reason']);
     }
 
     public function test_a_report_drawn_fresh_has_nothing_to_put_back(): void

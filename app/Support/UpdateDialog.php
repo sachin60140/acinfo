@@ -14,7 +14,7 @@ namespace App\Support;
  */
 class UpdateDialog
 {
-    /** @return array{statuses: array, was: array, remarks: array, approved_on: array}|null */
+    /** @return array{statuses: array, was: array, remarks: array, approved_on: array, reason: string}|null */
     public static function restore(): ?array
     {
         $statuses = old('statuses');
@@ -23,11 +23,25 @@ class UpdateDialog
             return null;
         }
 
+        /*
+         * And why it was refused. The page shows that above the report, but
+         * the dialog opens over the page with its backdrop across it — so the
+         * reason has to be in the dialog, or the reader is handed their typing
+         * back with no word of what to change.
+         */
+        $errors = session('errors');
+
+        $reason = trim(implode(' ', array_filter([
+            (string) session('error'),
+            ...($errors ? $errors->all() : []),
+        ])));
+
         return [
             'statuses' => $statuses,
             'was' => (array) old('was', []),
             'remarks' => (array) old('remarks', []),
             'approved_on' => (array) old('approved_on', []),
+            'reason' => $reason,
         ];
     }
 }
