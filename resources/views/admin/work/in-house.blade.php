@@ -41,11 +41,6 @@
                             on {{ $totals['files'] }} {{ Str::plural('file', $totals['files']) }}, oldest first
                         </div>
                     </div>
-
-                    {{-- Where the work on this list is moved along; nothing is done from here. --}}
-                    <a href="{{ route('workfile.status') }}" class="btn btn-outline-primary btn-sm">
-                        <i class="bi bi-flag"></i> Update Status
-                    </a>
                 </div>
 
                 <div class="inhouse-summary">

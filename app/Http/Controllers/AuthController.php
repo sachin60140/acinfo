@@ -188,6 +188,31 @@ class AuthController extends Controller
         }
 
         /*
+         * Work the office is doing itself.
+         *
+         * Beside With Vendors because it is the other half of the same
+         * question — who is doing this work, and how long has it waited — and
+         * without it the office's own jobs were the one pile of work the
+         * dashboard never mentioned.
+         */
+        $inHouse = WorkFileModel::inHouseWork();
+
+        if ($inHouse->isNotEmpty()) {
+            $oldest = (int) $inHouse->max('days');
+
+            $tiles[] = [
+                'group' => 'Work',
+                'label' => 'In-house Work',
+                'value' => $inHouse->count(),
+                'type' => 'count',
+                'note' => $oldest === 0
+                    ? 'all received today'
+                    : 'oldest waiting '.$oldest.' '.Str::plural('day', $oldest),
+                'href' => route('workfile.inhouse'),
+            ];
+        }
+
+        /*
          * Work that is through and still on the shelf.
          *
          * Finished, charged for, and not yet collected — money the office has
