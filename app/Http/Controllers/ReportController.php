@@ -530,6 +530,8 @@ class ReportController extends Controller
             'approvedKey' => WorkFileModel::APPROVED,
             'reasonKeys' => [WorkFileModel::CANCELLED, WorkFileModel::RETURNED],
             'today' => now()->toDateString(),
+            // What a refused save held, so the dialog opens again with it.
+            'restore' => \App\Support\UpdateDialog::restore(),
 
             /*
              * Which report this is, because only the vendor-wise one offers to

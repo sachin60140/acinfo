@@ -9,7 +9,7 @@
  * prop does, and VueMountTest is what says so rather than a silently dropped
  * feature.
  */
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import DataGrid from './DataGrid.vue';
 import { vendorFilesMessage } from '../vendorShare';
 import { copyText, whatsappNumber, whatsappUrl } from '../whatsapp';
@@ -51,6 +51,8 @@ const props = defineProps({
     cancelledKey: { type: String, default: 'cancelled' },
     reasonKeys: { type: Array, default: () => [] },
     today: { type: String, default: '' },
+    // What a refused save held, to be put back; see WorkUpdateDialog.
+    restore: { type: Object, default: null },
 });
 
 // Split once, so the grid is handed its own props and not the dialog's.
@@ -73,6 +75,25 @@ const gridProps = computed(() => ({
 }));
 
 const editing = ref(null);
+
+/*
+ * Back from a save the server refused: open the dialog on the row it was
+ * about again, with what was typed put back, rather than leave the reader
+ * to find the row and type it all a second time.
+ */
+onMounted(() => {
+    const ids = Object.keys(props.restore?.statuses ?? {}).map(Number);
+
+    if (! ids.length) {
+        return;
+    }
+
+    const row = props.rows.find((r) => (r.items ?? []).some((item) => ids.includes(Number(item.id))));
+
+    if (row) {
+        editing.value = row;
+    }
+});
 
 /*
  * Sending a vendor the files they are holding.
@@ -173,6 +194,7 @@ function onAction(row) {
             :cancelled-key="cancelledKey"
             :reason-keys="reasonKeys"
             :today="today"
+            :restore="restore"
             @close="editing = null" />
     </div>
 </template>

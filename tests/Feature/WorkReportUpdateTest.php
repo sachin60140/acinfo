@@ -225,4 +225,38 @@ class WorkReportUpdateTest extends TestCase
         $this->assertFalse($column['exportable']);
         $this->assertFalse($column['searchable']);
     }
+
+    // ------------------------------------------------ a refused save, put back
+
+    /**
+     * Refused — here an approval with no screenshot — the save goes back to
+     * the report with what was typed, and the report hands it to the dialog so
+     * it can open again with it instead of losing the remark.
+     */
+    public function test_a_refused_save_hands_the_report_what_was_typed(): void
+    {
+        $admin = $this->admin();
+        $item = $this->itemOf($this->file($this->customer()));
+        $report = route('report.files', ['party_type' => 'customer']);
+
+        $this->actingAs($admin)->from($report)->post('/admin/file/status', [
+            'statuses' => [$item->id => 'approval_done'],
+            'was' => [$item->id => 'in_office'],
+            'remarks' => [$item->id => 'RTO approved it today'],
+            'approved_on' => [$item->id => now()->toDateString()],
+            'return_to' => $report,
+        ])->assertRedirect($report)->assertSessionHas('error');
+
+        $restore = $this->actingAs($admin)->getJson($report)->assertOk()->json('props.restore');
+
+        $this->assertSame('approval_done', $restore['statuses'][$item->id]);
+        $this->assertSame('in_office', $restore['was'][$item->id]);
+        $this->assertSame('RTO approved it today', $restore['remarks'][$item->id]);
+    }
+
+    public function test_a_report_drawn_fresh_has_nothing_to_put_back(): void
+    {
+        $this->assertNull($this->actingAs($this->admin())
+            ->getJson(route('report.files', ['party_type' => 'customer']))->assertOk()->json('props.restore'));
+    }
 }

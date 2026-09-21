@@ -36,6 +36,15 @@ const props = defineProps({
     // The states the server refuses without a reason.
     reasonKeys: { type: Array, default: () => ['cancelled', 'paper_returned'] },
     today: { type: String, default: '' },
+
+    /*
+     * What was typed into a save the server refused, from the page it sent
+     * the reader back to: { statuses, was, remarks, approved_on }, keyed by
+     * work. Put back the first time the dialog opens, so a refusal — a
+     * missing screenshot, a work changed since — does not also cost the
+     * remark. See restoreInto() for what is and is not put back.
+     */
+    restore: { type: Object, default: null },
 });
 
 const emit = defineEmits(['close']);
@@ -68,6 +77,54 @@ function reset() {
             hasShot: Boolean(work.has_screenshot),
         }])
     );
+}
+
+/*
+ * Put back what the refused save held, once.
+ *
+ * A remark always: it is what somebody typed and nothing depends on it. A
+ * status only when the reader had chosen a different one and the work is
+ * still where it was when they chose it — a work a colleague moved since was
+ * refused for exactly that, and filling the old choice back in would send it
+ * straight back the way it came. An approval date with the approval it
+ * belongs to. Uploads cannot be put back; the note says so.
+ */
+const restored = ref(false);
+let restoreSpent = false;
+
+function restoreInto() {
+    restored.value = false;
+
+    if (restoreSpent || ! props.restore) {
+        return;
+    }
+
+    restoreSpent = true;
+
+    const back = props.restore;
+
+    for (const work of works.value) {
+        const entry = form.value[work.id];
+        const remark = back.remarks?.[work.id];
+        const chosen = back.statuses?.[work.id];
+        const drawn = back.was?.[work.id];
+
+        if (typeof remark === 'string' && remark.trim() !== '') {
+            entry.remark = remark;
+            restored.value = true;
+        }
+
+        if (chosen && chosen !== drawn && drawn === work.status && chosen in props.statuses) {
+            entry.status = chosen;
+            restored.value = true;
+
+            const on = back.approved_on?.[work.id];
+
+            if (chosen === props.approvedKey && on) {
+                entry.approved_on = on;
+            }
+        }
+    }
 }
 
 const moved = (work) => form.value[work.id] && form.value[work.id].status !== form.value[work.id].was;
@@ -151,6 +208,7 @@ watch(open, async (isOpen) => {
 
     if (isOpen) {
         reset();
+        restoreInto();
         document.addEventListener('keydown', onKey);
         await nextTick();
         firstField.value?.focus();
@@ -191,6 +249,11 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div class="wu__body">
+                        <div v-if="restored" class="ui-hint wu__restored">
+                            <i class="bi bi-arrow-counterclockwise"></i>
+                            What you typed has been put back. Attach any screenshot again — files cannot be kept.
+                        </div>
+
                         <div v-for="(work, i) in works" :key="work.id" class="wu__work">
                             <div class="wu__workhead">
                                 <strong>{{ work.work_type }}</strong>
