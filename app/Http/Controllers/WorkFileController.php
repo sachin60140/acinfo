@@ -1133,8 +1133,10 @@ class WorkFileController extends Controller
      * nowhere except inside its folder. A vendor's work has the vendor report
      * to be chased from; this is the same list for the counter.
      *
-     * Read-only. The work moves on through Update Status like any other, and
-     * falls off here the moment it is approved.
+     * Each row has the Work Report's Update button, posting to Update Status's
+     * own controller and coming back here, so moving a job along does not
+     * mean finding it again on the board. It falls off the list the moment it
+     * is approved.
      */
     public function inHouse(Request $req)
     {
@@ -1157,15 +1159,49 @@ class WorkFileController extends Controller
                 ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
                 ['key' => 'registration_no', 'label' => 'Vehicle'],
                 ['key' => 'customer', 'label' => 'Customer', 'type' => 'link', 'linkTo' => 'customer_url'],
-                ['key' => 'work', 'label' => 'Work'],
+                /*
+                 * The day it was kept rides under the work rather than in a
+                 * column of its own, and is its own column only in the
+                 * exports. With the Update column that made nine, and at nine
+                 * the grid goes wide and scrolls sideways — putting Update, the
+                 * one thing to do here, past the edge of a laptop screen.
+                 */
+                ['key' => 'work', 'label' => 'Work', 'sub' => 'kept_text'],
                 // How long the customer has been waiting, which is the order
                 // the work wants doing in.
                 ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_raw', 'sub' => 'days_text'],
-                ['key' => 'kept_on', 'label' => 'Kept In-house', 'sortBy' => 'kept_raw'],
+                ['key' => 'kept_on', 'label' => 'Kept In-house', 'sortBy' => 'kept_raw', 'exportOnly' => true],
                 ['key' => 'status', 'label' => 'Status', 'type' => 'badge'],
                 ['key' => 'charged', 'label' => 'Charged', 'type' => 'money'],
+                // Kept out of the exports and the search, as every action
+                // column is: a column of the word Update is not data.
+                [
+                    'key' => 'update',
+                    'label' => 'Update',
+                    'type' => 'action',
+                    'icon' => 'bi-pencil-square',
+                    'sortable' => false,
+                    'searchable' => false,
+                    'exportable' => false,
+                ],
             ],
             'rows' => $rows->values(),
+
+            /*
+             * What the Update dialog needs, from the model and the status
+             * screen as the Work Report takes it: the dialog posts to that
+             * controller, and a second copy of its rules would drift.
+             */
+            'action' => route('workfile.status'),
+            'csrf' => csrf_token(),
+            // Back to this list once the change is saved.
+            'returnTo' => route('workfile.inhouse'),
+            'jobStatuses' => WorkFileModel::JOB_STATUSES,
+            'pendencyKey' => WorkFileModel::PAPER_PENDENCY,
+            'cancelledKey' => WorkFileModel::CANCELLED,
+            'approvedKey' => WorkFileModel::APPROVED,
+            'reasonKeys' => [WorkFileModel::CANCELLED, WorkFileModel::RETURNED],
+            'today' => now()->toDateString(),
         ];
 
         return Screen::make('admin.work.in-house', 'vue-inhouse-work', $props, [
@@ -2008,6 +2044,15 @@ class WorkFileController extends Controller
                  */
                 'approved_on' => 'nullable|array',
                 'approved_on.*' => 'nullable|date_format:Y-m-d|before_or_equal:today',
+
+                // What each work said when the page was drawn; see below.
+                'was' => 'nullable|array',
+                // Only ever compared, never stored, so an old status no longer on
+                // the list cannot refuse a save.
+                'was.*' => 'nullable|string|max:50',
+                // And the approval date each showed, for the same reason.
+                'was_approved_on' => 'nullable|array',
+                'was_approved_on.*' => 'nullable|string|max:20',
             ], [
                 'approved_on.*.date_format' => 'An approval date must be a real date.',
                 'approved_on.*.before_or_equal' => 'An approval cannot be dated in the future.',
@@ -2023,6 +2068,82 @@ class WorkFileController extends Controller
                 ->get();
 
             $name = fn ($item) => $item->file->file_no.' · '.($item->workType?->name ?? 'work');
+
+            /*
+             * Work that has moved since the page was drawn.
+             *
+             * Every screen that posts here sends a status for each work it
+             * shows — the board one per row, the Work Report's dialog one for
+             * each work in the folder — whether or not anybody touched it. So a
+             * page left open while a colleague returned the file, or approved
+             * the work, sent the old status back with the next save and put the
+             * work where it had been: the return undone and its refund taken
+             * off the ledger, the approval's date wiped.
+             *
+             * The page now says what each work was when it was drawn. A work
+             * this post leaves alone — the status as it was, no remark, no
+             * document — is not touched, whatever it says now. One the post
+             * does ask something of, and that has moved in the meantime, stops
+             * the whole save: what was chosen was chosen against a status that
+             * is no longer true, and the reader needs to see the new one before
+             * deciding again.
+             *
+             * A post with no `was` at all is a page drawn before this was
+             * added, and is read as it always was.
+             */
+            $was = (array) $req->input('was', []);
+
+            /*
+             * The approval date is the same kind of thing. The board draws the
+             * date on every approved row so it can be corrected, and posts it
+             * back with any remark on that row — which put back a date a
+             * colleague had corrected since. So it says what date it drew, and
+             * a date is only applied when the work is being approved now or
+             * the reader actually changed it.
+             */
+            $wasOn = (array) $req->input('was_approved_on', []);
+
+            $shown = fn ($item) => array_key_exists($item->id, $was) && $was[$item->id] !== null && $was[$item->id] !== '';
+
+            $postedOn = fn ($item) => trim((string) ($approvedOn[$item->id] ?? ''));
+            $drawnOn = fn ($item) => trim((string) ($wasOn[$item->id] ?? ''));
+            $storedOn = fn ($item) => $item->approved_on ? date('Y-m-d', strtotime($item->approved_on)) : '';
+
+            $datedAnew = fn ($item) => array_key_exists($item->id, $wasOn)
+                && $postedOn($item) !== ''
+                && $postedOn($item) !== $drawnOn($item);
+
+            $asked = fn ($item) => $wanted[$item->id] !== $was[$item->id]
+                || trim((string) ($remarks[$item->id] ?? '')) !== ''
+                || isset($uploads[$item->id])
+                || $datedAnew($item);
+
+            $stale = $items
+                ->filter(fn ($item) => $shown($item) && $asked($item) && (
+                    $was[$item->id] !== $item->status
+                    // A date changed on the page, over one changed since. Only
+                    // for a work staying where it is: one being moved is
+                    // already judged by its status above.
+                    || ($wanted[$item->id] === $was[$item->id] && $datedAnew($item) && $storedOn($item) !== $drawnOn($item))
+                ))
+                ->map(fn ($item) => $name($item).' (now '.(WorkFileModel::STATUSES[$item->status] ?? $item->status)
+                    .($item->approved_on && $item->isApproved() ? ', approved '.date('d-m-Y', strtotime($item->approved_on)) : '').')');
+
+            if ($stale->isNotEmpty()) {
+                return back()->withInput()->with(
+                    'error',
+                    'Nothing was saved: this work has changed since the page was opened. Reload the page to see where it stands now, then try again: '.$stale->implode(', ')
+                );
+            }
+
+            /*
+             * What the page did not ask anything of is left out of the save
+             * altogether — not written, and not judged by the checks below,
+             * which are about what is being asked for. A row a colleague
+             * approved since, untouched here, must not refuse this save for
+             * want of a screenshot nobody here was trying to give.
+             */
+            $items = $items->reject(fn ($item) => $shown($item) && ! $asked($item))->values();
 
             /*
              * Paper Pendency is set by the paper checklist. Chosen here by hand
@@ -2147,7 +2268,7 @@ class WorkFileController extends Controller
                 );
             }
 
-            $changed = DB::transaction(function () use ($items, $wanted, $remarks, $uploads, $approvedOn) {
+            $changed = DB::transaction(function () use ($items, $wanted, $remarks, $uploads, $approvedOn, $wasOn) {
                 $files = [];
                 $notes = [];
                 $moved = 0;
@@ -2159,8 +2280,13 @@ class WorkFileController extends Controller
                     $movedThis = $from !== $wanted[$item->id];
 
                     // A remark on its own is worth saving: it records chasing the
-                    // RTO about one job without that job moving.
-                    if (! $movedThis && ! $upload && ! $remark) {
+                    // RTO about one job without that job moving. So is a
+                    // corrected approval date.
+                    $redated = array_key_exists($item->id, $wasOn)
+                        && trim((string) ($approvedOn[$item->id] ?? '')) !== ''
+                        && trim((string) ($approvedOn[$item->id] ?? '')) !== trim((string) ($wasOn[$item->id] ?? ''));
+
+                    if (! $movedThis && ! $upload && ! $remark && ! $redated) {
                         continue;
                     }
 
@@ -2184,7 +2310,18 @@ class WorkFileController extends Controller
                      */
                     $date = trim((string) ($approvedOn[$item->id] ?? ''));
 
-                    if ($date !== '' && $item->isApproved()) {
+                    /*
+                     * Only when the work is being approved now, or the date
+                     * was changed on the page. A date posted back as it was
+                     * drawn is not a correction, and writing it would undo one
+                     * made since. A page that says nothing about what it drew
+                     * is read as it always was.
+                     */
+                    $applyDate = $movedThis
+                        || ! array_key_exists($item->id, $wasOn)
+                        || $date !== trim((string) ($wasOn[$item->id] ?? ''));
+
+                    if ($date !== '' && $item->isApproved() && $applyDate) {
                         $item->approved_on = $date;
                     }
 
@@ -2369,6 +2506,12 @@ class WorkFileController extends Controller
                         'approved_on_value' => $item->approved_on
                             ? date('Y-m-d', strtotime($item->approved_on))
                             : date('Y-m-d'),
+                        // What is actually stored, which the box above is not
+                        // when there is none. Posted back so the save can tell
+                        // a date changed since from one being entered now.
+                        'approved_on_iso' => $item->approved_on
+                            ? date('Y-m-d', strtotime($item->approved_on))
+                            : null,
                     ])->values(),
             ])->values(),
         ];

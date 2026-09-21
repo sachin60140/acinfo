@@ -358,3 +358,32 @@ describe('the update dialog on the work report', () => {
         expect(field('remarks[11]').value).toBe('');
     });
 });
+
+/*
+ * What each work said when the page was drawn goes with every save, so a page
+ * left open cannot put back a status a colleague has moved the work on from.
+ */
+describe('saving from a report that may be out of date', () => {
+    it('posts, for each work in the folder, the status it showed when drawn', async () => {
+        const host = mount();
+
+        await openRow(host, 1);
+
+        expect(field('was[21]').value).toBe('paper_pendency');
+        expect(field('was[22]').value).toBe('in_office');
+    });
+
+    it('keeps posting the drawn status after a different one is chosen', async () => {
+        const host = mount();
+
+        await openRow(host, 1);
+
+        const select = field('statuses[22]');
+        select.value = 'under_verification';
+        select.dispatchEvent(new window.Event('change'));
+        await nextTick();
+
+        expect(field('was[22]').value).toBe('in_office');
+        expect(field('statuses[22]').value).toBe('under_verification');
+    });
+});

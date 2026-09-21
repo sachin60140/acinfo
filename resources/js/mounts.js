@@ -14,6 +14,7 @@ import ClientPassword from './components/ClientPassword.vue';
 import CustomerReceipt from './components/CustomerReceipt.vue';
 import CustomerReturn from './components/CustomerReturn.vue';
 import HandOver from './components/HandOver.vue';
+import InHouseWork from './components/InHouseWork.vue';
 import PaperAudit from './components/PaperAudit.vue';
 import PaperChecklist from './components/PaperChecklist.vue';
 import DataGrid from './components/DataGrid.vue';
@@ -90,7 +91,8 @@ export const components = {
     'vue-profit-report': DataGrid,
     'vue-expense-report': DataGrid,
     'vue-vendor-report': DataGrid,
-    'vue-inhouse-work': DataGrid,
+    // The grid, with the Work Report's Update dialog over it.
+    'vue-inhouse-work': InHouseWork,
     // Banded by customer, with a message for each band.
     'vue-uncollected-report': UncollectedReport,
     'vue-balance-reminder': BalanceReminder,
