@@ -318,3 +318,24 @@ describe('taking a work off a file', () => {
             .toEqual(['TR — 3,000.00', 'HPA']);
     });
 });
+
+/*
+ * What the edit page was drawn from goes with the save, so the server can
+ * tell a colleague changed the file since and refuse rather than write the
+ * old values back over theirs. Nothing of it on the receive screen.
+ */
+describe('saving an edit page that may be out of date', () => {
+    it('posts what the page was drawn from, and the status it showed', () => {
+        const host = mount({ drawn: 'abc123', wasStatus: 'in_office' });
+
+        expect(host.querySelector('input[type="hidden"][name="drawn"]').value).toBe('abc123');
+        expect(host.querySelector('input[type="hidden"][name="was_status"]').value).toBe('in_office');
+    });
+
+    it('posts neither on the receive screen, where there is no file yet', () => {
+        const host = mount({ isEdit: false, drawn: '', wasStatus: '' });
+
+        expect(host.querySelector('input[name="drawn"]')).toBe(null);
+        expect(host.querySelector('input[name="was_status"]')).toBe(null);
+    });
+});

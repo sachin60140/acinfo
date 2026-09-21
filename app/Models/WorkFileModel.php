@@ -4110,6 +4110,71 @@ class WorkFileModel extends Model
         return $statuses;
     }
 
+    /**
+     * What the edit screen was drawn from, as one short string.
+     *
+     * The edit form posts every field it shows — the status among them, and
+     * for a folder of one work that status is written straight through to the
+     * work. So a page left open while a colleague returned the file, approved
+     * it, or corrected its price posted the old values back over theirs: the
+     * return undone and its refund taken off the ledger, the approval's date
+     * wiped, the price put back.
+     *
+     * The page carries this from when it was drawn and the save compares it
+     * with the file as it is now. It covers what the form can overwrite — the
+     * file's own fields, each work's status, type, prices, vendor and in-house
+     * mark, the return, and the expenses — and nothing that merely touches
+     * updated_at, so a save is refused because the file changed and never
+     * because something brushed past it.
+     */
+    public function editFingerprint(): string
+    {
+        $money = fn ($value) => $value === null ? null : number_format((float) $value, 2, '.', '');
+        $day = fn ($value) => $value ? date('Y-m-d', strtotime((string) $value)) : null;
+        $id = fn ($value) => $value ? (int) $value : null;
+
+        $works = $this->items()->orderBy('id')->get()->map(fn ($item) => [
+            (int) $item->id,
+            (string) $item->status,
+            $id($item->work_type_id),
+            $money($item->customer_amount),
+            $money($item->vendor_amount),
+            $id($item->vendor_id),
+            $day($item->vendor_date),
+            $day($item->vendor_returned_on),
+            $day($item->kept_in_house_on),
+            $day($item->approved_on),
+        ])->all();
+
+        $expenses = $this->expenses()->orderBy('id')->get()->map(fn ($expense) => [
+            (int) $expense->id,
+            $id($expense->expense_type_id),
+            $money($expense->amount),
+            $day($expense->spent_on),
+            (string) $expense->remark,
+        ])->all();
+
+        return sha1(json_encode([
+            'file_no' => (string) $this->file_no,
+            'received' => $day($this->received_date),
+            'type' => $id($this->work_type_id),
+            'registration' => (string) $this->registration_no,
+            'customer' => $id($this->customer_id),
+            'charged' => $money($this->customer_amount),
+            'vendor' => $id($this->vendor_id),
+            'cost' => $money($this->vendor_amount),
+            'vendor_date' => $day($this->vendor_date),
+            'vendor_returned_on' => $day($this->vendor_returned_on),
+            'status' => (string) $this->status,
+            'returned_on' => $day($this->returned_on),
+            'returned_amount' => $money($this->returned_amount),
+            'description' => (string) $this->description,
+            'remarks' => (string) $this->remarks,
+            'works' => $works,
+            'expenses' => $expenses,
+        ]));
+    }
+
     public static function statusFromItems($items): string
     {
         $open = $items->filter(fn ($item) => in_array($item->status, self::OPEN_STATUSES, true));

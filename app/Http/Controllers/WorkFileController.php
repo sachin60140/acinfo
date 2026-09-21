@@ -2371,6 +2371,39 @@ class WorkFileController extends Controller
         $file = WorkFileModel::findOrFail($id);
 
         if ($req->isMethod('POST')) {
+            /*
+             * A page left open while somebody else changed the file.
+             *
+             * The form posts every field it shows, so saving it wrote the file
+             * back as it was when the page was drawn: a return a colleague
+             * made since was undone and its refund taken off the ledger, an
+             * approval lost its date, a corrected price went back. The page
+             * says what it was drawn from; see editFingerprint().
+             *
+             * Checked before anything else, including validation, and sent to
+             * a freshly drawn page without the typed values: those were typed
+             * against the old file, and put back into the form they would
+             * carry its old status straight into the next save.
+             *
+             * A post that carries no fingerprint is a page drawn before this
+             * was added, and is saved as it always was.
+             */
+            $drawn = $req->input('drawn');
+
+            if (is_string($drawn) && $drawn !== '' && ! hash_equals($file->editFingerprint(), $drawn)) {
+                $was = (string) $req->input('was_status');
+
+                $now = $was !== '' && $was !== $file->status
+                    ? ' (now '.(WorkFileModel::STATUSES[$file->status] ?? $file->status).')'
+                    : '';
+
+                return redirect()->route('workfile.edit', $file->id)->with(
+                    'error',
+                    $file->file_no.' has changed since you opened it'.$now.'. Nothing was saved. '
+                        .'This page now shows it as it is — make your change again.'
+                );
+            }
+
             $req->validate([
                 'file_no' => ['nullable', 'string', 'max:30', Rule::unique('work_file', 'file_no')->ignore($file->id)],
                 'received_date' => 'required|date_format:Y-m-d',
@@ -2966,6 +2999,16 @@ class WorkFileController extends Controller
             'indexUrl' => route('workfile.index'),
             'isEdit' => $isEdit,
             'statuses' => $statuses,
+
+            /*
+             * What this page is drawn from, posted back so a save can tell the
+             * file has changed under it; see edit(). Carried through a save
+             * sent back for some other reason, so the page still answers for
+             * when it was first drawn rather than for the redraw — the redraw
+             * puts the typed values back, the old status among them.
+             */
+            'drawn' => (string) old('drawn', $file->editFingerprint()),
+            'wasStatus' => (string) old('was_status', $file->status),
 
             /*
              * Option text is built here rather than in the component: what a

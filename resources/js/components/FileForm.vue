@@ -31,6 +31,10 @@ const props = defineProps({
     indexUrl: { type: String, required: true },
     isEdit: { type: Boolean, default: false },
     statuses: { type: Object, default: () => ({}) },
+    // What the edit page was drawn from, so a save can tell the file changed
+    // under it. Nothing on the receive screen, where there is no file yet.
+    drawn: { type: String, default: '' },
+    wasStatus: { type: String, default: '' },
     workTypes: { type: Array, default: () => [] },
     customers: { type: Array, default: () => [] },
     vendors: { type: Array, default: () => [] },
@@ -614,6 +618,10 @@ onMounted(() => {
                  mounted onto a bare element, so there is no server markup to
                  slot in. -->
             <input type="hidden" name="_token" :value="csrf">
+            <template v-if="isEdit && drawn">
+                <input type="hidden" name="drawn" :value="drawn">
+                <input type="hidden" name="was_status" :value="wasStatus">
+            </template>
 
             <div class="ui-card">
                 <div class="ui-card__head">
