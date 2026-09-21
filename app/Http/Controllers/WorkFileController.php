@@ -1133,8 +1133,10 @@ class WorkFileController extends Controller
      * nowhere except inside its folder. A vendor's work has the vendor report
      * to be chased from; this is the same list for the counter.
      *
-     * Read-only. The work moves on through Update Status like any other, and
-     * falls off here the moment it is approved.
+     * Each row has the Work Report's Update button, posting to Update Status's
+     * own controller and coming back here, so moving a job along does not
+     * mean finding it again on the board. It falls off the list the moment it
+     * is approved.
      */
     public function inHouse(Request $req)
     {
@@ -1157,15 +1159,49 @@ class WorkFileController extends Controller
                 ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
                 ['key' => 'registration_no', 'label' => 'Vehicle'],
                 ['key' => 'customer', 'label' => 'Customer', 'type' => 'link', 'linkTo' => 'customer_url'],
-                ['key' => 'work', 'label' => 'Work'],
+                /*
+                 * The day it was kept rides under the work rather than in a
+                 * column of its own, and is its own column only in the
+                 * exports. With the Update column that made nine, and at nine
+                 * the grid goes wide and scrolls sideways — putting Update, the
+                 * one thing to do here, past the edge of a laptop screen.
+                 */
+                ['key' => 'work', 'label' => 'Work', 'sub' => 'kept_text'],
                 // How long the customer has been waiting, which is the order
                 // the work wants doing in.
                 ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_raw', 'sub' => 'days_text'],
-                ['key' => 'kept_on', 'label' => 'Kept In-house', 'sortBy' => 'kept_raw'],
+                ['key' => 'kept_on', 'label' => 'Kept In-house', 'sortBy' => 'kept_raw', 'exportOnly' => true],
                 ['key' => 'status', 'label' => 'Status', 'type' => 'badge'],
                 ['key' => 'charged', 'label' => 'Charged', 'type' => 'money'],
+                // Kept out of the exports and the search, as every action
+                // column is: a column of the word Update is not data.
+                [
+                    'key' => 'update',
+                    'label' => 'Update',
+                    'type' => 'action',
+                    'icon' => 'bi-pencil-square',
+                    'sortable' => false,
+                    'searchable' => false,
+                    'exportable' => false,
+                ],
             ],
             'rows' => $rows->values(),
+
+            /*
+             * What the Update dialog needs, from the model and the status
+             * screen as the Work Report takes it: the dialog posts to that
+             * controller, and a second copy of its rules would drift.
+             */
+            'action' => route('workfile.status'),
+            'csrf' => csrf_token(),
+            // Back to this list once the change is saved.
+            'returnTo' => route('workfile.inhouse'),
+            'jobStatuses' => WorkFileModel::JOB_STATUSES,
+            'pendencyKey' => WorkFileModel::PAPER_PENDENCY,
+            'cancelledKey' => WorkFileModel::CANCELLED,
+            'approvedKey' => WorkFileModel::APPROVED,
+            'reasonKeys' => [WorkFileModel::CANCELLED, WorkFileModel::RETURNED],
+            'today' => now()->toDateString(),
         ];
 
         return Screen::make('admin.work.in-house', 'vue-inhouse-work', $props, [

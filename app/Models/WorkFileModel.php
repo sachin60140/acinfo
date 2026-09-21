@@ -1169,6 +1169,8 @@ class WorkFileModel extends Model
                 'i.status',
                 'i.customer_amount',
                 'i.kept_in_house_on',
+                'i.approved_on',
+                'i.approval_screenshot',
                 'f.id as file_id',
                 'f.file_no',
                 'f.registration_no',
@@ -1197,10 +1199,29 @@ class WorkFileModel extends Model
                     'days_text' => $days === 0 ? 'today' : ($days === 1 ? '1 day' : $days.' days'),
                     'kept_on' => date('d-m-Y', strtotime($work->kept_in_house_on)),
                     'kept_raw' => date('Y-m-d', strtotime($work->kept_in_house_on)),
+                    'kept_text' => 'kept in-house '.date('d-m-Y', strtotime($work->kept_in_house_on)),
                     'status' => self::STATUSES[$work->status] ?? $work->status,
                     // Coloured the way the status board colours it.
                     'status_key' => $work->status,
                     'charged' => (float) $work->customer_amount,
+
+                    /*
+                     * For the Update dialog, which is the Work Report's: whose
+                     * file it is for its heading, and the one work this row is.
+                     * Only this one — the rest of the folder may be with a
+                     * vendor, and is moved from where that is looked after.
+                     */
+                    'party_name' => $work->customer,
+                    'items' => [[
+                        'id' => (int) $work->id,
+                        'work_type' => $work->work,
+                        'status' => $work->status,
+                        'status_label' => self::STATUSES[$work->status] ?? $work->status,
+                        'approved_on_iso' => $work->approved_on ? date('Y-m-d', strtotime($work->approved_on)) : null,
+                        // Whether there is evidence already, never where it is.
+                        'has_screenshot' => (bool) $work->approval_screenshot,
+                    ]],
+                    'update' => 'Update',
                 ];
             });
     }

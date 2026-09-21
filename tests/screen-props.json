@@ -356,6 +356,9 @@
     },
     "file-in-house": {
         "vue-inhouse-work": {
+            "action": "string",
+            "approvedKey": "string",
+            "cancelledKey": "string",
             "columns": [
                 "file_no:link",
                 "registration_no:text",
@@ -364,10 +367,27 @@
                 "received:text",
                 "kept_on:text",
                 "status:badge",
-                "charged:money"
+                "charged:money",
+                "update:action:no-export:no-sort"
             ],
+            "csrf": "string",
             "emptyText": "string",
+            "jobStatuses": {
+                "approval_done": "string",
+                "cancelled": "string",
+                "file_dispatch": "string",
+                "in_office": "string",
+                "paper_pendency": "string",
+                "paper_returned": "string",
+                "part_pesi_required": "string",
+                "under_verification": "string"
+            },
+            "pendencyKey": "string",
             "perPage": "number",
+            "reasonKeys": {
+                "list_of": "string"
+            },
+            "returnTo": "string",
             "rows": {
                 "list_of": {
                     "charged": "number",
@@ -380,17 +400,31 @@
                     "file_id": "number",
                     "file_no": "string",
                     "id": "number",
+                    "items": {
+                        "list_of": {
+                            "approved_on_iso": "null",
+                            "has_screenshot": "bool",
+                            "id": "number",
+                            "status": "string",
+                            "status_label": "string",
+                            "work_type": "string"
+                        }
+                    },
                     "kept_on": "string",
                     "kept_raw": "string",
+                    "kept_text": "string",
+                    "party_name": "string",
                     "received": "string",
                     "received_raw": "string",
                     "registration_no": "string",
                     "status": "string",
                     "status_key": "string",
+                    "update": "string",
                     "work": "string"
                 }
             },
             "title": "string",
+            "today": "string",
             "totals": {
                 "charged": "string"
             }
