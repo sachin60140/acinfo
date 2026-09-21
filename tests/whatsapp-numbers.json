@@ -1,0 +1,17 @@
+{
+    "_about": "Numbers as they may be written, and the WhatsApp number each is (null: no chat). Read by both tests/Unit/WhatsAppTest.php and resources/js/whatsapp.test.js, so the server's rule and the browser's cannot drift apart.",
+    "cases": [
+        ["9835230000", "919835230000"],
+        ["98352 30000", "919835230000"],
+        ["+91 98352-30000", "919835230000"],
+        ["09835230000", "919835230000"],
+        ["919835230000", "919835230000"],
+        ["6200000001", "916200000001"],
+        ["0612223344", null],
+        ["5835230000", null],
+        ["12345", null],
+        ["98352300001", null],
+        ["", null],
+        [null, null]
+    ]
+}

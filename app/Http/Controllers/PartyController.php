@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\PartyLedgerModel;
 use App\Models\PartyModel;
 use App\Support\Screen;
+use App\Support\WhatsApp;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -71,7 +72,9 @@ class PartyController extends Controller
                 'mobile' => $party->mobile,
                 'mobile_url' => 'tel:'.$party->mobile,
                 'whatsapp' => $wa,
-                'whatsapp_url' => 'https://wa.me/91'.$wa,
+                // None for a number WhatsApp cannot use: it is drawn as plain
+                // text rather than as a link to an error.
+                'whatsapp_url' => WhatsApp::url($wa),
                 'address' => $party->address,
                 'entry_count' => (int) $party->entry_count,
                 'current_balance' => (float) $party->current_balance,
@@ -538,6 +541,7 @@ class PartyController extends Controller
             // Blank means "no separate WhatsApp number", so it falls back to the
             // mobile — the same number in most cases.
             'wa' => $party->whatsapp ?: $party->mobile,
+            'waUrl' => WhatsApp::url($party->whatsapp ?: $party->mobile),
             /*
              * A reminder of the balance, for a customer who owes one.
              *
