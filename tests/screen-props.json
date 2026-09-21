@@ -1212,6 +1212,12 @@
         }
     },
     "party-statement": {
+        "vue-balance-reminder": {
+            "balance": "number",
+            "mobile": "string",
+            "name": "string",
+            "todayLabel": "string"
+        },
         "vue-party-statement": {
             "columns": [
                 "id:text",

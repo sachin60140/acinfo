@@ -793,9 +793,18 @@ class ReportController extends Controller
                 ? 'Nothing is owed on any file. Every charge on the ledger has been paid.'
                 : 'Nothing finished is waiting to be paid for.',
             'totals' => ['charged' => 'sum', 'outstanding' => 'sum'],
+            /*
+             * One band per customer, each with what that customer owes under
+             * it, because the list is read to decide who to ring — and each
+             * band carries the message to send them instead.
+             */
+            'groupBy' => 'customer_id',
+            'groupLabel' => 'customer',
+            'todayLabel' => now()->format('d-m-Y'),
             'columns' => [
                 ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
                 ['key' => 'registration_no', 'label' => 'Vehicle'],
+                ['key' => 'works', 'label' => 'Work'],
                 ['key' => 'customer', 'label' => 'Customer', 'type' => 'link', 'linkTo' => 'customer_url'],
                 // The day the work finished, and how long the money has been
                 // outstanding since — sorted on the ISO date beside it.

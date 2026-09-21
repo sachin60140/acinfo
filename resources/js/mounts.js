@@ -8,6 +8,7 @@
  */
 import { createApp } from 'vue';
 
+import BalanceReminder from './components/BalanceReminder.vue';
 import ClientForm from './components/ClientForm.vue';
 import ClientPassword from './components/ClientPassword.vue';
 import CustomerReturn from './components/CustomerReturn.vue';
@@ -26,6 +27,7 @@ import PaymentForm from './components/PaymentForm.vue';
 import PaymentReceipt from './components/PaymentReceipt.vue';
 import ReceiveFileRows from './components/ReceiveFileRows.vue';
 import StatusBoard from './components/StatusBoard.vue';
+import UncollectedReport from './components/UncollectedReport.vue';
 import UserDashboard from './components/UserDashboard.vue';
 import VendorReturn from './components/VendorReturn.vue';
 import WorkReport from './components/WorkReport.vue';
@@ -87,8 +89,10 @@ export const components = {
     'vue-profit-report': DataGrid,
     'vue-expense-report': DataGrid,
     'vue-vendor-report': DataGrid,
-    'vue-uncollected-report': DataGrid,
     'vue-inhouse-work': DataGrid,
+    // Banded by customer, with a message for each band.
+    'vue-uncollected-report': UncollectedReport,
+    'vue-balance-reminder': BalanceReminder,
     'vue-expense-types': DataGrid,
     'vue-paper-types': DataGrid,
     'vue-client-list': DataGrid,

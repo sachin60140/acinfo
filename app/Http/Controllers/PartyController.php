@@ -538,6 +538,26 @@ class PartyController extends Controller
             // Blank means "no separate WhatsApp number", so it falls back to the
             // mobile — the same number in most cases.
             'wa' => $party->whatsapp ?: $party->mobile,
+            /*
+             * A reminder of the balance, for a customer who owes one.
+             *
+             * The balance today across their whole account, not the closing
+             * figure above, which is only as of the end of whatever period
+             * the statement has been narrowed to. Never for a vendor: what the
+             * office owes a vendor is not something to remind them of.
+             */
+            'reminder' => $party->party_type === 'customer'
+                ? (function () use ($party) {
+                    $owing = round(PartyLedgerModel::currentBalance($party->id), 2);
+
+                    return $owing > 0 ? [
+                        'name' => $party->name,
+                        'mobile' => (string) ($party->whatsapp ?: $party->mobile),
+                        'balance' => $owing,
+                        'todayLabel' => now()->format('d-m-Y'),
+                    ] : null;
+                })()
+                : null,
             'from' => $from,
             'to' => $to,
             'fromText' => $fromText,

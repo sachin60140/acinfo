@@ -1250,11 +1250,26 @@ class WorkFileModel extends Model
                 'work_file.handed_over_on',
                 DB::raw(self::FINISHED_ON.' as finished_on'),
                 'customer.id as customer_id',
-                'customer.name as customer_name'
+                'customer.name as customer_name',
+                'customer.mobile as customer_mobile',
+                'customer.whatsapp as customer_whatsapp'
             )
             ->get();
 
-        return $files->map(function ($file) use ($owed) {
+        /*
+         * The works on each file by name, for the message a customer is sent
+         * from this report: "BR01AB1234 — TR, HPA" is how they know it. A
+         * cancelled work was charged nothing and is not what they are owed for.
+         */
+        $works = DB::table('work_file_item as i')
+            ->join('work_type as t', 't.id', '=', 'i.work_type_id')
+            ->whereIn('i.work_file_id', $files->pluck('id')->all())
+            ->where('i.status', '<>', self::CANCELLED)
+            ->orderBy('i.id')
+            ->get(['i.work_file_id', 't.name'])
+            ->groupBy('work_file_id');
+
+        return $files->map(function ($file) use ($owed, $works) {
             $outstanding = (float) ($owed[$file->customer_id][$file->id] ?? 0);
 
             /*
@@ -1273,6 +1288,10 @@ class WorkFileModel extends Model
                 'customer' => $file->customer_name,
                 'customer_id' => (int) $file->customer_id,
                 'customer_url' => route('party.statement', $file->customer_id),
+                // Where a reminder is sent. Blank WhatsApp means "the mobile",
+                // as it does on the statement.
+                'customer_mobile' => $file->customer_whatsapp ?: $file->customer_mobile,
+                'works' => ($works[$file->id] ?? collect())->pluck('name')->implode(', '),
                 'finished' => $file->finished_on ? date('d-m-Y', strtotime($file->finished_on)) : null,
                 // Sorted on rather than shown, for the reason every date is.
                 'finished_raw' => $file->finished_on ? date('Y-m-d', strtotime($file->finished_on)) : null,

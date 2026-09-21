@@ -248,7 +248,9 @@ class AuthController extends Controller
                 'tone' => 'dr',
                 'note' => $overdue['name'].' · since '.$overdue['since']
                     .' ('.$overdue['days'].' '.Str::plural('day', $overdue['days']).')',
-                'href' => route('party.index', 'customer'),
+                // Their statement, where the reminder is: one click from the
+                // name to the message, rather than a search through everybody.
+                'href' => route('party.statement', $overdue['id']),
             ];
         }
 
