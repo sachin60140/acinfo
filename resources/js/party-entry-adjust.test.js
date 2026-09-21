@@ -132,7 +132,7 @@ describe('where it is offered', () => {
 
         await pick(host, 7);
 
-        expect(fetched.at(-1)).toBe('/admin/party/bills/7');
+        expect(fetched.at(-1)).toBe('/admin/party/bills/7?all=1');
         expect(section(host).textContent).toContain('F-00050');
         expect(section(host).textContent).toContain('F-00057');
     });
@@ -376,7 +376,9 @@ describe('an amount typed against a covered file', () => {
         toggle().click();
         await settle();
 
-        expect(toggle().checked).toBe(true);
+        // Narrowed, and the file holding an amount is still drawn and still sent.
+        expect(toggle().checked).toBe(false);
+        expect(section(host).textContent).toContain('F-00070');
         expect(host.querySelector('input[name="alloc[70][amount]"]').value).toBe('3000');
     });
 });
@@ -401,4 +403,51 @@ it('steps over bills with no file that come first, as the ledger would', async (
     // 4,000 goes to the bill with no file first; 2,000 is left for F-00080.
     expect(host.querySelector('input[name="alloc[80][amount]"]').value).toBe('2000.00');
     expect(host.querySelector('input[name="alloc[81][amount]"]')).toBe(null);
+});
+
+/* Found in the third review: two ways the covered-files toggle still misled. */
+describe('the covered files after a refused save', () => {
+    const COVERED_BILLS = [
+        { id: 70, fileNo: 'F-00070', vehicle: 'BR01OLD001', works: 'TR', received: '01-01-2026', charged: 3000, returned: 0, adjusted: 0, open: 3000, due: 0, ahead: 0, editUrl: '/admin/file/edit/70' },
+        { id: 71, fileNo: 'F-00071', vehicle: 'BR01NEW002', works: 'TR', received: '01-03-2026', charged: 5000, returned: 0, adjusted: 0, open: 5000, due: 5000, ahead: 0, editUrl: '/admin/file/edit/71' },
+    ];
+    const CO = { id: 8, name: 'Covered Co', mobile: '9835230008', current_balance: 5000 };
+
+    it('Clear, narrow, then Reset: the amount put back is drawn and sent', async () => {
+        BILLS[8] = COVERED_BILLS;
+
+        const host = mount({
+            parties: [...PARTIES, CO],
+            initial: { party_id: '8', entry_type: 'credit', amount: '5000', payment_mode: 'UPI', ref_no: '', particular: 'Paid' },
+            initialAlloc: { 70: '3000', 71: '2000' },
+        });
+        await settle();
+
+        [...section(host).querySelectorAll('button')].find((b) => b.textContent.trim() === 'Clear').click();
+        await settle();
+
+        const toggle = host.querySelector('.adjust__toggle input');
+        if (toggle.checked) {
+            toggle.click();
+            await settle();
+        }
+
+        host.querySelector('form').dispatchEvent(new window.Event('reset', { cancelable: true }));
+        await settle();
+
+        expect(host.querySelector('input[name="alloc[70][amount]"]').value).toBe('3000');
+        expect(host.querySelector('input[name="alloc[71][amount]"]').value).toBe('2000');
+        expect(section(host).querySelector('.adjust__foot').textContent).toContain('On account 0.00');
+    });
+
+    it('offers no toggle when there are no covered files', async () => {
+        const host = mount({
+            initial: { party_id: '7', entry_type: 'credit', amount: '5000', payment_mode: 'UPI', ref_no: '', particular: 'Paid' },
+            initialAlloc: { 57: '5000' },
+        });
+        await settle();
+
+        expect(host.querySelector('.adjust__toggle')).toBe(null);
+        expect(section(host).textContent).not.toContain('Also show 0');
+    });
 });

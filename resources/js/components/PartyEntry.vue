@@ -93,11 +93,17 @@ const alloc = reactive({ ...props.initialAlloc });
 const bills = ref([]);
 const billsState = ref('idle');
 
-// Files already covered by money on account, listed only when asked for —
-// and always when an amount was typed against one, which a refused save
-// puts back; see keepAmountsInView().
-const covered = ref(0);
-const showCovered = ref(Object.values(props.initialAlloc).some((amount) => Number(amount) > 0));
+/*
+ * Every open file is fetched once; which of them are drawn is worked out here.
+ *
+ * Files already covered by money on account are hidden unless asked for —
+ * except one with an amount against it, which is always drawn and always
+ * posted. Worked out from the amounts themselves, so nothing a reader does —
+ * narrowing the list, Clear, Reset, a refused save putting amounts back — can
+ * leave an amount they typed out of sight and quietly not sent. (Found over
+ * two reviews: a list fetched afresh as the toggle moved could, several ways.)
+ */
+const showCovered = ref(false);
 const dropped = ref(false);
 
 const showAdjust = computed(() =>
@@ -123,7 +129,7 @@ async function loadBills() {
     billsState.value = 'loading';
 
     try {
-        const url = props.billsUrl.replace('__ID__', String(selected.value.id)) + (showCovered.value ? '?all=1' : '');
+        const url = props.billsUrl.replace('__ID__', String(selected.value.id)) + '?all=1';
 
         const response = await fetch(url, {
             headers: { Accept: 'application/json' },
@@ -138,9 +144,8 @@ async function loadBills() {
 
         if (ticket === asked) {
             bills.value = data.bills ?? [];
-            covered.value = Number(data.covered) || 0;
             billsState.value = 'ready';
-            keepAmountsInView();
+            dropUnlisted();
         }
     } catch {
         if (ticket === asked) {
@@ -170,39 +175,34 @@ watch(() => [entry.party_id, entry.entry_type], (now, before) => {
     loadBills();
 }, { immediate: true });
 
-watch(showCovered, () => loadBills());
-
 /*
- * An amount the reader typed is never hidden and never quietly not posted.
- * Found in review: an amount against a file already covered by money on
- * account — put back by a refused save, or left when the list was narrowed —
- * was off the list, so it was neither shown nor sent, and the payment went
- * on account without a word. The covered files come back into view instead;
- * an amount against a file that is not open at all can no longer be adjusted
- * and is taken away, and the page says so.
+ * An amount against a file that is not open at all — a refused save put it
+ * back, and the file has since been settled or cancelled — cannot be adjusted.
+ * It is taken off, and the page says so, rather than kept out of sight.
  */
-function keepAmountsInView() {
+function dropUnlisted() {
     const listed = new Set(bills.value.map((bill) => String(bill.id)));
-    const hidden = Object.keys(alloc).filter((key) => Number(alloc[key]) > 0 && ! listed.has(String(key)));
+    const gone = Object.keys(alloc).filter((key) => Number(alloc[key]) > 0 && ! listed.has(String(key)));
 
-    if (! hidden.length) {
-        return;
-    }
-
-    if (! showCovered.value) {
-        showCovered.value = true;
-
-        return;
-    }
-
-    for (const key of hidden) {
+    for (const key of gone) {
         delete alloc[key];
     }
 
-    dropped.value = true;
+    if (gone.length) {
+        dropped.value = true;
+    }
 }
 
 const amountOf = (bill) => Number(alloc[bill.id]) || 0;
+
+const isCovered = (bill) => Number(bill.due) <= 0.005;
+
+// How many are hidden by default; the toggle appears only when there are some.
+const coveredCount = computed(() => bills.value.filter(isCovered).length);
+
+const visibleBills = computed(() =>
+    bills.value.filter((bill) => showCovered.value || ! isCovered(bill) || amountOf(bill) > 0)
+);
 
 const allocated = computed(() => bills.value.reduce((sum, bill) => sum + amountOf(bill), 0));
 
@@ -284,11 +284,18 @@ function onReset() {
     }
 
     Object.assign(alloc, props.initialAlloc);
+    showCovered.value = false;
+    dropped.value = false;
     resetDateField();
 
-    // After the watcher has seen the party change back.
+    /*
+     * After the watcher has seen the party change back — and then the list is
+     * fetched again for the party the page is back on, so what is checked
+     * against it is that party's files and not the last one's.
+     */
     nextTick(() => {
         resetting = false;
+        loadBills();
     });
 }
 
@@ -463,9 +470,9 @@ function resetDateField() {
                     Leave these empty and the payment settles the oldest files first, as before.
                 </p>
 
-                <label v-if="covered > 0 || showCovered" class="adjust__toggle ui-hint">
+                <label v-if="coveredCount > 0" class="adjust__toggle ui-hint">
                     <input type="checkbox" v-model="showCovered">
-                    Also show {{ covered }} {{ covered === 1 ? 'file' : 'files' }} already covered by money on account
+                    Also show {{ coveredCount }} {{ coveredCount === 1 ? 'file' : 'files' }} already covered by money on account
                 </label>
 
                 <div v-if="dropped" class="ui-hint adjust__error">
@@ -476,13 +483,13 @@ function resetDateField() {
                 <div v-else-if="billsState === 'failed'" class="ui-hint adjust__error">
                     The files could not be loaded. The payment can still be saved, on account.
                 </div>
-                <div v-else-if="!bills.length" class="ui-hint">
+                <div v-else-if="!visibleBills.length" class="ui-hint">
                     Nothing owed on {{ selected.name }}'s files — the payment goes on account.
                 </div>
 
                 <div v-else class="adjust__list">
                     <div
-                        v-for="bill in bills"
+                        v-for="bill in visibleBills"
                         :key="bill.id"
                         class="adjust__row"
                         :class="{ 'is-over': overOpen(bill), 'is-set': amountOf(bill) > 0 }">
@@ -526,7 +533,7 @@ function resetDateField() {
                     </div>
                 </div>
 
-                <div v-if="bills.length" class="adjust__foot" :class="{ 'is-error': adjustProblem }">
+                <div v-if="visibleBills.length" class="adjust__foot" :class="{ 'is-error': adjustProblem }">
                     <span>Against files <strong>{{ money(allocated) }}</strong></span>
                     <span>On account <strong>{{ money(onAccount) }}</strong></span>
                     <span v-if="adjustProblem" class="adjust__error">{{ adjustProblem }}</span>
