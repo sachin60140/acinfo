@@ -399,7 +399,23 @@ class ReportController extends Controller
 
             foreach ($group['rows'] as $line) {
                 $row = $line['row'];
-                $split = WorkFileModel::workSplit($breakdown[$row->id] ?? []);
+
+                /*
+                 * The works this row is about: all of the folder's, or — for a
+                 * folder split between vendors, drawn once under each — only the
+                 * ones this vendor holds. What the row lists, what its status
+                 * note says and what its Update button moves all come from here.
+                 */
+                $works = $breakdown[$row->id] ?? [];
+
+                if (isset($row->split_item_ids)) {
+                    $works = array_values(array_filter(
+                        $works,
+                        fn ($work) => in_array((int) $work->id, $row->split_item_ids, true)
+                    ));
+                }
+
+                $split = WorkFileModel::workSplit($works);
 
                 $reportRows[] = [
                     'id' => (int) $row->id,
@@ -439,7 +455,7 @@ class ReportController extends Controller
                     // "HPA approved · HPT, TR pending", under the works it is
                     // about. A status of Partly Approved says they disagree
                     // and never which way.
-                    'works_note' => WorkFileModel::workNote($breakdown[$row->id] ?? []),
+                    'works_note' => WorkFileModel::workNote($works),
 
                     'works_done' => $split['done'],
                     'works_approved_on' => $split['approved_on'],
@@ -462,11 +478,11 @@ class ReportController extends Controller
                         // never where it is: the dialog only needs to know
                         // whether to insist on another.
                         'has_screenshot' => (bool) $work->approval_screenshot,
-                    ], $breakdown[$row->id] ?? []),
+                    ], $works),
 
                     // The word on the button, and nothing on a folder with no
                     // works to move.
-                    'update' => ($breakdown[$row->id] ?? []) ? 'Update' : null,
+                    'update' => ($works) ? 'Update' : null,
                     // The latest note against the file: what is pending, or why it
                     // stands where it does.
                     'remark' => $line['remark'],
