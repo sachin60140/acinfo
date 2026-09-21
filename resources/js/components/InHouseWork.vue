@@ -10,7 +10,7 @@
  * One row is one work, and the dialog is handed just that work — never the
  * rest of its folder, some of which may be with a vendor.
  */
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import DataGrid from './DataGrid.vue';
 import WorkUpdateDialog from './WorkUpdateDialog.vue';
 
@@ -32,6 +32,8 @@ const props = defineProps({
     cancelledKey: { type: String, default: 'cancelled' },
     reasonKeys: { type: Array, default: () => [] },
     today: { type: String, default: '' },
+    // What a refused save held, to be put back; see WorkUpdateDialog.
+    restore: { type: Object, default: null },
 });
 
 const gridProps = computed(() => ({
@@ -44,6 +46,25 @@ const gridProps = computed(() => ({
 }));
 
 const editing = ref(null);
+
+/*
+ * Back from a save the server refused: open the dialog on the row it was
+ * about again, with what was typed put back, rather than leave the reader
+ * to find the row and type it all a second time.
+ */
+onMounted(() => {
+    const ids = Object.keys(props.restore?.statuses ?? {}).map(Number);
+
+    if (! ids.length) {
+        return;
+    }
+
+    const row = props.rows.find((r) => (r.items ?? []).some((item) => ids.includes(Number(item.id))));
+
+    if (row) {
+        editing.value = row;
+    }
+});
 
 function onAction(row) {
     if (! row?.items?.length) {
@@ -69,6 +90,7 @@ function onAction(row) {
             :cancelled-key="cancelledKey"
             :reason-keys="reasonKeys"
             :today="today"
+            :restore="restore"
             @close="editing = null" />
     </div>
 </template>

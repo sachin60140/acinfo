@@ -377,4 +377,25 @@ class InHouseWorkTest extends TestCase
     {
         $this->get(route('workfile.inhouse'))->assertRedirect();
     }
+
+    /** Refused from the list's Update dialog, the list hands back what was typed — once. */
+    public function test_a_refused_save_hands_the_list_what_was_typed(): void
+    {
+        $file = $this->file([$this->tr]);
+        $this->keep($file, $this->tr);
+        $job = $this->jobOf($file, $this->tr);
+
+        $this->actingAs($this->admin)->from(route('workfile.inhouse'))->post(route('workfile.status'), [
+            'statuses' => [$job->id => 'approval_done'],
+            'was' => [$job->id => 'in_office'],
+            'remarks' => [$job->id => 'Approved at the counter'],
+            'return_to' => route('workfile.inhouse'),
+        ])->assertSessionHas('error');
+
+        $restore = $this->props()['restore'];
+
+        $this->assertSame('approval_done', $restore['statuses'][$job->id]);
+        $this->assertSame('Approved at the counter', $restore['remarks'][$job->id]);
+        $this->assertNull($this->props()['restore'], 'put back more than once');
+    }
 }

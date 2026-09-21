@@ -750,7 +750,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                         <th
                             v-for="column in shown"
                             :key="column.key"
-                            :class="{ num: isNum(column), sortable: sortable && column.sortable !== false }"
+                            :class="{ num: isNum(column), sortable: sortable && column.sortable !== false, grid__action: column.type === 'action' }"
                             :style="column.width ? `min-width:${column.width}` : ''"
                             :aria-sort="sortKey === column.key ? (sortAsc ? 'ascending' : 'descending') : 'none'"
                             @click="toggleSort(column)">
@@ -771,7 +771,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                             v-for="column in shown"
                             :key="column.key"
                             :data-label="column.label"
-                            :class="[isNum(column) ? 'num' : '', column.class]">
+                            :class="[isNum(column) ? 'num' : '', column.class, column.type === 'action' ? 'grid__action' : '']">
                             <!-- The same branches the entries get, so a framing row
                                  does not quietly lose a badge's pill or a link's anchor
                                  the moment a statement gains such a column. An action
@@ -815,7 +815,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                 v-for="column in shown"
                                 :key="column.key"
                                 :data-label="column.label"
-                                :class="[isNum(column) ? 'num' : '', column.class]">
+                                :class="[isNum(column) ? 'num' : '', column.class, column.type === 'action' ? 'grid__action' : '']">
                                 <a
                                     v-if="column.type === 'link' && row[column.linkTo]"
                                     :href="row[column.linkTo]"
@@ -870,7 +870,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                             <td
                                 v-for="(column, i) in shown"
                                 :key="column.key"
-                                :class="isNum(column) ? 'num' : ''"
+                                :class="[isNum(column) ? 'num' : '', column.type === 'action' ? 'grid__action' : '']"
                                 :data-label="column.label">
                                 <span v-if="i === 0">Total</span>
                                 <span v-else-if="totals[column.key] !== undefined"
@@ -889,7 +889,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                             v-for="column in shown"
                             :key="column.key"
                             :data-label="column.label"
-                            :class="[isNum(column) ? 'num' : '', column.class]">
+                            :class="[isNum(column) ? 'num' : '', column.class, column.type === 'action' ? 'grid__action' : '']">
                             <!-- The same branches the entries get, so a framing row
                                  does not quietly lose a badge's pill or a link's anchor
                                  the moment a statement gains such a column. An action
@@ -919,7 +919,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                         <td
                             v-for="(column, i) in shown"
                             :key="column.key"
-                            :class="isNum(column) ? 'num' : ''"
+                            :class="[isNum(column) ? 'num' : '', column.type === 'action' ? 'grid__action' : '']"
                             :data-label="column.label">
                             <span v-if="i === 0">{{ query ? 'Total (filtered)' : 'Total' }}</span>
                             <span v-else-if="totals[column.key] !== undefined"
@@ -1104,6 +1104,29 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
     .grid__table--wide td,
     .grid__table--wide th {
         min-width: 5rem;
+    }
+
+    /*
+     * What a row is for stays in sight.
+     *
+     * A wide table scrolls sideways in its own box, and the action column is
+     * its last — so on a laptop the Work Report's Update button sat past the
+     * edge of the screen, and the one thing the report is opened to do had to
+     * be scrolled to. Pinned to the right edge of the box instead, with a line
+     * to show the rows run on underneath it.
+     */
+    .grid__table--wide .grid__action {
+        box-shadow: inset 1px 0 0 var(--n-200);
+        position: sticky;
+        right: 0;
+        z-index: 1;
+    }
+
+    /* Something has to hide the cells scrolling underneath. Given no weight of
+       its own, so the header, a hovered row, a subtotal or the totals line keep
+       the colour they already have. */
+    :where(.grid__table--wide td.grid__action) {
+        background: var(--n-000);
     }
 }
 
