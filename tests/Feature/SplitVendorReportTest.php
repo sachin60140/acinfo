@@ -267,6 +267,25 @@ class SplitVendorReportTest extends TestCase
         $this->assertSame($this->shailendra->mobile, $rows[$this->shailendra->id]['party_mobile']);
     }
 
+    /**
+     * A vendor with a WhatsApp number of their own is sent their list there,
+     * on a folder that is theirs alone and on their half of a split one alike.
+     */
+    public function test_a_saved_whatsapp_number_is_the_one_the_list_goes_to(): void
+    {
+        $this->sharma->whatsapp = '94310'.random_int(10000, 99999);
+        $this->sharma->save();
+
+        $whole = $this->folder([[$this->tr, 3000, $this->sharma, 1800, '2026-09-05']]);
+        $split = $this->split();
+
+        $this->assertSame($this->sharma->whatsapp, $this->rowsFor($whole)[$this->sharma->id]['party_mobile']);
+        $this->assertSame($this->sharma->whatsapp, $this->rowsFor($split)[$this->sharma->id]['party_mobile']);
+
+        // And Shailendra, who has none, is still sent his on his mobile.
+        $this->assertSame($this->shailendra->mobile, $this->rowsFor($split)[$this->shailendra->id]['party_mobile']);
+    }
+
     // ------------------------------------------------------ nothing else moved
 
     /** A folder with one vendor is drawn exactly as it always was: whole. */

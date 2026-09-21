@@ -3762,8 +3762,15 @@ class WorkFileModel extends Model
                 'vendor.name as vendor_name',
                 DB::raw(($isVendor ? 'vendor.id' : 'customer.id').' as party_id'),
                 DB::raw(($isVendor ? 'vendor.name' : 'customer.name').' as party_name'),
-                // Where a list of these files can be sent; see WorkReport.vue.
-                DB::raw(($isVendor ? 'vendor.mobile' : 'customer.mobile').' as party_mobile')
+                /*
+                 * Where a list of these files can be sent; see WorkReport.vue.
+                 * Their WhatsApp number when one is saved, and the mobile when
+                 * not — the rule the statement and the reminders follow, so the
+                 * same vendor is never messaged on two different numbers.
+                 */
+                DB::raw($isVendor
+                    ? "COALESCE(NULLIF(vendor.whatsapp, ''), vendor.mobile) as party_mobile"
+                    : "COALESCE(NULLIF(customer.whatsapp, ''), customer.mobile) as party_mobile")
             );
 
         // The status and the period narrow both halves of a vendor report the
@@ -3885,7 +3892,7 @@ class WorkFileModel extends Model
             ->get([
                 'i.id', 'i.work_file_id', 'i.vendor_id', 'i.customer_amount', 'i.vendor_amount',
                 'i.vendor_date', 'i.vendor_returned_on',
-                't.name as work', 'v.name as vendor_name', 'v.mobile as vendor_mobile',
+                't.name as work', 'v.name as vendor_name', 'v.mobile as vendor_mobile', 'v.whatsapp as vendor_whatsapp',
             ])
             ->groupBy('work_file_id');
 
@@ -3919,7 +3926,8 @@ class WorkFileModel extends Model
                 $row->vendor_name = $first->vendor_name;
                 $row->party_id = (int) $vendorId;
                 $row->party_name = $first->vendor_name;
-                $row->party_mobile = $first->vendor_mobile;
+                // As the query above says it for every other folder.
+                $row->party_mobile = $first->vendor_whatsapp ?: $first->vendor_mobile;
 
                 $row->customer_amount = round($mine->sum(fn ($w) => (float) $w->customer_amount), 2);
                 $row->vendor_amount = $priced->isEmpty() ? null : round($priced->sum(fn ($w) => (float) $w->vendor_amount), 2);

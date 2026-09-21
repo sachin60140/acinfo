@@ -297,6 +297,36 @@ class PaperAuditTest extends TestCase
         $this->assertSame('Call Rakesh', $line['office_note']);
     }
 
+    /**
+     * The list is sent to the customer's WhatsApp number when one is saved —
+     * the number the statement and the reminders open a chat on — and to their
+     * mobile when not.
+     */
+    public function test_the_pending_list_goes_to_a_saved_whatsapp_number(): void
+    {
+        $this->customer->whatsapp = '94310'.random_int(10000, 99999);
+        $this->customer->save();
+
+        $file = $this->file([$this->tr]);
+        $this->check($file, ['Form 30' => ['pending', 'Buyer has not signed']] + $this->allIn());
+
+        $line = collect($this->actingAs($this->admin)->getJson(route('workfile.paperaudit'))->json('props.pending'))
+            ->firstWhere('file_id', $file->id);
+
+        $this->assertSame($this->customer->whatsapp, $line['customer_mobile']);
+    }
+
+    public function test_without_a_whatsapp_number_it_goes_to_the_mobile(): void
+    {
+        $file = $this->file([$this->tr]);
+        $this->check($file, ['Form 30' => ['pending', 'Buyer has not signed']] + $this->allIn());
+
+        $line = collect($this->actingAs($this->admin)->getJson(route('workfile.paperaudit'))->json('props.pending'))
+            ->firstWhere('file_id', $file->id);
+
+        $this->assertSame($this->customer->mobile, $line['customer_mobile']);
+    }
+
     // ----------------------------------------------------------- mark received
 
     /**
