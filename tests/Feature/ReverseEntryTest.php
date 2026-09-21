@@ -154,6 +154,9 @@ class ReverseEntryTest extends TestCase
         $reversal = PartyLedgerModel::where('reverses_id', $entry->id)->firstOrFail();
 
         $this->assertSame($ahead, date('Y-m-d', strtotime($reversal->txn_date)), 'reversed before it was made');
+
+        // And the message says the date it has, not "today".
+        $this->assertStringContainsString('dated '.date('d-m-Y', strtotime($ahead)), session('success'));
     }
 
     /** A reversed payment settles nothing: the file it paid is owed again. */

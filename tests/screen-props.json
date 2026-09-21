@@ -1119,6 +1119,34 @@
             }
         }
     },
+    "party-adjust": {
+        "vue-party-adjust": {
+            "action": "string",
+            "billsUrl": "string",
+            "csrf": "string",
+            "current": "[]",
+            "currentLines": "[]",
+            "drawn": "string",
+            "entry": {
+                "amount": "number",
+                "date": "string",
+                "id": "number",
+                "mode": "string",
+                "particular": "string",
+                "reference": "string",
+                "side": "string"
+            },
+            "history": "null",
+            "initialAlloc": "[]",
+            "label": "string",
+            "party": {
+                "id": "number",
+                "mobile": "string",
+                "name": "string"
+            },
+            "statementUrl": "string"
+        }
+    },
     "party-edit": {
         "vue-party-form": {
             "action": "string",
@@ -1277,6 +1305,7 @@
             "emptyText": "string",
             "lead": {
                 "list_of": {
+                    "adjust_url": "null",
                     "against": "null",
                     "balance": "number",
                     "change": "null",
@@ -1297,6 +1326,7 @@
             "rowClass": "string",
             "rows": {
                 "list_of": {
+                    "adjust_url": "null",
                     "against": "null",
                     "balance": "number",
                     "change": "null",
@@ -1316,6 +1346,7 @@
             "sortable": "bool",
             "tail": {
                 "list_of": {
+                    "adjust_url": "null",
                     "against": "null",
                     "balance": "number",
                     "change": "null",
