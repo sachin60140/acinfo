@@ -218,7 +218,7 @@ class PartyLedgerModel extends Model
     public static function bills(int $partyId, string $chargeSide = 'debit'): array
     {
         return self::settleAll([$partyId], $chargeSide)[$partyId]
-            ?? ['files' => [], 'unadjusted' => []];
+            ?? ['files' => [], 'unadjusted' => [], 'loose' => []];
     }
 
     /**
@@ -386,9 +386,15 @@ class PartyLedgerModel extends Model
             $pool -= $bite;
         }
 
-        foreach ($charges as $charge) {
+        // And what is still owed on charges belonging to no file — a bill typed
+        // straight into the ledger — with their places in the queue.
+        $loose = [];
+
+        foreach ($charges as $i => $charge) {
             if ($charge['file_id'] !== null) {
                 $files[$charge['file_id']]['due'] += max(0, $charge['left']);
+            } elseif ($charge['left'] > 0.005) {
+                $loose[] = ['seq' => $i + 1, 'due' => round($charge['left'], 2)];
             }
         }
 
@@ -402,6 +408,7 @@ class PartyLedgerModel extends Model
             'files' => $files,
             // Each payment, and how much of it no adjustment has taken.
             'unadjusted' => array_map(fn ($left) => round(max(0, $left), 2), $held),
+            'loose' => $loose,
         ];
     }
 
@@ -466,12 +473,7 @@ class PartyLedgerModel extends Model
              * vendor only the works they were given: a folder split between
              * two vendors is none of the other's business.
              */
-            $works = $file->items
-                ->reject(fn ($item) => $item->status === WorkFileModel::CANCELLED)
-                ->when($line->party_type === 'vendor', fn ($items) => $items->where('vendor_id', (int) $line->party_id))
-                ->map(fn ($item) => $item->workType?->name)
-                ->filter()
-                ->implode(', ');
+            $works = $file->worksFor($line->party_type === 'vendor' ? (int) $line->party_id : null);
 
             $out[(int) $line->entry_id][] = [
                 'label' => trim(($file->registration_no ?: $file->file_no ?: 'File').($works ? ' ('.$works.')' : '')),

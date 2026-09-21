@@ -93,9 +93,12 @@ const alloc = reactive({ ...props.initialAlloc });
 const bills = ref([]);
 const billsState = ref('idle');
 
-// Files already covered by money on account, listed only when asked for.
+// Files already covered by money on account, listed only when asked for —
+// and always when an amount was typed against one, which a refused save
+// puts back; see keepAmountsInView().
 const covered = ref(0);
-const showCovered = ref(false);
+const showCovered = ref(Object.values(props.initialAlloc).some((amount) => Number(amount) > 0));
+const dropped = ref(false);
 
 const showAdjust = computed(() =>
     props.adjustable && Boolean(selected.value) && entry.entry_type === props.paymentSide
@@ -137,6 +140,7 @@ async function loadBills() {
             bills.value = data.bills ?? [];
             covered.value = Number(data.covered) || 0;
             billsState.value = 'ready';
+            keepAmountsInView();
         }
     } catch {
         if (ticket === asked) {
@@ -160,12 +164,43 @@ watch(() => [entry.party_id, entry.entry_type], (now, before) => {
         }
 
         showCovered.value = false;
+        dropped.value = false;
     }
 
     loadBills();
 }, { immediate: true });
 
 watch(showCovered, () => loadBills());
+
+/*
+ * An amount the reader typed is never hidden and never quietly not posted.
+ * Found in review: an amount against a file already covered by money on
+ * account — put back by a refused save, or left when the list was narrowed —
+ * was off the list, so it was neither shown nor sent, and the payment went
+ * on account without a word. The covered files come back into view instead;
+ * an amount against a file that is not open at all can no longer be adjusted
+ * and is taken away, and the page says so.
+ */
+function keepAmountsInView() {
+    const listed = new Set(bills.value.map((bill) => String(bill.id)));
+    const hidden = Object.keys(alloc).filter((key) => Number(alloc[key]) > 0 && ! listed.has(String(key)));
+
+    if (! hidden.length) {
+        return;
+    }
+
+    if (! showCovered.value) {
+        showCovered.value = true;
+
+        return;
+    }
+
+    for (const key of hidden) {
+        delete alloc[key];
+    }
+
+    dropped.value = true;
+}
 
 const amountOf = (bill) => Number(alloc[bill.id]) || 0;
 
@@ -200,12 +235,20 @@ const adjustProblem = computed(() => {
  * Oldest first, which is what the payment would do if nobody said: against
  * what is still due, in the order the ledger reaches the files. Found in
  * review: filled against what was open, it put the payment on files already
- * paid by money on account, and the customer's receipt named them.
+ * paid by money on account, and the customer's receipt named them. And a bill
+ * typed into the ledger with no file takes its turn in that queue too, so
+ * what is owed on those ahead of each file is stepped over first.
  */
 function fillOldest() {
     let left = Number(entry.amount) || 0;
+    let passed = 0;
 
     for (const bill of bills.value) {
+        const ahead = Number(bill.ahead) || 0;
+
+        left = Math.max(0, left - Math.max(0, ahead - passed));
+        passed = Math.max(passed, ahead);
+
         const take = Math.min(Number(bill.due), left);
         alloc[bill.id] = take > 0.005 ? take.toFixed(2) : '';
         left -= Math.max(0, take);
@@ -424,6 +467,10 @@ function resetDateField() {
                     <input type="checkbox" v-model="showCovered">
                     Also show {{ covered }} {{ covered === 1 ? 'file' : 'files' }} already covered by money on account
                 </label>
+
+                <div v-if="dropped" class="ui-hint adjust__error">
+                    An amount was against a file that is no longer open, and has been taken off.
+                </div>
 
                 <div v-if="billsState === 'loading'" class="ui-hint">Looking up {{ selected.name }}'s files…</div>
                 <div v-else-if="billsState === 'failed'" class="ui-hint adjust__error">

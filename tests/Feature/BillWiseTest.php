@@ -425,7 +425,50 @@ class BillWiseTest extends TestCase
         $this->assertEquals(3000, $all[0]['open']);
     }
 
+    /**
+     * Found in the second review: a bill typed into the ledger with no file
+     * takes its turn in the queue, so the list says what is owed on those
+     * ahead of each file, for Fill oldest first to step over.
+     */
+    public function test_the_list_says_what_is_owed_on_bills_with_no_file_ahead_of_each_file(): void
+    {
+        DB::table('party_ledger')->insert([
+            'party_id' => $this->customer->id,
+            'txn_date' => '2026-07-15',
+            'entry_type' => 'debit',
+            'amount' => 4000,
+            'particular' => 'Charge typed by hand',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $a = $this->file(3000, '2026-08-01');
+
+        $bill = $this->actingAs($this->admin)->getJson(route('party.bills', $this->customer->id))->json('bills')[0];
+
+        $this->assertSame($a->id, $bill['id']);
+        $this->assertEquals(4000, $bill['ahead']);
+    }
+
     // ---------------------------------------------- found in review: the label
+
+    /** Found in the second review: a vendor set on the folder and on none of its works. */
+    public function test_a_vendor_set_only_on_the_folder_still_has_the_works_named(): void
+    {
+        $vendor = $this->party('vendor');
+        $file = $this->file(3000, '2026-08-01', null, $vendor, 1800);
+
+        // The work loses its own vendor; the folder keeps it, and the vendor's
+        // bill is written from the folder.
+        $file->items()->update(['vendor_id' => null]);
+        $file->refresh()->syncLedger();
+
+        $this->pay(1800, [$file->id => 1800], $vendor)->assertSessionHas('success');
+
+        $entry = PartyLedgerModel::where('party_id', $vendor->id)->whereNull('work_file_id')->latest('id')->value('id');
+
+        $this->assertStringContainsString($this->tr->name, PartyLedgerModel::againstFor([$entry])[$entry][0]['label']);
+    }
 
     /** A file given to someone else since: the payer's statement must not name their vehicle. */
     public function test_a_file_moved_to_another_customer_is_not_named_on_the_payers_statement(): void

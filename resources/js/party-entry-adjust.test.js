@@ -30,10 +30,13 @@ const BILLS = {
 const mounted = [];
 let fetched;
 
-function answer(partyId, delay = 0) {
+function answer(partyId, delay = 0, all = false) {
+    const bills = (BILLS[partyId] ?? []).filter((bill) => all || bill.due > 0.005);
+    const covered = (BILLS[partyId] ?? []).filter((bill) => bill.due <= 0.005 && bill.open > 0.005).length;
+
     return new Promise((resolve) => setTimeout(() => resolve({
         ok: true,
-        json: () => Promise.resolve({ bills: BILLS[partyId] ?? [] }),
+        json: () => Promise.resolve({ bills, covered }),
     }), delay));
 }
 
@@ -42,9 +45,9 @@ beforeEach(() => {
 
     vi.stubGlobal('fetch', vi.fn((url) => {
         fetched.push(url);
-        const id = Number(String(url).split('/').pop());
+        const id = Number(String(url).split('?')[0].split('/').pop());
 
-        return answer(id);
+        return answer(id, 0, String(url).includes('all=1'));
     }));
 });
 
@@ -237,7 +240,7 @@ describe('changing party', () => {
     /* A slow answer for a party since changed must not be shown under the new one. */
     it('throws away a slow answer for a party no longer picked', async () => {
         vi.stubGlobal('fetch', vi.fn((url) => {
-            const id = Number(String(url).split('/').pop());
+            const id = Number(String(url).split('?')[0].split('/').pop());
 
             return answer(id, id === 7 ? 30 : 0);
         }));
@@ -296,6 +299,8 @@ it('fills oldest first against what is still due, not what is open', async () =>
 
     const host = mount({ parties: [...PARTIES, { id: 8, name: 'Covered Co', mobile: '9835230008', current_balance: 5000 }] });
     await pick(host, 8);
+    host.querySelector('.adjust__toggle input').click();
+    await settle();
     await type(host, 'input[name="amount"]', '5000');
 
     [...section(host).querySelectorAll('button')].find((b) => b.textContent.includes('Fill oldest first')).click();
@@ -328,4 +333,72 @@ describe('the receipt', () => {
     it('says nothing of files when it was not adjusted', () => {
         expect(receiptMessage({ name: 'Arman Qadri', amount: 8000, balance: 0 })).not.toContain('Against');
     });
+});
+
+/*
+ * Found in the second review: an amount against a covered file — put back by
+ * a refused save, or left when the list was narrowed — was neither shown nor
+ * sent, and the payment went on account without a word.
+ */
+describe('an amount typed against a covered file', () => {
+    const COVERED = [
+        { id: 70, fileNo: 'F-00070', vehicle: 'BR01OLD001', works: 'TR', received: '01-01-2026', charged: 3000, returned: 0, adjusted: 0, open: 3000, due: 0, ahead: 0, editUrl: '/admin/file/edit/70' },
+        { id: 71, fileNo: 'F-00071', vehicle: 'BR01NEW002', works: 'TR', received: '01-03-2026', charged: 5000, returned: 0, adjusted: 0, open: 5000, due: 5000, ahead: 0, editUrl: '/admin/file/edit/71' },
+    ];
+    const COVERED_CO = { id: 8, name: 'Covered Co', mobile: '9835230008', current_balance: 5000 };
+
+    it('is shown and sent when a refused save puts it back', async () => {
+        BILLS[8] = COVERED;
+
+        const host = mount({
+            parties: [...PARTIES, COVERED_CO],
+            initial: { party_id: '8', entry_type: 'credit', amount: '5000', payment_mode: 'UPI', ref_no: '', particular: 'Paid' },
+            initialAlloc: { 70: '3000', 71: '2000' },
+        });
+        await settle();
+
+        expect(host.querySelector('input[name="alloc[70][amount]"]').value).toBe('3000');
+        expect(host.querySelector('input[name="alloc[71][amount]"]').value).toBe('2000');
+        expect(section(host).querySelector('.adjust__foot').textContent).toContain('5,000.00');
+    });
+
+    it('brings the covered files back rather than hide it when the list is narrowed', async () => {
+        BILLS[8] = COVERED;
+
+        const host = mount({ parties: [...PARTIES, COVERED_CO] });
+        await pick(host, 8);
+
+        const toggle = () => host.querySelector('.adjust__toggle input');
+        toggle().click();
+        await settle();
+        await type(host, box('F-00070'), '3000');
+
+        toggle().click();
+        await settle();
+
+        expect(toggle().checked).toBe(true);
+        expect(host.querySelector('input[name="alloc[70][amount]"]').value).toBe('3000');
+    });
+});
+
+/*
+ * Found in the second review: a bill typed into the ledger with no file takes
+ * its turn in the queue, and Fill oldest first stepped past it.
+ */
+it('steps over bills with no file that come first, as the ledger would', async () => {
+    BILLS[10] = [
+        { id: 80, fileNo: 'F-00080', vehicle: 'BR01LOS001', works: 'TR', received: '05-08-2026', charged: 4000, returned: 0, adjusted: 0, open: 4000, due: 4000, ahead: 4000, editUrl: '/admin/file/edit/80' },
+        { id: 81, fileNo: 'F-00081', vehicle: 'BR01LOS002', works: 'TR', received: '06-08-2026', charged: 3000, returned: 0, adjusted: 0, open: 3000, due: 3000, ahead: 4000, editUrl: '/admin/file/edit/81' },
+    ];
+
+    const host = mount({ parties: [...PARTIES, { id: 10, name: 'Loose Bill Co', mobile: '9835230010', current_balance: 11000 }] });
+    await pick(host, 10);
+    await type(host, 'input[name="amount"]', '6000');
+
+    [...section(host).querySelectorAll('button')].find((b) => b.textContent.includes('Fill oldest first')).click();
+    await nextTick();
+
+    // 4,000 goes to the bill with no file first; 2,000 is left for F-00080.
+    expect(host.querySelector('input[name="alloc[80][amount]"]').value).toBe('2000.00');
+    expect(host.querySelector('input[name="alloc[81][amount]"]')).toBe(null);
 });

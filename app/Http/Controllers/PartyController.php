@@ -586,7 +586,8 @@ class PartyController extends Controller
         }
 
         $isCustomer = $party->party_type === 'customer';
-        $settled = PartyLedgerModel::bills($party->id, $isCustomer ? 'debit' : 'credit')['files'];
+        $ledger = PartyLedgerModel::bills($party->id, $isCustomer ? 'debit' : 'credit');
+        $settled = $ledger['files'];
 
         /*
          * What is still owed, unless asked for more. Found in review: offered
@@ -611,20 +612,28 @@ class PartyController extends Controller
 
         $ordered = collect(array_keys($open))->map(fn ($fileId) => $files[$fileId] ?? null)->filter();
 
-        return response()->json(['covered' => $covered, 'bills' => $ordered->map(function ($file) use ($open, $isCustomer, $party) {
+        return response()->json(['covered' => $covered, 'bills' => $ordered->map(function ($file) use ($open, $isCustomer, $party, $ledger) {
             // Never a cancelled work; for a vendor, only the works they were given.
-            $works = $file->items
-                ->reject(fn ($item) => $item->status === WorkFileModel::CANCELLED)
-                ->when(! $isCustomer, fn ($items) => $items->where('vendor_id', $party->id))
-                ->map(fn ($item) => $item->workType?->name)
-                ->filter()
-                ->implode(', ');
+            $works = $file->worksFor($isCustomer ? null : (int) $party->id);
+
+            /*
+             * What is still owed on bills belonging to no file that the queue
+             * reaches before this one. Found in review: without it, Fill oldest
+             * first put the payment on the file and left an older bill typed
+             * into the ledger unpaid — not what the payment does if nobody says.
+             */
+            $seq = $open[$file->id]['seq'];
+            $ahead = round(array_sum(array_map(
+                fn ($loose) => $loose['seq'] < $seq ? $loose['due'] : 0,
+                $ledger['loose']
+            )), 2);
 
             return [
                 'id' => (int) $file->id,
+                'ahead' => $ahead,
                 'fileNo' => (string) $file->file_no,
                 'vehicle' => (string) $file->registration_no,
-                'works' => $works ?: $file->workLabel(),
+                'works' => $works,
                 'received' => date('d-m-Y', strtotime($file->received_date)),
                 'charged' => $open[$file->id]['charged'],
                 'returned' => $open[$file->id]['returned'],
