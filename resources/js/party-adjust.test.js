@@ -270,6 +270,28 @@ describe('a line on a file no longer open', () => {
     });
 });
 
+it('on a line bigger than its file, Full goes to what it settles and the page says what of it is idle', async () => {
+    const shrunk = [{ ...BILLS[1], charged: 6000, open: 6000, due: 6000 }];
+    reply = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ bills: shrunk, covered: 0 }) });
+
+    const host = mount({
+        entry: { id: 31, date: '10-09-2026', side: 'Cr', amount: 10000, mode: '', reference: '', particular: 'Payment' },
+        current: { 57: '10000.00' },
+        currentLines: [{ id: 57, fileNo: 'F-00057', vehicle: 'BR01DN2536', amount: 10000, settles: 6000, why: 'It is charged only 6,000.00 now. Only 6,000.00 of this payment\'s 10,000.00 settles it now; the rest counts as on account.' }],
+        initialAlloc: { 57: '10000.00' },
+    });
+    await settle();
+
+    expect(host.textContent).toContain('It is charged only 6,000.00 now');
+    expect(host.textContent).toContain('4,000.00 settles nothing');
+
+    [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Full').click();
+    await nextTick();
+
+    expect(host.querySelector(box('F-00057')).value).toBe('6000.00');
+    expect(host.textContent).not.toContain('settles nothing and counts');
+});
+
 it('lets a line stay above what is open when the payment has it already', async () => {
     const tight = [{ ...BILLS[1], open: 2000, due: 2000 }];
     reply = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ bills: tight, covered: 0 }) });

@@ -258,6 +258,25 @@ class ReadjustPaymentTest extends TestCase
         $this->assertSame([], $this->owed());
     }
 
+    /** Two payments the same day: the one entered first counts for the second, never the other way. */
+    public function test_a_payment_the_same_day_counts_only_if_it_was_entered_first(): void
+    {
+        $older = $this->file(3000, '2026-08-01');
+        $newer = $this->file(3000, '2026-09-01');
+        $first = $this->pay(3000, [], null, '2026-09-10');
+        $second = $this->pay(3000, [], null, '2026-09-10');
+
+        $this->assertLessThan($second->id, $first->id, 'the premise: entered in this order');
+
+        $asSecond = PartyLedgerModel::bills($this->customer->id, 'debit', $second->id)['files'];
+        $this->assertEquals(0, $asSecond[$older->id]['due'], 'a payment entered earlier the same day was not counted');
+        $this->assertEquals(3000, $asSecond[$newer->id]['due']);
+
+        $asFirst = PartyLedgerModel::bills($this->customer->id, 'debit', $first->id)['files'];
+        $this->assertEquals(3000, $asFirst[$older->id]['due'], 'a payment entered later the same day was counted');
+        $this->assertEquals(3000, $asFirst[$newer->id]['due']);
+    }
+
     /** An older payment keeps its line on a file a newer one also claims, after the file was re-priced. */
     public function test_a_line_it_has_already_may_stay_as_it_is(): void
     {
@@ -360,6 +379,67 @@ class ReadjustPaymentTest extends TestCase
 
         $this->assertStringContainsString('Its charge was given back', $why);
         $this->assertStringContainsString('settles nothing', $why);
+    }
+
+    /** Said from the ledger as it is: what each payment's line on a re-priced file still settles. */
+    public function test_a_kept_line_says_how_much_of_it_still_settles_the_file(): void
+    {
+        $file = $this->file(16000, '2026-08-01');
+        $older = $this->pay(13000, [$file->id => 8000], null, '2026-09-08');
+        $newer = $this->pay(8000, [$file->id => 8000], null, '2026-09-09');
+
+        $reprice = function (float $to) use ($file) {
+            $file->customer_amount = $to;
+            $file->save();
+            $item = $file->items()->first();
+            $item->customer_amount = $to;
+            $item->save();
+            $file->fresh()->syncLedger();
+        };
+
+        $why = fn (PartyLedgerModel $entry) => collect($this->actingAs($this->admin)
+            ->getJson(route('party.adjust', $entry->id))->json('props.currentLines'))->keyBy('id')[$file->id];
+
+        $reprice(6000);
+
+        // The older takes all 6,000; the newer, nothing.
+        $this->assertEquals([$older->id => [$file->id => 6000], $newer->id => [$file->id => 0]], PartyLedgerModel::bills($this->customer->id, 'debit')['took']);
+
+        $line = $why($older);
+        $this->assertEquals(6000, $line['settles']);
+        $this->assertStringContainsString('It is charged only 6,000.00 now', $line['why']);
+        $this->assertStringContainsString('Only 6,000.00 of this payment\'s 8,000.00 settles it now', $line['why']);
+        $this->assertStringNotContainsString('Other payments', $line['why'], 'the others were said to hold what this one settles');
+
+        $this->assertStringContainsString('Other payments are adjusted against it.', $why($newer)['why']);
+        $this->assertStringContainsString('settles nothing on it now', $why($newer)['why']);
+
+        $reprice(12000);
+
+        // The older keeps all 8,000; the newer settles 4,000 of its line.
+        $this->assertStringContainsString('Only 4,000.00 of this payment\'s 8,000.00 settles it now', $why($newer)['why']);
+        $this->assertStringContainsString('Other payments are adjusted against the rest of it', $why($newer)['why']);
+    }
+
+    /** A line bigger than its file, still open to it: said, and Full goes no further than it settles. */
+    public function test_a_line_bigger_than_its_file_says_so_where_the_file_is_still_open(): void
+    {
+        $file = $this->file(10000, '2026-08-01');
+        $entry = $this->pay(10000, [$file->id => 10000]);
+
+        $file->customer_amount = 6000;
+        $file->save();
+        $item = $file->items()->first();
+        $item->customer_amount = 6000;
+        $item->save();
+        $file->fresh()->syncLedger();
+
+        $this->assertEquals(6000, PartyLedgerModel::bills($this->customer->id, 'debit', $entry->id)['files'][$file->id]['open'], 'the premise: open to it');
+
+        $line = collect($this->actingAs($this->admin)->getJson(route('party.adjust', $entry->id))->json('props.currentLines'))->keyBy('id')[$file->id];
+
+        $this->assertEquals(6000, $line['settles']);
+        $this->assertStringContainsString('Only 6,000.00 of this payment\'s 10,000.00 settles it now', $line['why']);
     }
 
     /** One save, one moment: the note says what it was for even when a save crosses a second. */
@@ -566,6 +646,41 @@ class ReadjustPaymentTest extends TestCase
         }
     }
 
+    /** On the payment side, but not a payment: a file's refund, and the reversal of a charge. */
+    public function test_a_credit_that_is_not_a_payment_is_not_adjusted(): void
+    {
+        $file = $this->file(3000, '2026-08-01');
+        $other = $this->file(3000, '2026-08-02');
+
+        $file->status = WorkFileModel::RETURNED;
+        $file->returned_on = now()->toDateString();
+        $file->save();
+        $file->items()->update(['status' => WorkFileModel::RETURNED]);
+        $file->fresh()->syncLedger();
+
+        $refund = PartyLedgerModel::where('work_file_id', $file->id)->where('entry_type', 'credit')->firstOrFail();
+
+        $charge = new PartyLedgerModel;
+        $charge->party_id = $this->customer->id;
+        $charge->txn_date = '2026-09-10';
+        $charge->entry_type = 'debit';
+        $charge->amount = 500;
+        $charge->particular = 'Charge typed by hand';
+        $charge->save();
+
+        $this->actingAs($this->admin)->post(route('party.reverse', $charge->id), ['reason' => 'Typed twice'])->assertSessionHas('success');
+        $reversal = PartyLedgerModel::where('reverses_id', $charge->id)->firstOrFail();
+
+        $this->assertSame('credit', $reversal->entry_type, 'the premise: on the payment side');
+
+        foreach (['comes from file' => $refund, 'not an ordinary payment' => $reversal] as $said => $entry) {
+            $this->adjust($entry, [$other->id => 100], sha1(json_encode([])))->assertSessionHasErrors('alloc');
+
+            $this->assertStringContainsString($said, session('errors')->first('alloc'));
+            $this->assertSame(0, DB::table('party_ledger_allocation')->where('entry_id', $entry->id)->count());
+        }
+    }
+
     // ---------------------------------------------------------------- vendors
 
     /** The office's payment to a vendor, put on the vendor's bill it was for. */
@@ -706,6 +821,91 @@ class ReadjustPaymentTest extends TestCase
             ->getJson(route('customer.statement'))->assertOk()->getContent();
 
         $this->assertStringNotContainsString('Files changed', $said);
+    }
+
+    /** Typed on account and put on a file straight after: noted, not taken for part of the same save. */
+    public function test_a_payment_put_on_a_file_straight_after_it_was_typed_is_noted(): void
+    {
+        $file = $this->file(3000, '2026-08-01');
+        $entry = $this->pay(3000);
+        $drawn = $this->drawn($entry);
+
+        Carbon::setTestNow(now()->addSeconds(30));
+
+        try {
+            $this->adjust($entry, [$file->id => 3000], $drawn)->assertSessionHas('success');
+            $history = $this->actingAs($this->admin)->getJson(route('party.adjust', $entry->id))->json('props.history');
+        } finally {
+            Carbon::setTestNow();
+        }
+
+        $this->assertStringContainsString('was on account', (string) $history);
+    }
+
+    /** Changed twice: each change keeps who let go of what, and the note speaks of the last. */
+    public function test_a_second_change_keeps_the_record_of_the_first(): void
+    {
+        $a = $this->file(3000, '2026-08-01');
+        $b = $this->file(3000, '2026-08-02');
+        $c = $this->file(3000, '2026-08-03');
+        $entry = $this->pay(3000, [$a->id => 3000]);
+
+        $first = $this->admin;
+        $second = new User;
+        $second->name = 'Second Clerk';
+        $second->email = 'second-'.uniqid().'@example.com';
+        $second->password = Hash::make('password-for-tests');
+        $second->user_type = 1;
+        $second->save();
+
+        $t1 = now()->addDay()->startOfSecond();
+        $t2 = now()->addDays(2)->startOfSecond();
+
+        try {
+            Carbon::setTestNow($t1);
+            $this->adjust($entry, [$b->id => 3000])->assertSessionHas('success');
+
+            Carbon::setTestNow($t2);
+            $this->admin = $second;
+            $this->adjust($entry, [$c->id => 3000])->assertSessionHas('success');
+        } finally {
+            Carbon::setTestNow();
+            $this->admin = $first;
+        }
+
+        $old = DB::table('party_ledger_allocation')->where('entry_id', $entry->id)->where('work_file_id', $a->id)->first();
+        $this->assertSame($t1->format('Y-m-d H:i:s'), (string) $old->released_at, 'the first release was stamped over');
+        $this->assertSame($first->id, (int) $old->released_by, 'who let A go was overwritten');
+
+        $note = collect($this->actingAs($this->admin)->getJson(route('party.statement', $this->customer->id))->json('props.rows'))
+            ->keyBy('id')[$entry->id]['office_note'];
+
+        $this->assertStringContainsString('Files changed '.$t2->format('d-m-Y').' by Second Clerk', $note);
+        $this->assertStringContainsString('was '.$b->file_no, $note);
+        $this->assertStringNotContainsString($a->file_no, $note);
+    }
+
+    /** What the customer is told a moved payment is for: the file it is on now, and only that. */
+    public function test_both_statements_say_only_what_it_is_for_now(): void
+    {
+        $first = $this->file(3000, '2026-08-01');
+        $second = $this->file(3000, '2026-08-02');
+        $entry = $this->pay(3000, [$first->id => 3000]);
+
+        $this->adjust($entry, [$second->id => 3000])->assertSessionHas('success');
+
+        $office = collect($this->actingAs($this->admin)->getJson(route('party.statement', $this->customer->id))->json('props.rows'))
+            ->keyBy('id')[$entry->id]['against'];
+
+        $this->assertStringContainsString($second->registration_no, $office);
+        $this->assertStringNotContainsString('·', $office, 'a released line is still named');
+        $this->assertStringContainsString('3,000.00', $office);
+
+        $said = collect($this->withSession(['customer_id' => $this->customer->id])
+            ->getJson(route('customer.statement'))->assertOk()->json('props.rows'))->keyBy('id')[$entry->id]['against'] ?? null;
+
+        $this->assertStringContainsString($second->registration_no, (string) $said);
+        $this->assertStringNotContainsString('·', (string) $said, 'the customer was told of a released line');
     }
 
     /** An old payment put on a file for the first time: it was on account. */

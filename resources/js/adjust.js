@@ -22,9 +22,10 @@ import { money } from './money';
  * @param {() => boolean} options.active  whether the section is on screen at all
  * @param {number|null} [options.except]  a saved payment being re-adjusted: its
  *     own adjustments and its money are left out of what the files show
- * @param {Array<{id: number, fileNo: string, vehicle: string, amount: number, why: ?string}>} [options.kept]
+ * @param {Array<{id: number, fileNo: string, vehicle: string, amount: number, settles: number, why: ?string}>} [options.kept]
  *     what that payment is adjusted against now, each of which may stay as it
- *     is or be lowered even where the file is no longer open
+ *     is or be lowered even where the file is no longer open; what each settles
+ *     now, and why it is said apart when it is
  */
 export function useAdjust(options) {
     const alloc = reactive({ ...options.initialAlloc });
@@ -40,6 +41,7 @@ export function useAdjust(options) {
      */
     const kept = new Map((options.kept ?? []).map((line) => [String(line.id), line]));
     const keptAmount = (id) => Number(kept.get(String(id))?.amount) || 0;
+    const keptSettles = (id) => Number(kept.get(String(id))?.settles ?? kept.get(String(id))?.amount) || 0;
 
     /*
      * Every open file is fetched once; which of them are drawn is worked out here.
@@ -191,7 +193,28 @@ export function useAdjust(options) {
     // As much as is open, or as much as the payment has on it already.
     const limitOf = (bill) => Math.max(Number(bill.open) || 0, keptAmount(bill.id));
 
+    /*
+     * What Full puts: as much as is open, or as much as its line settles now —
+     * not the line itself. Found in review: a line bigger than its file, since
+     * re-priced, was put back whole, and the page counted all of it as on the
+     * file.
+     */
+    const fullOf = (bill) => Math.max(Number(bill.open) || 0, keptSettles(bill.id));
+
     const keptOn = (bill) => keptAmount(bill.id);
+
+    // Why a line of its own is said apart, when it is.
+    const keptWhy = (bill) => kept.get(String(bill.id))?.why ?? null;
+
+    /*
+     * Of what is against files, what settles nothing while its line stays as
+     * it is: the part of a line of its own above what that line settles now.
+     */
+    const idle = computed(() => [...kept.values()].reduce((sum, line) => {
+        const now = Math.min(Math.max(0, amountOf(line)), keptAmount(line.id));
+
+        return sum + Math.max(0, now - keptSettles(line.id));
+    }, 0));
 
     const isCovered = (bill) => Number(bill.due) <= 0.005;
 
@@ -277,7 +300,7 @@ export function useAdjust(options) {
     }
 
     function full(bill) {
-        alloc[bill.id] = limitOf(bill).toFixed(2);
+        alloc[bill.id] = fullOf(bill).toFixed(2);
     }
 
     // A line on a file not listed, back to what the payment has on it.
@@ -304,6 +327,8 @@ export function useAdjust(options) {
         overKept,
         keptRows,
         keptOn,
+        keptWhy,
+        idle,
         keep,
         loadBills,
         forget,

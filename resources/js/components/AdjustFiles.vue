@@ -40,6 +40,8 @@ const {
     overKept,
     keptRows,
     keptOn,
+    keptWhy,
+    idle,
     keep,
     fillOldest,
     clear,
@@ -99,6 +101,7 @@ const {
                     <span v-if="bill.adjusted > 0">Adjusted {{ money(bill.adjusted) }}</span>
                     <strong>Open {{ money(bill.open) }}</strong>
                     <span v-if="keptOn(bill) > 0" class="ui-sub">This payment has {{ money(keptOn(bill)) }} on it now</span>
+                    <span v-if="keptWhy(bill)" class="ui-sub adjust__why">{{ keptWhy(bill) }}</span>
                     <span v-if="bill.due < bill.open - 0.005" class="ui-sub">
                         {{ bill.due > 0.005 ? 'partly' : 'already' }} covered by {{ coveredBy }}
                     </span>
@@ -169,6 +172,9 @@ const {
         <div v-if="visibleBills.length || keptRows.length" class="adjust__foot" :class="{ 'is-error': problem }">
             <span>Against files <strong>{{ money(allocated) }}</strong></span>
             <span>On account <strong>{{ money(onAccount) }}</strong></span>
+            <span v-if="idle > 0.005" class="ui-hint">
+                Of the files, {{ money(idle) }} settles nothing and counts as on account while those lines stay as they are.
+            </span>
             <span v-if="problem" class="adjust__error">{{ problem }}</span>
         </div>
     </section>
@@ -244,6 +250,10 @@ const {
 
 .adjust .adjust__row.is-over {
     background: var(--cr-050);
+}
+
+.adjust .adjust__why {
+    color: var(--cr-700);
 }
 
 .adjust .adjust__row--kept {

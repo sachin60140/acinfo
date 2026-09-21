@@ -213,7 +213,10 @@ const blocked = computed(() => reason.value.trim() === '');
                                 placeholder="e.g. Typed on the wrong account"></textarea>
                             <!-- Said of either party: found in review saying "the
                                  customer" on a vendor's statement. -->
-                            <div class="ui-hint">Kept for the office and never shown on the statement, which shows only that the entry was reversed.</div>
+                            <div class="ui-hint">
+                                Kept for the office: shown under the reversal on this screen only. Printed, exported and
+                                portal statements show only that the entry was reversed.
+                            </div>
                         </div>
                     </div>
 

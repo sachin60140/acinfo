@@ -399,7 +399,8 @@ class PartyController extends Controller
 
                 $entry->save();
 
-                self::allocate($entry->id, (int) $req->party_id, $lines);
+                // Its lines at its own moment, so they are known as written with it.
+                self::allocate($entry->id, (int) $req->party_id, $lines, $entry->created_at);
 
                 return $entry;
             });
@@ -750,12 +751,17 @@ class PartyController extends Controller
                 $events[$row->entry_id][] = ['at' => (string) $row->released_at, 'by' => $row->released_by];
             }
 
-            // Written with the payment, or later: a minute's grace for the
-            // same save, and a payment older than the table was never adjusted
-            // when it was typed.
+            /*
+             * Written with the payment, or later. A payment's own lines carry
+             * its moment exactly; the two seconds' grace is for those written
+             * before they did, a call apart. Found in review: a minute's grace
+             * missed a payment typed on account and put on a file straight
+             * after. A payment older than the table was never adjusted when it
+             * was typed.
+             */
             $entryCreated = $row->entry_created ? strtotime((string) $row->entry_created) : null;
 
-            if ($row->created_at && ($entryCreated === null || strtotime((string) $row->created_at) > $entryCreated + 60)) {
+            if ($row->created_at && ($entryCreated === null || strtotime((string) $row->created_at) > $entryCreated + 2)) {
                 $events[$row->entry_id][] = ['at' => (string) $row->created_at, 'by' => $row->created_by];
             }
         }
@@ -800,31 +806,48 @@ class PartyController extends Controller
     }
 
     /**
-     * Why a payment's own line is drawn apart on the Adjust screen, or null
-     * when its file is open to it and drawn with the rest.
+     * What the Adjust screen says about one of a payment's own lines, or null
+     * when there is nothing to say: its file is open to it and the line
+     * settles all of itself.
      *
-     * @param  array<string, float>|null  $bill  the file as the Adjust screen reads it
-     * @param  float  $took  what the line settles now, in the ledger as it is
+     * Found over two reviews: said from the view with the payment left out,
+     * a file whose charge was given back was said to be kept, and a file
+     * re-priced below an older payment's line was said to be held by "other
+     * payments" when that payment settled all of it and the others nothing.
+     * What the line settles, and what the others do, are read from the ledger
+     * as it is; the view with the payment left out says only whether the file
+     * is still open to it.
+     *
+     * @param  array<string, float>|null  $view  the file with this payment left out
+     * @param  array<string, float>|null  $real  the file in the ledger as it is
+     * @param  float  $took  what this line settles now
      */
-    private static function keptWhy(?array $bill, float $amount, float $took, string $type): ?string
+    private static function keptWhy(?array $view, ?array $real, float $amount, float $took, string $type): ?string
     {
-        if (! $bill || $bill['charged'] <= 0.005) {
+        if (! $view || $view['charged'] <= 0.005) {
             return $type === 'vendor'
                 ? "No longer this vendor's — cancelled, or given to another vendor. Kept for when it is theirs again; until then it counts as on account."
                 : 'Not charged to this customer now — cancelled, or given to another customer. Kept for when it is charged again; until then it counts as on account.';
         }
 
-        if ($bill['open'] > 0.005) {
+        $settlesAll = $took >= $amount - 0.005;
+
+        if ($settlesAll && $view['open'] > 0.005) {
             return null;
         }
 
-        $cause = $bill['charged'] - $bill['returned'] <= 0.005
-            ? 'Its charge was given back.'
-            : ($bill['adjusted'] > 0.005 ? 'Other payments are adjusted against the rest of it.' : 'Nothing more is open on it.');
-
         $money = fn ($value) => number_format($value, 2, '.', ',');
+        $charged = ($real['charged'] ?? $view['charged']) - ($real['returned'] ?? $view['returned']);
+        $others = ($real['adjusted'] ?? 0) - $took;
 
-        if ($took >= $amount - 0.005) {
+        $cause = match (true) {
+            $charged <= 0.005 => 'Its charge was given back.',
+            $others > 0.005 => $took > 0.005 ? 'Other payments are adjusted against the rest of it.' : 'Other payments are adjusted against it.',
+            $took >= $charged - 0.005 => 'It is charged only '.$money($charged).' now.',
+            default => 'Nothing more is open on it.',
+        };
+
+        if ($settlesAll) {
             return $cause.' This payment keeps its '.$money($amount).' on it.';
         }
 
@@ -993,15 +1016,19 @@ class PartyController extends Controller
          * whose charge was given back was said to keep what it had, when it
          * settled nothing and its money was on account.
          */
-        $took = PartyLedgerModel::bills($party->id, $side)['took'][$entry->id] ?? [];
+        $ledger = PartyLedgerModel::bills($party->id, $side);
+        $took = $ledger['took'][$entry->id] ?? [];
 
-        $currentLines = collect($live)->map(function ($amount, $fileId) use ($bills, $files, $type, $took) {
+        $currentLines = collect($live)->map(function ($amount, $fileId) use ($bills, $ledger, $files, $type, $took) {
             return [
                 'id' => (int) $fileId,
                 'fileNo' => (string) ($files[$fileId]->file_no ?? 'File #'.$fileId),
                 'vehicle' => (string) ($files[$fileId]->registration_no ?? ''),
                 'amount' => (float) $amount,
-                'why' => self::keptWhy($bills[$fileId] ?? null, (float) $amount, (float) ($took[$fileId] ?? 0), $type),
+                // What it settles now: Full goes no further, and the page says
+                // what of it counts as on account.
+                'settles' => (float) ($took[$fileId] ?? 0),
+                'why' => self::keptWhy($bills[$fileId] ?? null, $ledger['files'][$fileId] ?? null, (float) $amount, (float) ($took[$fileId] ?? 0), $type),
             ];
         })->values()->all();
 
