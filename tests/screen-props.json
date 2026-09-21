@@ -354,6 +354,48 @@
             "today": "string"
         }
     },
+    "file-in-house": {
+        "vue-inhouse-work": {
+            "columns": [
+                "file_no:link",
+                "registration_no:text",
+                "customer:link",
+                "work:text",
+                "received:text",
+                "kept_on:text",
+                "status:badge",
+                "charged:money"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "charged": "number",
+                    "customer": "string",
+                    "customer_id": "number",
+                    "customer_url": "string",
+                    "days": "number",
+                    "days_text": "string",
+                    "edit_url": "string",
+                    "file_id": "number",
+                    "file_no": "string",
+                    "id": "number",
+                    "kept_on": "string",
+                    "kept_raw": "string",
+                    "received": "string",
+                    "received_raw": "string",
+                    "registration_no": "string",
+                    "status": "string",
+                    "status_key": "string",
+                    "work": "string"
+                }
+            },
+            "title": "string",
+            "totals": {
+                "charged": "string"
+            }
+        }
+    },
     "file-papers": {
         "vue-paper-checklist": {
             "action": "string",

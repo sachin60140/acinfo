@@ -77,6 +77,7 @@ class SidebarTest extends TestCase
             'receive files' => ['admin/file/receive', 'Receive Files'],
             'paper audit' => ['admin/file/audit', 'Paper Audit'],
             'give to vendor' => ['admin/file/assign', 'Give to Vendor'],
+            'in-house work' => ['admin/file/in-house', 'In-house Work'],
             'return from vendor' => ['admin/file/vendor-return', 'Return from Vendor'],
             'return to customer' => ['admin/file/customer-return', 'Return to Customer'],
             'hand over papers' => ['admin/file/handover', 'Hand Over Papers'],
@@ -412,7 +413,7 @@ class SidebarTest extends TestCase
         foreach ([
             'Dashboard', 'Add Client Ledger', 'View Client', 'Receipt', 'Payment',
             'Vendor Ledger', 'Customer Ledger',
-            'Receive Files', 'Paper Audit', 'Give to Vendor', 'Return from Vendor', 'Return to Customer', 'Hand Over Papers',
+            'Receive Files', 'Paper Audit', 'Give to Vendor', 'In-house Work', 'Return from Vendor', 'Return to Customer', 'Hand Over Papers',
             'Update Status', 'Approved Files', 'All Work Files', 'Work Types', 'Expense Types', 'Paper Types',
             'Profit Report', 'Work Report', 'Expense Report',
         ] as $item) {
