@@ -11,6 +11,8 @@
  */
 import { computed, ref } from 'vue';
 import DataGrid from './DataGrid.vue';
+import { vendorFilesMessage } from '../vendorShare';
+import { copyText, whatsappNumber, whatsappUrl } from '../whatsapp';
 import WorkUpdateDialog from './WorkUpdateDialog.vue';
 
 const props = defineProps({
@@ -30,6 +32,14 @@ const props = defineProps({
     emptyText: { type: String, default: 'Nothing to show.' },
     lead: { type: Array, default: () => [] },
     tail: { type: Array, default: () => [] },
+
+    /*
+     * Which report this is. Only the vendor-wise one offers to send its list:
+     * a customer is never told a file went to a vendor, and a list of dispatch
+     * dates and days out would tell them exactly that.
+     */
+    partyType: { type: String, default: '' },
+    todayLabel: { type: String, default: '' },
 
     // What the dialog needs, and nothing the grid cares about.
     action: { type: String, default: '' },
@@ -65,6 +75,53 @@ const gridProps = computed(() => ({
 const editing = ref(null);
 
 /*
+ * Sending a vendor the files they are holding.
+ *
+ * One band is one vendor, so the buttons sit on the band's own heading and
+ * send exactly the rows under it — which the grid has already narrowed by any
+ * search typed above it. The vendor's number rides on those rows rather than
+ * being a prop of its own, because a report can hold a dozen vendors at once.
+ */
+const canShare = computed(() => props.partyType === 'vendor');
+
+const vendorOf = (band) => band.rows?.[0] ?? {};
+
+const bandMessage = (band) => vendorFilesMessage(
+    vendorOf(band).party_name || band.label,
+    band.rows ?? [],
+    props.todayLabel
+);
+
+const bandNumber = (band) => whatsappNumber(vendorOf(band).party_mobile);
+
+const copiedBand = ref(null);
+
+async function copyBand(band) {
+    if (await copyText(bandMessage(band))) {
+        copiedBand.value = band.label;
+
+        setTimeout(() => {
+            if (copiedBand.value === band.label) {
+                copiedBand.value = null;
+            }
+        }, 2500);
+    }
+}
+
+function sendBand(band) {
+    window.open(whatsappUrl(bandNumber(band), bandMessage(band)), '_blank', 'noopener');
+}
+
+/* Said before anything is clicked, so nobody finds out where it went afterwards. */
+const sendTitle = (band) => {
+    const number = bandNumber(band);
+
+    return number
+        ? `Opens a chat with ${vendorOf(band).party_name} on +91 ${number.slice(2, 7)} ${number.slice(7)}. Nothing is sent until you press Send.`
+        : `${vendorOf(band).party_name || 'This vendor'} has no mobile number WhatsApp can use — you will choose the chat yourself.`;
+};
+
+/*
  * A row with no works has nothing to move. It should not have offered a button
  * at all, and opening an empty dialog over the report would be a worse way of
  * saying so than the disabled cell the server sends.
@@ -80,7 +137,30 @@ function onAction(row) {
 
 <template>
     <div>
-        <DataGrid v-bind="gridProps" @action="onAction" />
+        <DataGrid v-bind="gridProps" @action="onAction">
+            <template #band="{ band }">
+                <span class="wr-band">
+                    <span class="wr-band__label">{{ band.label }}</span>
+
+                    <!-- type="button" so nothing around this table can ever be
+                         submitted by a click meant for WhatsApp. -->
+                    <span v-if="canShare && band.rows && band.rows.length" class="wr-band__share">
+                        <button type="button" class="ui-btn ui-btn--sm" @click="copyBand(band)">
+                            <i class="bi" :class="copiedBand === band.label ? 'bi-check2' : 'bi-clipboard'"></i>
+                            {{ copiedBand === band.label ? 'Copied' : 'Copy list' }}
+                        </button>
+                        <button
+                            type="button"
+                            class="ui-btn ui-btn--sm wr-band__wa"
+                            :title="sendTitle(band)"
+                            @click="sendBand(band)">
+                            <i class="bi bi-whatsapp"></i>
+                            Send on WhatsApp
+                        </button>
+                    </span>
+                </span>
+            </template>
+        </DataGrid>
 
         <WorkUpdateDialog
             :file="editing"
@@ -96,3 +176,33 @@ function onAction(row) {
             @close="editing = null" />
     </div>
 </template>
+
+<style>
+/* The vendor's name on the left and the ways to send them their list on the
+   right, on the band that already says whose files these are. */
+.wr-band {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-3);
+    justify-content: space-between;
+}
+
+.wr-band__share {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+}
+
+/* WhatsApp's own green, the same as on Paper Audit. */
+.wr-band__wa {
+    background: #25d366;
+    border-color: #1ebe5b;
+    color: #fff;
+}
+
+.wr-band__wa:hover {
+    background: #1ebe5b;
+    color: #fff;
+}
+</style>

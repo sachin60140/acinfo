@@ -1334,6 +1334,7 @@
                 "part_pesi_required": "string",
                 "under_verification": "string"
             },
+            "partyType": "string",
             "pendencyKey": "string",
             "perPage": "number",
             "reasonKeys": {
@@ -1365,6 +1366,7 @@
                     "margin": "number",
                     "party_band": "string",
                     "party_id": "number",
+                    "party_mobile": "string",
                     "party_name": "string",
                     "received": "string",
                     "received_sort": "string",
@@ -1382,6 +1384,7 @@
             },
             "title": "string",
             "today": "string",
+            "todayLabel": "string",
             "totals": {
                 "billed": "string",
                 "cost": "string",
@@ -1436,6 +1439,7 @@
                 "part_pesi_required": "string",
                 "under_verification": "string"
             },
+            "partyType": "string",
             "pendencyKey": "string",
             "perPage": "number",
             "reasonKeys": {
@@ -1467,6 +1471,7 @@
                     "margin": "number",
                     "party_band": "string",
                     "party_id": "number",
+                    "party_mobile": "string",
                     "party_name": "string",
                     "received": "string",
                     "received_sort": "string",
@@ -1484,6 +1489,7 @@
             },
             "title": "string",
             "today": "string",
+            "todayLabel": "string",
             "totals": {
                 "billed": "string",
                 "cost": "string",

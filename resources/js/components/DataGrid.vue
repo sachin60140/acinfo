@@ -801,7 +801,13 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                         <!-- A band heading spans every column, so the row still has
                              the cell count the header promises. -->
                         <tr v-if="groupBy" class="grid__band">
-                            <td :colspan="shown.length">{{ band.label }}</td>
+                            <!-- A slot, defaulting to the label, so a screen that wants
+                                 to put something on a band's heading can without every
+                                 other screen changing: WorkReport sends a vendor their
+                                 list from here. -->
+                            <td :colspan="shown.length">
+                                <slot name="band" :band="band">{{ band.label }}</slot>
+                            </td>
                         </tr>
 
                         <tr v-for="(row, i) in band.rows" :key="row.id ?? i" :class="rowClass ? row[rowClass] : ''">
