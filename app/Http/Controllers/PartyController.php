@@ -333,7 +333,8 @@ class PartyController extends Controller
 
                 // The files this payment is adjusted against, keyed by file;
                 // see below. An empty box is no line at all.
-                'alloc' => 'nullable|array|max:200',
+                // No count here: the limit is on lines with an amount, below.
+                'alloc' => 'nullable|array',
                 'alloc.*.work_file_id' => 'required|integer',
                 'alloc.*.amount' => 'nullable|numeric|min:0|max:99999999',
             ], [
@@ -345,13 +346,26 @@ class PartyController extends Controller
              * is for. What it does not cover settles the oldest charges, as
              * every payment did before; see PartyLedgerModel::settle().
              */
+            // Rounded before anything is judged, so an amount too small to be
+            // a paisa is no line at all rather than a line of 0.00.
             $lines = collect((array) $req->input('alloc', []))
-                ->filter(fn ($line) => is_array($line) && (float) ($line['amount'] ?? 0) > 0)
+                ->filter(fn ($line) => is_array($line))
                 ->map(fn ($line) => [
-                    'work_file_id' => (int) $line['work_file_id'],
-                    'amount' => round((float) $line['amount'], 2),
+                    'work_file_id' => (int) ($line['work_file_id'] ?? 0),
+                    'amount' => round((float) ($line['amount'] ?? 0), 2),
                 ])
+                ->filter(fn ($line) => $line['amount'] > 0)
                 ->values();
+
+            /*
+             * Counted after the empty boxes are gone. Found in review: the
+             * screen once posted a box for every file listed, and a limit on
+             * the raw count refused every payment from a party with more than
+             * two hundred files — even one adjusted against nothing.
+             */
+            if ($lines->count() > 200) {
+                return back()->withInput()->withErrors(['alloc' => 'A payment can be adjusted against at most 200 files at a time.']);
+            }
 
             // A customer pays with a credit; the office pays a vendor with a debit.
             $paymentSide = $type === 'customer' ? 'credit' : 'debit';
@@ -563,28 +577,48 @@ class PartyController extends Controller
      * A vendor sees only their own share of a folder split between vendors,
      * and only the works they were given.
      */
-    public function bills($id)
+    public function bills(Request $req, $id)
     {
         $party = PartyModel::findOrFail($id);
 
         if (! PartyLedgerModel::adjustable()) {
-            return response()->json(['bills' => []]);
+            return response()->json(['bills' => [], 'covered' => 0]);
         }
 
         $isCustomer = $party->party_type === 'customer';
         $settled = PartyLedgerModel::bills($party->id, $isCustomer ? 'debit' : 'credit')['files'];
-        $open = array_filter($settled, fn ($bill) => $bill['open'] > 0.005);
+
+        /*
+         * What is still owed, unless asked for more. Found in review: offered
+         * every file with anything not adjusted against it, a dealer's list was
+         * every file they had ever been charged for — years of it, paid long
+         * ago by money nobody adjusted. Those are "covered" and offered only
+         * when asked, for moving money already on account onto one file.
+         */
+        $all = $req->boolean('all');
+        $covered = count(array_filter($settled, fn ($bill) => $bill['open'] > 0.005 && $bill['due'] <= 0.005));
+
+        $open = array_filter($settled, fn ($bill) => $all ? $bill['open'] > 0.005 : $bill['due'] > 0.005);
+
+        // In the order unadjusted money reaches them — the ledger's, by the
+        // day each was charged — so "fill oldest first" does what it says.
+        uasort($open, fn ($a, $b) => $a['seq'] <=> $b['seq']);
 
         $files = WorkFileModel::with('items.workType')
             ->whereIn('id', array_keys($open))
-            ->orderBy('received_date')
-            ->orderBy('id')
-            ->get();
+            ->get()
+            ->keyBy('id');
 
-        return response()->json(['bills' => $files->map(function ($file) use ($open, $isCustomer, $party) {
-            $works = $isCustomer
-                ? $file->workLabel()
-                : $file->items->where('vendor_id', $party->id)->map(fn ($item) => $item->workType?->name)->filter()->implode(', ');
+        $ordered = collect(array_keys($open))->map(fn ($fileId) => $files[$fileId] ?? null)->filter();
+
+        return response()->json(['covered' => $covered, 'bills' => $ordered->map(function ($file) use ($open, $isCustomer, $party) {
+            // Never a cancelled work; for a vendor, only the works they were given.
+            $works = $file->items
+                ->reject(fn ($item) => $item->status === WorkFileModel::CANCELLED)
+                ->when(! $isCustomer, fn ($items) => $items->where('vendor_id', $party->id))
+                ->map(fn ($item) => $item->workType?->name)
+                ->filter()
+                ->implode(', ');
 
             return [
                 'id' => (int) $file->id,

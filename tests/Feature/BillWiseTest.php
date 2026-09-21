@@ -364,7 +364,150 @@ class BillWiseTest extends TestCase
         $this->assertSame((string) $a->id, (string) array_key_first($props['initialAlloc']));
     }
 
+    // ------------------------------------------------- found in review: the save
+
+    /** Empty boxes are not lines: a party with hundreds of files can still be paid. */
+    public function test_hundreds_of_empty_lines_do_not_refuse_the_payment(): void
+    {
+        $a = $this->file(3000, '2026-08-01');
+
+        $alloc = [];
+
+        for ($i = 1; $i <= 250; $i++) {
+            $alloc[1000000 + $i] = ['work_file_id' => 1000000 + $i, 'amount' => ''];
+        }
+
+        $alloc[$a->id] = ['work_file_id' => $a->id, 'amount' => ''];
+
+        $this->actingAs($this->admin)->from(route('party.entry', 'customer'))->post(route('party.entry', 'customer'), [
+            'party_id' => $this->customer->id,
+            'entry_type' => 'credit',
+            'txn_date' => '2026-09-20',
+            'amount' => 3000,
+            'payment_mode' => 'UPI',
+            'particular' => 'Payment',
+            'alloc' => $alloc,
+        ])->assertSessionHasNoErrors()->assertSessionHas('success');
+    }
+
+    /** Rounded before it is judged: less than a paisa is no line, not a line of 0.00. */
+    public function test_an_amount_under_a_paisa_is_no_line_at_all(): void
+    {
+        $a = $this->file(3000, '2026-08-01');
+
+        $this->pay(3000, [$a->id => 0.004])->assertSessionHas('success');
+
+        $this->assertSame(0, DB::table('party_ledger_allocation')->where('party_id', $this->customer->id)->count());
+        $this->assertSame([], session('receipt')['against']);
+    }
+
     // ------------------------------------------------------------ the list
+
+    /**
+     * Found in review: every file ever charged was offered, paid long ago by
+     * money nobody adjusted. Only what is still owed, unless asked for more.
+     */
+    public function test_files_already_covered_by_money_on_account_are_listed_only_when_asked(): void
+    {
+        $old = $this->file(3000, '2026-08-01');
+        $new = $this->file(5000, '2026-09-01');
+        $this->pay(3000);
+
+        $url = route('party.bills', $this->customer->id);
+
+        $default = $this->actingAs($this->admin)->getJson($url)->assertOk()->json();
+        $this->assertSame([$new->id], array_column($default['bills'], 'id'));
+        $this->assertSame(1, $default['covered']);
+
+        $all = $this->actingAs($this->admin)->getJson($url.'?all=1')->assertOk()->json('bills');
+        $this->assertSame([$old->id, $new->id], array_column($all, 'id'));
+        $this->assertEquals(0, $all[0]['due']);
+        $this->assertEquals(3000, $all[0]['open']);
+    }
+
+    // ---------------------------------------------- found in review: the label
+
+    /** A file given to someone else since: the payer's statement must not name their vehicle. */
+    public function test_a_file_moved_to_another_customer_is_not_named_on_the_payers_statement(): void
+    {
+        $b = $this->file(5000, '2026-09-01');
+        $this->pay(5000, [$b->id => 5000]);
+
+        $b->customer_id = $this->party('customer')->id;
+        $b->registration_no = 'BR01ZZ9999';
+        $b->save();
+        $b->syncLedger();
+
+        $entry = PartyLedgerModel::where('party_id', $this->customer->id)->whereNull('work_file_id')->latest('id')->value('id');
+
+        $this->assertSame([], PartyLedgerModel::againstFor([$entry]));
+
+        $said = json_encode($this->actingAs($this->admin)->getJson(route('party.statement', $this->customer->id))->json('props'));
+        $this->assertStringNotContainsString('BR01ZZ9999', $said);
+    }
+
+    /** The charge above it leaves a cancelled work out; so does the line under it. */
+    public function test_a_cancelled_work_is_not_named_against_a_payment(): void
+    {
+        $file = $this->file(3000, '2026-08-01');
+
+        $hpa = new WorkTypeModel;
+        $hpa->name = 'HPA '.uniqid();
+        $hpa->is_active = 1;
+        $hpa->save();
+
+        $cancelled = new WorkFileItemModel;
+        $cancelled->work_file_id = $file->id;
+        $cancelled->work_type_id = $hpa->id;
+        $cancelled->customer_amount = 0;
+        $cancelled->status = WorkFileModel::CANCELLED;
+        $cancelled->save();
+
+        $this->pay(3000, [$file->id => 3000]);
+
+        $label = session('receipt')['against'][0]['label'];
+
+        $this->assertStringContainsString($this->tr->name, $label);
+        $this->assertStringNotContainsString($hpa->name, $label);
+    }
+
+    /** A folder split between two vendors: each vendor's line names only their own works. */
+    public function test_a_vendors_line_names_only_the_works_they_were_given(): void
+    {
+        $mine = $this->party('vendor');
+        $theirs = $this->party('vendor');
+        $file = $this->file(3000, '2026-08-01', null, $mine, 1800);
+
+        $hpa = new WorkTypeModel;
+        $hpa->name = 'HPA '.uniqid();
+        $hpa->is_active = 1;
+        $hpa->save();
+
+        $other = new WorkFileItemModel;
+        $other->work_file_id = $file->id;
+        $other->work_type_id = $hpa->id;
+        $other->customer_amount = 2000;
+        $other->vendor_id = $theirs->id;
+        $other->vendor_amount = 1200;
+        $other->vendor_date = '2026-08-01';
+        $other->status = WorkFileModel::DISPATCHED;
+        $other->save();
+        $file->load('items');
+        $file->rollUp();
+        $file->save();
+        $file->syncLedger();
+
+        $this->pay(1800, [$file->id => 1800], $mine)->assertSessionHas('success');
+
+        $entry = PartyLedgerModel::where('party_id', $mine->id)->whereNull('work_file_id')->latest('id')->value('id');
+        $label = PartyLedgerModel::againstFor([$entry])[$entry][0]['label'];
+
+        $this->assertStringContainsString($this->tr->name, $label);
+        $this->assertStringNotContainsString($hpa->name, $label, 'another vendor\'s work was named');
+
+        $bills = $this->actingAs($this->admin)->getJson(route('party.bills', $mine->id).'?all=1')->json('bills');
+        $this->assertStringNotContainsString($hpa->name, $bills[0]['works'] ?? '');
+    }
 
     public function test_the_entry_screen_lists_the_files_still_open_oldest_first(): void
     {

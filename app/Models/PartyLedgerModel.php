@@ -213,7 +213,7 @@ class PartyLedgerModel extends Model
      * a file open for 5,000 and due nothing: paying 5,000 "for that file"
      * settles it and moves the advance on to the next.
      *
-     * @return array{files: array<int, array{charged: float, returned: float, adjusted: float, open: float, due: float}>, unadjusted: array<int, float>}
+     * @return array{files: array<int, array{charged: float, returned: float, adjusted: float, open: float, due: float, seq: int}>, unadjusted: array<int, float>}
      */
     public static function bills(int $partyId, string $chargeSide = 'debit'): array
     {
@@ -278,25 +278,30 @@ class PartyLedgerModel extends Model
     private static function settle($rows, $allocations, string $chargeSide): array
     {
         $charges = [];
+        // Where each file's charges sit in the queue, so taking from one file
+        // looks at that file's charges and not the party's whole history.
+        // Found in review: scanning every charge for every adjustment grew with
+        // the square of a big dealer's files, on every dashboard load.
+        $byFile = [];
         $files = [];
         $held = [];
         $pool = 0.0;
 
         $file = function (int $id) use (&$files) {
-            $files[$id] ??= ['charged' => 0.0, 'returned' => 0.0, 'adjusted' => 0.0, 'open' => 0.0, 'due' => 0.0];
+            $files[$id] ??= ['charged' => 0.0, 'returned' => 0.0, 'adjusted' => 0.0, 'open' => 0.0, 'due' => 0.0, 'seq' => 0];
         };
 
         // Take up to $amount from one file's charges still left, oldest first.
-        $take = function (int $fileId, float $amount) use (&$charges): float {
+        $take = function (int $fileId, float $amount) use (&$charges, &$byFile): float {
             $taken = 0.0;
 
-            foreach ($charges as $i => $charge) {
+            foreach ($byFile[$fileId] ?? [] as $i) {
                 if ($amount - $taken <= 0.005) {
                     break;
                 }
 
-                if ($charge['file_id'] === $fileId && $charge['left'] > 0.005) {
-                    $bite = min($charge['left'], $amount - $taken);
+                if ($charges[$i]['left'] > 0.005) {
+                    $bite = min($charges[$i]['left'], $amount - $taken);
                     $charges[$i]['left'] -= $bite;
                     $taken += $bite;
                 }
@@ -316,8 +321,15 @@ class PartyLedgerModel extends Model
                 $charges[] = ['file_id' => $fileId, 'left' => $amount];
 
                 if ($fileId !== null) {
+                    $byFile[$fileId][] = array_key_last($charges);
                     $file($fileId);
                     $files[$fileId]['charged'] += $amount;
+
+                    // Its place in the queue, which is the order unadjusted
+                    // money reaches it in.
+                    if (! $files[$fileId]['seq']) {
+                        $files[$fileId]['seq'] = count($charges);
+                    }
                 }
 
                 continue;
@@ -381,7 +393,9 @@ class PartyLedgerModel extends Model
         }
 
         foreach ($files as $id => $sums) {
+            $seq = $sums['seq'];
             $files[$id] = array_map(fn ($value) => round($value, 2), $sums);
+            $files[$id]['seq'] = $seq;
         }
 
         return [
@@ -404,18 +418,36 @@ class PartyLedgerModel extends Model
             return [];
         }
 
-        $lines = DB::table('party_ledger_allocation')
-            ->whereIn('entry_id', $entryIds)
-            ->whereNull('released_at')
-            ->orderBy('id')
-            ->get(['entry_id', 'work_file_id', 'amount']);
+        $lines = DB::table('party_ledger_allocation as a')
+            ->join('party as p', 'p.id', '=', 'a.party_id')
+            ->whereIn('a.entry_id', $entryIds)
+            ->whereNull('a.released_at')
+            ->orderBy('a.id')
+            ->get(['a.entry_id', 'a.party_id', 'a.work_file_id', 'a.amount', 'p.party_type']);
 
         if ($lines->isEmpty()) {
             return [];
         }
 
+        $fileIds = $lines->pluck('work_file_id')->unique()->all();
+
+        /*
+         * Only a file that still charges the one who paid. Found in review: a
+         * file given to another customer since kept its adjustment — rightly,
+         * the money stays with the payer, on account — and the payer's
+         * statement then named the other customer's vehicle and works, read
+         * from the file as it is now. That share is on account, and is said
+         * nowhere rather than said wrong; files:audit names it for the office.
+         */
+        $charging = DB::table('party_ledger')
+            ->whereIn('work_file_id', $fileIds)
+            ->whereIn('file_role', ['customer', 'vendor'])
+            ->get(['work_file_id', 'party_id'])
+            ->map(fn ($row) => $row->work_file_id.':'.$row->party_id)
+            ->flip();
+
         $files = WorkFileModel::with('items.workType')
-            ->whereIn('id', $lines->pluck('work_file_id')->unique()->all())
+            ->whereIn('id', $fileIds)
             ->get()
             ->keyBy('id');
 
@@ -423,10 +455,26 @@ class PartyLedgerModel extends Model
 
         foreach ($lines as $line) {
             $file = $files[$line->work_file_id] ?? null;
-            $works = $file?->workLabel();
+
+            if (! $file || ! isset($charging[$line->work_file_id.':'.$line->party_id])) {
+                continue;
+            }
+
+            /*
+             * The works as the payer knows them. Never a cancelled one — the
+             * charge above it on the statement leaves those out — and for a
+             * vendor only the works they were given: a folder split between
+             * two vendors is none of the other's business.
+             */
+            $works = $file->items
+                ->reject(fn ($item) => $item->status === WorkFileModel::CANCELLED)
+                ->when($line->party_type === 'vendor', fn ($items) => $items->where('vendor_id', (int) $line->party_id))
+                ->map(fn ($item) => $item->workType?->name)
+                ->filter()
+                ->implode(', ');
 
             $out[(int) $line->entry_id][] = [
-                'label' => trim(($file?->registration_no ?: $file?->file_no ?: 'File').($works ? ' ('.$works.')' : '')),
+                'label' => trim(($file->registration_no ?: $file->file_no ?: 'File').($works ? ' ('.$works.')' : '')),
                 'amount' => round((float) $line->amount, 2),
             ];
         }

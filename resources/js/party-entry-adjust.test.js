@@ -109,6 +109,7 @@ async function type(host, selector, value) {
 }
 
 const section = (host) => host.querySelector('.adjust');
+const box = (fileNo) => `input[aria-label="Amount against ${fileNo}"]`;
 const saveButton = (host) => [...host.querySelectorAll('button[type="submit"]')].find((b) => b.textContent.includes('Save Entry'));
 
 describe('where it is offered', () => {
@@ -148,10 +149,22 @@ describe('what it posts', () => {
         const host = mount();
         await pick(host, 7);
 
-        await type(host, 'input[name="alloc[57][amount]"]', '5000');
+        await type(host, box('F-00057'), '5000');
 
         expect(host.querySelector('input[name="alloc[57][work_file_id]"]').value).toBe('57');
         expect(host.querySelector('input[name="alloc[57][amount]"]').value).toBe('5000');
+    });
+
+    /* Found in review: every empty box was posted, and a limit on the count
+       refused every payment from a party with more than two hundred files. */
+    it('posts nothing for a file left empty', async () => {
+        const host = mount();
+        await pick(host, 7);
+        await type(host, box('F-00057'), '5000');
+
+        expect(host.querySelector('input[name="alloc[50][amount]"]')).toBe(null);
+        expect(host.querySelector('input[name="alloc[50][work_file_id]"]')).toBe(null);
+        expect(host.querySelectorAll('input[name^="alloc["]')).toHaveLength(2);
     });
 
     it('fills oldest first from the amount of the payment', async () => {
@@ -183,7 +196,7 @@ describe('what it refuses before Save', () => {
         const host = mount();
         await pick(host, 7);
         await type(host, 'input[name="amount"]', '4000');
-        await type(host, 'input[name="alloc[57][amount]"]', '5000');
+        await type(host, box('F-00057'), '5000');
 
         expect(section(host).textContent).toContain('more than the payment');
         expect(saveButton(host).disabled).toBe(true);
@@ -193,7 +206,7 @@ describe('what it refuses before Save', () => {
         const host = mount();
         await pick(host, 7);
         await type(host, 'input[name="amount"]', '9000');
-        await type(host, 'input[name="alloc[50][amount]"]', '3500');
+        await type(host, box('F-00050'), '3500');
 
         expect(section(host).textContent).toContain('F-00050: more than is open on the file');
         expect(saveButton(host).disabled).toBe(true);
@@ -203,7 +216,7 @@ describe('what it refuses before Save', () => {
         const host = mount();
         await pick(host, 7);
         await type(host, 'input[name="amount"]', '5000');
-        await type(host, 'input[name="alloc[57][amount]"]', '5000');
+        await type(host, box('F-00057'), '5000');
 
         expect(saveButton(host).disabled).toBe(false);
     });
@@ -213,11 +226,11 @@ describe('changing party', () => {
     it('drops what was typed against the last party\'s files', async () => {
         const host = mount();
         await pick(host, 7);
-        await type(host, 'input[name="alloc[57][amount]"]', '5000');
+        await type(host, box('F-00057'), '5000');
 
         await pick(host, 9);
 
-        expect(host.querySelector('input[name="alloc[57][amount]"]')).toBe(null);
+        expect(host.querySelector(box('F-00057'))).toBe(null);
         expect(section(host).textContent).toContain('F-00061');
     });
 
@@ -255,6 +268,41 @@ it('puts back the amounts of a save the server refused', async () => {
     await settle();
 
     expect(host.querySelector('input[name="alloc[57][amount]"]').value).toBe('5000');
+});
+
+/* Found in review: Reset after picking another party lost the amounts it had just put back. */
+it('Reset puts the refused amounts back even after another party was picked', async () => {
+    const host = mount({
+        initial: { party_id: '7', entry_type: 'credit', amount: '5000', payment_mode: 'UPI', ref_no: '', particular: 'Paid' },
+        initialAlloc: { 57: '5000' },
+    });
+    await settle();
+
+    await pick(host, 9);
+    host.querySelector('form').dispatchEvent(new window.Event('reset', { cancelable: true }));
+    await settle();
+
+    expect(host.querySelector('select[name="party_id"]').value).toBe('7');
+    expect(host.querySelector('input[name="alloc[57][amount]"]').value).toBe('5000');
+});
+
+/* Found in review: filled against what was open, it put the payment on files
+   money on account had already paid, and the receipt named them. */
+it('fills oldest first against what is still due, not what is open', async () => {
+    BILLS[8] = [
+        { id: 70, fileNo: 'F-00070', vehicle: 'BR01OLD001', works: 'TR', received: '01-01-2026', charged: 3000, returned: 0, adjusted: 0, open: 3000, due: 0, editUrl: '/admin/file/edit/70' },
+        { id: 71, fileNo: 'F-00071', vehicle: 'BR01NEW002', works: 'TR', received: '01-03-2026', charged: 5000, returned: 0, adjusted: 0, open: 5000, due: 5000, editUrl: '/admin/file/edit/71' },
+    ];
+
+    const host = mount({ parties: [...PARTIES, { id: 8, name: 'Covered Co', mobile: '9835230008', current_balance: 5000 }] });
+    await pick(host, 8);
+    await type(host, 'input[name="amount"]', '5000');
+
+    [...section(host).querySelectorAll('button')].find((b) => b.textContent.includes('Fill oldest first')).click();
+    await nextTick();
+
+    expect(host.querySelector('input[name="alloc[70][amount]"]')).toBe(null);
+    expect(host.querySelector('input[name="alloc[71][amount]"]').value).toBe('5000.00');
 });
 
 describe('the receipt', () => {

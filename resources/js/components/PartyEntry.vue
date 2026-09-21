@@ -12,7 +12,7 @@
  * the counter is asked about is the one the party is left with — so it is
  * worked out as the amount is typed, not after saving.
  */
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, nextTick, reactive, ref, watch } from 'vue';
 import { balance, money, side } from '../money';
 
 const props = defineProps({
@@ -93,6 +93,10 @@ const alloc = reactive({ ...props.initialAlloc });
 const bills = ref([]);
 const billsState = ref('idle');
 
+// Files already covered by money on account, listed only when asked for.
+const covered = ref(0);
+const showCovered = ref(false);
+
 const showAdjust = computed(() =>
     props.adjustable && Boolean(selected.value) && entry.entry_type === props.paymentSide
 );
@@ -116,7 +120,9 @@ async function loadBills() {
     billsState.value = 'loading';
 
     try {
-        const response = await fetch(props.billsUrl.replace('__ID__', String(selected.value.id)), {
+        const url = props.billsUrl.replace('__ID__', String(selected.value.id)) + (showCovered.value ? '?all=1' : '');
+
+        const response = await fetch(url, {
             headers: { Accept: 'application/json' },
             credentials: 'same-origin',
         });
@@ -129,6 +135,7 @@ async function loadBills() {
 
         if (ticket === asked) {
             bills.value = data.bills ?? [];
+            covered.value = Number(data.covered) || 0;
             billsState.value = 'ready';
         }
     } catch {
@@ -138,16 +145,27 @@ async function loadBills() {
     }
 }
 
+/*
+ * Set while Reset is putting the page back, so the party changing back is
+ * not taken for a new party whose amounts must go. Found in review: Reset
+ * after picking another party lost the amounts it had just put back.
+ */
+let resetting = false;
+
 watch(() => [entry.party_id, entry.entry_type], (now, before) => {
     // Another party's files are not this one's: what was typed against them goes.
-    if (before && now[0] !== before[0]) {
+    if (before && now[0] !== before[0] && ! resetting) {
         for (const key of Object.keys(alloc)) {
             delete alloc[key];
         }
+
+        showCovered.value = false;
     }
 
     loadBills();
 }, { immediate: true });
+
+watch(showCovered, () => loadBills());
 
 const amountOf = (bill) => Number(alloc[bill.id]) || 0;
 
@@ -178,12 +196,17 @@ const adjustProblem = computed(() => {
     return '';
 });
 
-/* Oldest first, which is what the payment would do if nobody said. */
+/*
+ * Oldest first, which is what the payment would do if nobody said: against
+ * what is still due, in the order the ledger reaches the files. Found in
+ * review: filled against what was open, it put the payment on files already
+ * paid by money on account, and the customer's receipt named them.
+ */
 function fillOldest() {
     let left = Number(entry.amount) || 0;
 
     for (const bill of bills.value) {
-        const take = Math.min(Number(bill.open), left);
+        const take = Math.min(Number(bill.due), left);
         alloc[bill.id] = take > 0.005 ? take.toFixed(2) : '';
         left -= Math.max(0, take);
     }
@@ -210,6 +233,7 @@ const dateBox = ref(null);
  * the boxes disagreeing with the state driving the summary.
  */
 function onReset() {
+    resetting = true;
     Object.assign(entry, props.initial);
 
     for (const key of Object.keys(alloc)) {
@@ -218,6 +242,11 @@ function onReset() {
 
     Object.assign(alloc, props.initialAlloc);
     resetDateField();
+
+    // After the watcher has seen the party change back.
+    nextTick(() => {
+        resetting = false;
+    });
 }
 
 /*
@@ -391,12 +420,17 @@ function resetDateField() {
                     Leave these empty and the payment settles the oldest files first, as before.
                 </p>
 
+                <label v-if="covered > 0 || showCovered" class="adjust__toggle ui-hint">
+                    <input type="checkbox" v-model="showCovered">
+                    Also show {{ covered }} {{ covered === 1 ? 'file' : 'files' }} already covered by money on account
+                </label>
+
                 <div v-if="billsState === 'loading'" class="ui-hint">Looking up {{ selected.name }}'s files…</div>
                 <div v-else-if="billsState === 'failed'" class="ui-hint adjust__error">
                     The files could not be loaded. The payment can still be saved, on account.
                 </div>
                 <div v-else-if="!bills.length" class="ui-hint">
-                    Nothing open on {{ selected.name }}'s files — the payment goes on account.
+                    Nothing owed on {{ selected.name }}'s files — the payment goes on account.
                 </div>
 
                 <div v-else class="adjust__list">
@@ -422,12 +456,19 @@ function resetDateField() {
                         </div>
 
                         <div class="adjust__amount">
-                            <input type="hidden" :name="`alloc[${bill.id}][work_file_id]`" :value="bill.id">
+                            <!-- Named only when there is an amount: an empty box is
+                                 not posted, so a party with hundreds of files
+                                 does not send hundreds of empty lines. -->
+                            <input
+                                v-if="amountOf(bill) > 0"
+                                type="hidden"
+                                :name="`alloc[${bill.id}][work_file_id]`"
+                                :value="bill.id">
                             <input
                                 type="number"
                                 class="ui-input"
                                 :class="{ 'ui-input--invalid': overOpen(bill) }"
-                                :name="`alloc[${bill.id}][amount]`"
+                                :name="amountOf(bill) > 0 ? `alloc[${bill.id}][amount]` : null"
                                 min="0"
                                 step="0.01"
                                 placeholder="0.00"
@@ -732,6 +773,13 @@ function resetDateField() {
 
 .party-entry .adjust__lead {
     margin: var(--s-1) 0 var(--s-3);
+}
+
+.party-entry .adjust__toggle {
+    align-items: center;
+    display: flex;
+    gap: var(--s-2);
+    margin-bottom: var(--s-2);
 }
 
 .party-entry .adjust__list {
