@@ -74,6 +74,9 @@ Route::group(['middleware' => 'admin'], function () {
     // A party's files a payment can still be adjusted against, for the Entry screen.
     Route::get('admin/party/bills/{id}', [PartyController::class, 'bills'])->whereNumber('id')->name('party.bills');
 
+    // Taking back an entry typed by mistake, from its statement.
+    Route::post('admin/party/reverse/{id}', [PartyController::class, 'reverse'])->whereNumber('id')->name('party.reverse');
+
     // Issuing a customer their portal login. Customers only; the controller
     // refuses a vendor id outright.
     Route::match(['get', 'post'], 'admin/party/password/{id}', [PartyController::class, 'password'])->name('party.password');

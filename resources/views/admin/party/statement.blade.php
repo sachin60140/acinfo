@@ -83,15 +83,9 @@
                             </div>
                         </form>
 
-                        @if ($errors->any())
-                            <div class="alert alert-danger">
-                                <ul class="mb-0 ps-3">
-                                    @foreach ($errors->all() as $error)
-                                        <li>{{ $error }}</li>
-                                    @endforeach
-                                </ul>
-                            </div>
-                        @endif
+                        {{-- The shared messages: a filter refused, and now an entry
+                             reversed from the Change dialog, or why it could not be. --}}
+                        @include('admin.party._alerts')
 
                         {{-- Opening and closing stay outside the table: the Balance
                              column starts from the opening figure and the table can

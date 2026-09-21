@@ -645,6 +645,151 @@ class PartyController extends Controller
         })->values()]);
     }
 
+    /**
+     * Take back an entry typed by mistake.
+     *
+     * Not by deleting or editing it — a statement already sent says it — but
+     * with a reversal: a new row on the other side for the same amount, dated
+     * today, saying which entry it takes back. Balances net to what they would
+     * have been, a statement already sent still says what it said, and the
+     * record of both stays. Why is required and kept for the office; the
+     * customer sees only that the entry was reversed.
+     *
+     * Only an entry typed on the Entry screen, once, and never a reversal
+     * itself. A file's own rows are rewritten every time the file is saved, so
+     * a reversal of one would be undone by the next save: those are put right
+     * on the file.
+     *
+     * "Correct" is the same, and then the Entry screen with the entry filled
+     * in — files it was adjusted against included — to be typed again as it
+     * should have been.
+     */
+    public function reverse(Request $req, $id)
+    {
+        abort_unless(PartyLedgerModel::reversible(), 404);
+
+        $req->validate([
+            'reason' => 'required|string|max:255',
+            'correct' => 'nullable|boolean',
+        ], [
+            'reason.required' => 'Say why this entry is being taken back — it is kept for the office.',
+        ]);
+
+        [$entry, $lines] = DB::transaction(function () use ($req, $id) {
+            $entry = PartyLedgerModel::whereKey($id)->lockForUpdate()->firstOrFail();
+            PartyModel::whereKey($entry->party_id)->lockForUpdate()->first();
+
+            if ($entry->work_file_id) {
+                $fileNo = DB::table('work_file')->where('id', $entry->work_file_id)->value('file_no');
+
+                throw ValidationException::withMessages([
+                    'reason' => 'This entry comes from file '.$fileNo.' and is rewritten whenever the file is saved. Correct it on the file.',
+                ]);
+            }
+
+            if ($entry->reverses_id || $entry->entry_kind === PartyLedgerModel::REVERSAL) {
+                throw ValidationException::withMessages([
+                    'reason' => 'A reversal cannot itself be reversed. Enter the entry again instead.',
+                ]);
+            }
+
+            if (PartyLedgerModel::where('reverses_id', $entry->id)->exists()) {
+                throw ValidationException::withMessages(['reason' => 'Entry #'.$entry->id.' has already been reversed.']);
+            }
+
+            // What it was adjusted against, released: a reversed payment
+            // settles nothing, and the lines go with it to be typed again.
+            $lines = DB::table('party_ledger_allocation')
+                ->where('entry_id', $entry->id)
+                ->whereNull('released_at')
+                ->orderBy('id')
+                ->get(['work_file_id', 'amount']);
+
+            DB::table('party_ledger_allocation')
+                ->where('entry_id', $entry->id)
+                ->whereNull('released_at')
+                ->update(['released_at' => now(), 'released_by' => Auth::id(), 'updated_at' => now()]);
+
+            $reversal = new PartyLedgerModel;
+            $reversal->party_id = $entry->party_id;
+            // Today, so a statement already sent is not changed after the fact.
+            $reversal->txn_date = now()->toDateString();
+            $reversal->entry_type = $entry->entry_type === 'debit' ? 'credit' : 'debit';
+            $reversal->amount = $entry->amount;
+            $reversal->payment_mode = PartyLedgerModel::REVERSAL_MODE;
+            $reversal->ref_no = $entry->ref_no;
+            // What the customer reads: which entry, by its date and amount.
+            $reversal->particular = 'Reversal of entry #'.$entry->id.' of '.date('d-m-Y', strtotime($entry->txn_date));
+            $reversal->entry_kind = PartyLedgerModel::REVERSAL;
+            $reversal->note = trim($req->reason);
+            $reversal->reverses_id = $entry->id;
+            $reversal->created_by = Auth::id();
+            $reversal->save();
+
+            return [$entry, $lines];
+        });
+
+        $type = PartyModel::whereKey($entry->party_id)->value('party_type');
+
+        if ($req->boolean('correct')) {
+            return redirect()->route('party.entry', $type)
+                ->withInput([
+                    'party_id' => (string) $entry->party_id,
+                    'entry_type' => $entry->entry_type,
+                    'txn_date' => date('Y-m-d', strtotime($entry->txn_date)),
+                    'amount' => (string) (float) $entry->amount,
+                    'payment_mode' => (string) $entry->payment_mode,
+                    'ref_no' => (string) $entry->ref_no,
+                    'particular' => (string) $entry->particular,
+                    'alloc' => $lines->mapWithKeys(fn ($line) => [(int) $line->work_file_id => [
+                        'work_file_id' => (int) $line->work_file_id,
+                        'amount' => (string) (float) $line->amount,
+                    ]])->all(),
+                ])
+                ->with('success', 'Entry #'.$entry->id.' has been reversed. Enter it again correctly below.');
+        }
+
+        return back()->with('success', 'Entry #'.$entry->id.' has been reversed. The reversal is dated today.');
+    }
+
+    /**
+     * What a statement row says about taking it back: whether it can be (a
+     * manual entry, not a reversal, not already reversed), and, for the
+     * office only, what happened to it.
+     *
+     * @return array{change: ?string, row_state: ?string, office_note: ?string}
+     */
+    private static function changeFields($entry, $reversedBy, bool $reversible): array
+    {
+        if (! $reversible) {
+            return ['change' => null, 'row_state' => null, 'office_note' => null];
+        }
+
+        $reversal = $reversedBy[$entry->id] ?? null;
+
+        if ($reversal) {
+            return [
+                'change' => null,
+                'row_state' => 'is-reversed',
+                'office_note' => 'Reversed by #'.$reversal->id.' on '.date('d-m-Y', strtotime($reversal->txn_date)),
+            ];
+        }
+
+        if ($entry->reverses_id) {
+            return [
+                'change' => null,
+                'row_state' => 'is-reversal',
+                'office_note' => $entry->note ? 'Why: '.$entry->note : null,
+            ];
+        }
+
+        return [
+            'change' => $entry->work_file_id ? null : 'Change',
+            'row_state' => null,
+            'office_note' => null,
+        ];
+    }
+
     public function statement(Request $req, $id)
     {
         $req->validate([
@@ -678,6 +823,17 @@ class PartyController extends Controller
         // And the files each payment was adjusted against, the same way.
         $against = PartyLedgerModel::againstFor($data['getRecords']->pluck('id')->all());
 
+        /*
+         * Which entries have been taken back, and by which reversal — across
+         * the whole account, since a reversal is dated the day it was made and
+         * may fall outside the period on screen.
+         */
+        $reversible = PartyLedgerModel::reversible();
+        $reversedBy = $reversible
+            ? DB::table('party_ledger')->where('party_id', $party->id)->whereNotNull('reverses_id')
+                ->get(['id', 'reverses_id', 'txn_date'])->keyBy('reverses_id')
+            : collect();
+
         foreach ($data['getRecords'] as $entry) {
             $running += $entry->signedAmount();
             $isDebit = $entry->entry_type === 'debit';
@@ -699,7 +855,7 @@ class PartyController extends Controller
                 'remarks' => $remarks[$entry->work_file_id] ?? null,
                 // The files a payment was adjusted against, when it was.
                 'against' => PartyLedgerModel::againstText($against[$entry->id] ?? []),
-            ];
+            ] + self::changeFields($entry, $reversedBy, $reversible);
         }
 
         /*
@@ -723,6 +879,9 @@ class PartyController extends Controller
             'balance' => round((float) $data['opening'], 2),
             'remarks' => null,
             'against' => null,
+            'change' => null,
+            'row_state' => null,
+            'office_note' => null,
         ]];
 
         $closing = [[
@@ -737,6 +896,9 @@ class PartyController extends Controller
             'balance' => round((float) $data['closing'], 2),
             'remarks' => null,
             'against' => null,
+            'change' => null,
+            'row_state' => null,
+            'office_note' => null,
         ]];
 
         // Only when there is one to show. A column of empty cells is clutter on
@@ -750,7 +912,9 @@ class PartyController extends Controller
             'columns' => [
                 ['key' => 'id', 'label' => '#'],
                 ['key' => 'txn_date', 'label' => 'Txn Date'],
-                ['key' => 'particular', 'label' => 'Particulars', 'width' => '14rem'],
+                // Under it, for the office only: what happened to a reversed
+                // entry, and why a reversal was made.
+                ['key' => 'particular', 'label' => 'Particulars', 'width' => '14rem', 'note' => 'office_note'],
                 ['key' => 'payment_mode', 'label' => 'Mode'],
                 // The work file opens in a new tab because a statement is read
                 // through rather than clicked out of: following the reference in
@@ -769,7 +933,27 @@ class PartyController extends Controller
                 // The note on the file the entry came from, when any entry has
                 // one. Last, so it never pushes the figures off a narrow screen.
                 ...($hasRemarks ? [['key' => 'remarks', 'label' => 'Remarks', 'width' => '12rem']] : []),
+
+                /*
+                 * Taking an entry back, on the entries that can be: typed on
+                 * the Entry screen, not a reversal, not already reversed. Kept
+                 * out of the exports and the search, as every action column is.
+                 */
+                ...($reversible ? [[
+                    'key' => 'change',
+                    'label' => 'Change',
+                    'type' => 'action',
+                    'onlyIf' => 'change',
+                    'icon' => 'bi-arrow-counterclockwise',
+                    'sortable' => false,
+                    'searchable' => false,
+                    'exportable' => false,
+                ]] : []),
             ],
+            'rowClass' => 'row_state',
+            // Where the Change dialog posts; see reverse().
+            'action' => route('party.reverse', ['id' => '__ID__']),
+            'csrf' => csrf_token(),
             'rows' => $entries,
             'lead' => $opening,
             'tail' => $closing,

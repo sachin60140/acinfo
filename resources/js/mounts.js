@@ -27,6 +27,7 @@ import PartyEntry from './components/PartyEntry.vue';
 import PartyForm from './components/PartyForm.vue';
 import PasswordToggle from './components/PasswordToggle.vue';
 import PaymentForm from './components/PaymentForm.vue';
+import PartyStatement from './components/PartyStatement.vue';
 import PaymentReceipt from './components/PaymentReceipt.vue';
 import ReceiveFileRows from './components/ReceiveFileRows.vue';
 import StatusBoard from './components/StatusBoard.vue';
@@ -84,7 +85,8 @@ export const components = {
      * what the screen is; the props say what it shows.
      */
     'vue-party-list': DataGrid,
-    'vue-party-statement': DataGrid,
+    // The grid, with taking back an entry typed by mistake.
+    'vue-party-statement': PartyStatement,
     'vue-files-list': DataGrid,
     // The one listing with something to do to a row: the same grid, with a
     // dialog over it for moving a file along without leaving the report.
