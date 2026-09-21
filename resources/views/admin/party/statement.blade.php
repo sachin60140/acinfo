@@ -45,7 +45,9 @@
                                 <div class="statement-period">
                                     {{ $label }}
                                     &nbsp;&middot;&nbsp; <a href="tel:{{ $partyMobile }}" class="link-primary">{{ $partyMobile }}</a>
-                                    &nbsp;&middot;&nbsp; <a href="https://wa.me/91{{ $wa }}" target="_blank" rel="noopener" class="wa-link"><i class="bi bi-whatsapp"></i> {{ $wa }}</a>
+                                    @if ($waUrl)
+                                        &nbsp;&middot;&nbsp; <a href="{{ $waUrl }}" target="_blank" rel="noopener" class="wa-link"><i class="bi bi-whatsapp"></i> {{ $wa }}</a>
+                                    @endif
                                     @if ($partyAddress)
                                         <br>{{ $partyAddress }}
                                     @endif
