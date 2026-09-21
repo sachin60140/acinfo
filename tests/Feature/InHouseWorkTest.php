@@ -251,6 +251,110 @@ class InHouseWorkTest extends TestCase
         $this->assertSame([], $this->rowsFor($file));
     }
 
+    // -------------------------------------------------------------- updating
+
+    /**
+     * The Update dialog is handed this row's one work — never the rest of the
+     * folder, whose other works may be with a vendor.
+     */
+    public function test_each_row_offers_to_move_only_its_own_work(): void
+    {
+        $file = $this->file([$this->hpt, $this->tr]);
+
+        $hpt = $this->jobOf($file, $this->hpt);
+        $hpt->vendor_id = $this->sharma->id;
+        $hpt->save();
+
+        $this->keep($file, $this->tr);
+
+        $row = $this->rowsFor($file)[0];
+        $tr = $this->jobOf($file, $this->tr);
+
+        $this->assertSame('Update', $row['update']);
+        $this->assertSame($this->customer->name, $row['party_name']);
+        $this->assertSame([$tr->id], array_column($row['items'], 'id'));
+        $this->assertSame(WorkFileModel::IN_OFFICE, $row['items'][0]['status']);
+    }
+
+    public function test_the_dialog_posts_to_update_status_and_comes_back_here(): void
+    {
+        $props = $this->props();
+
+        $this->assertSame(route('workfile.status'), $props['action']);
+        $this->assertSame(route('workfile.inhouse'), $props['returnTo']);
+        $this->assertSame(WorkFileModel::JOB_STATUSES, $props['jobStatuses']);
+    }
+
+    /** The round trip the button makes, end to end. */
+    public function test_a_change_made_from_the_list_is_saved_and_returns_to_the_list(): void
+    {
+        $file = $this->file([$this->tr]);
+        $this->keep($file, $this->tr);
+        $job = $this->jobOf($file, $this->tr);
+
+        $this->actingAs($this->admin)->post(route('workfile.status'), [
+            'statuses' => [$job->id => 'under_verification'],
+            'remarks' => [$job->id => 'Filed at the RTO counter'],
+            'return_to' => route('workfile.inhouse'),
+        ])->assertRedirect(route('workfile.inhouse'));
+
+        $this->assertSame('under_verification', $job->fresh()->status);
+
+        // Still ours and still unfinished, so still on the list, as it now stands.
+        $this->assertSame('Under Verification', $this->rowsFor($file)[0]['status']);
+    }
+
+    /**
+     * Nine columns on show turn the grid wide, and it scrolls sideways with
+     * Update — the one thing to do here — past the edge of a laptop screen.
+     */
+    public function test_the_list_stays_narrow_enough_to_show_update(): void
+    {
+        $shown = collect($this->props()['columns'])
+            ->reject(fn ($c) => ($c['hidden'] ?? false) || ($c['exportOnly'] ?? false));
+
+        $this->assertLessThan(9, $shown->count(), 'the grid goes wide at nine columns on show');
+        $this->assertSame('update', $shown->last()['key']);
+    }
+
+    public function test_the_day_it_was_kept_is_shown_under_the_work_and_exported(): void
+    {
+        $file = $this->file([$this->tr]);
+        $this->keep($file, $this->tr);
+
+        $columns = collect($this->props()['columns'])->keyBy('key');
+
+        $this->assertSame('kept_text', $columns['work']['sub']);
+        $this->assertTrue($columns['kept_on']['exportOnly']);
+        $this->assertSame('kept in-house '.now()->format('d-m-Y'), $this->rowsFor($file)[0]['kept_text']);
+    }
+
+    public function test_the_update_column_is_kept_out_of_the_exports(): void
+    {
+        $update = collect($this->props()['columns'])->firstWhere('key', 'update');
+
+        $this->assertSame('action', $update['type']);
+        $this->assertFalse($update['exportable']);
+        $this->assertFalse($update['searchable']);
+    }
+
+    // ------------------------------------------------------------ dashboard
+
+    public function test_the_dashboard_counts_it_and_links_here(): void
+    {
+        $file = $this->file([$this->tr]);
+        $this->keep($file, $this->tr);
+
+        $tile = collect($this->actingAs($this->admin)
+            ->getJson(url('admin/dashboard'))->assertOk()->json('props.tiles'))
+            ->firstWhere('label', 'In-house Work');
+
+        $this->assertNotNull($tile, 'no In-house Work tile');
+        $this->assertSame(WorkFileModel::inHouseWork()->count(), $tile['value']);
+        $this->assertSame(route('workfile.inhouse'), $tile['href']);
+        $this->assertStringContainsString('oldest waiting', $tile['note']);
+    }
+
     // ---------------------------------------------------------------- the page
 
     public function test_it_is_on_the_menu_beside_give_to_vendor(): void
