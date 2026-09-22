@@ -61,6 +61,16 @@ describe('the message', () => {
      * never shown on the customer's page; a chat is further from the office
      * than that page is.
      */
+    /* No customer is told who does the work: the server sends the note with any vendor taken out. */
+    it('carries the note as the customer may read it, with no vendor in it', () => {
+        const text = pendingMessage([
+            row(1, 'NOC', { note: 'Shailendra will get it from the bank', share_note: '… will get it from the bank' }),
+        ]);
+
+        expect(text).toContain('1. NOC — … will get it from the bank');
+        expect(text).not.toContain('Shailendra');
+    });
+
     it('never carries the note the office wrote for itself', () => {
         const text = pendingMessage([
             row(1, 'Form 34', { note: 'Buyer to sign', office_note: 'Customer is slow to pay, chase hard' }),

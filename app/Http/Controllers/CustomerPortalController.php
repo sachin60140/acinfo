@@ -282,8 +282,10 @@ class CustomerPortalController extends Controller
                 // orders by day of the month, putting 02-03 above 01-12.
                 'received_raw' => $file->received_date,
                 'work_type' => $names ? implode(', ', $names) : ($file->work_type ?? '—'),
-                'description' => $file->description,
-                'remarks' => $file->remarks ?: null,
+                // Typed by hand, so read for vendors: the details keep their
+                // line with any vendor taken out, a remark naming one goes.
+                'description' => WorkFileModel::redactVendors($file->description, $marks ??= WorkFileModel::vendorMarks()),
+                'remarks' => WorkFileModel::withoutVendors($file->remarks ?: null, $marks),
 
                 /*
                  * The last thing anybody said about this file, and when it last
@@ -295,7 +297,7 @@ class CustomerPortalController extends Controller
                  * this morning with nothing typed still moved this morning, and
                  * dating it by an older note would say it had not.
                  */
-                'latest_remark' => $updates[$file->id]['remark'] ?? ($file->remarks ?: null),
+                'latest_remark' => $updates[$file->id]['remark'] ?? WorkFileModel::withoutVendors($file->remarks ?: null, $marks),
                 'updated_on' => isset($updates[$file->id]['updated_on'])
                     ? 'Updated '.date('d-m-Y', strtotime($updates[$file->id]['updated_on']))
                     : null,
@@ -469,18 +471,22 @@ class CustomerPortalController extends Controller
             ? route('customer.file.approval', ['id' => $file->id])
             : null;
 
+        // Every vendor, read once for the typed text on this page.
+        $marks = WorkFileModel::vendorMarks();
+
         return Screen::make('customer.file', 'vue-customer-file', $props, [
             'customerName' => $customer->name,
             'fileNo' => $file->file_no,
             'registrationNo' => $file->registration_no,
-            'description' => $file->description,
+            'description' => WorkFileModel::redactVendors($file->description, $marks),
             /*
              * Shown at the office's own request. Note that this is the folder's
              * typed remark and not the status log's: that one is written by the
              * application when work moves, and what it writes is "Given to
              * <vendor name>".
              */
-            'remarks' => $file->remarks ?: null,
+            // And typed by hand, so a remark naming a vendor is not shown.
+            'remarks' => WorkFileModel::withoutVendors($file->remarks ?: null, $marks),
             'received' => date('d-m-Y', strtotime($file->received_date)),
             'status' => WorkFileModel::customerStatus($file->status),
             'statusTone' => WorkFileModel::customerTone($file->status),
@@ -508,7 +514,8 @@ class CustomerPortalController extends Controller
             'documents' => \App\Models\WorkFileDocumentModel::where('work_file_id', $file->id)
                 ->orderByDesc('id')->get()
                 ->map(fn ($doc) => [
-                    'name' => $doc->displayName(),
+                    // The office's own name for it, with any vendor taken out.
+                    'name' => WorkFileModel::redactVendors($doc->displayName(), $marks),
                     'size' => $doc->sizeText(),
                     'uploaded' => $doc->created_at?->format('d-m-Y'),
                     'url' => route('customer.file.document', ['id' => $file->id, 'doc' => $doc->id]),
@@ -553,6 +560,9 @@ class CustomerPortalController extends Controller
          * scanner gave it. A customer who takes four away should be able to
          * tell them apart in their Downloads folder.
          */
+        // Named without any vendor in it: set here only, never saved.
+        $doc->title = WorkFileModel::redactVendors($doc->displayName(), null, '-');
+
         return response()->download(public_path($doc->path), $doc->downloadName(), [
             'Cache-Control' => 'private, no-store',
             'X-Content-Type-Options' => 'nosniff',
@@ -700,6 +710,9 @@ class CustomerPortalController extends Controller
          */
         $remarks = PartyLedgerModel::fileRemarks($data['getRecords']);
 
+        // Typed by hand, every one of the three below; read for vendors.
+        $marks = WorkFileModel::vendorMarks();
+
         // Which of their files each payment was for, when the office said.
         $against = PartyLedgerModel::againstFor($data['getRecords']->pluck('id')->all());
 
@@ -710,15 +723,15 @@ class CustomerPortalController extends Controller
             $rows[] = [
                 'id' => $entry->id,
                 'txn_date' => date('d-m-Y', strtotime($entry->txn_date)),
-                'particular' => $entry->particular,
+                'particular' => WorkFileModel::redactVendors($entry->particular, $marks),
                 'payment_mode' => $entry->payment_mode,
-                'ref_no' => $entry->ref_no,
+                'ref_no' => WorkFileModel::redactVendors($entry->ref_no, $marks),
                 // The side an entry does not fall on stays null, so it exports
                 // as a blank cell rather than as 0.00.
                 'debit' => $isDebit ? (float) $entry->amount : null,
                 'credit' => $isDebit ? null : (float) $entry->amount,
                 'balance' => round($running, 2),
-                'remarks' => $remarks[$entry->work_file_id] ?? null,
+                'remarks' => WorkFileModel::withoutVendors($remarks[$entry->work_file_id] ?? null, $marks),
                 'against' => PartyLedgerModel::againstText($against[$entry->id] ?? []),
             ];
         }
