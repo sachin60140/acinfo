@@ -3408,35 +3408,127 @@ class WorkFileModel extends Model
      *
      * The remark column holds two things at once. The status board stores
      * exactly what somebody typed; the assign and vendor-return screens take
-     * what somebody typed and append a clause of their own — "Given to <vendor>"
-     * and "Papers returned by <vendor>" — into the same field. So a remark
-     * cannot be shown to a customer as it stands, and cannot be trusted on the
-     * strength of where it came from either.
+     * what somebody typed and append a clause of their own — "Given to <vendor>",
+     * "HPA, TR given to <vendor>" when only part of a folder went, and "Papers
+     * returned by <vendor>" — into the same field. So a remark cannot be shown
+     * to a customer as it stands, and cannot be trusted on the strength of
+     * where it came from either.
      *
-     * The generated clause runs to the end of the string, so removing it from
-     * the first of those two words onwards takes the vendor's name with it and
-     * keeps whatever the office actually wrote. The em dash the screens join
-     * with goes too, along with the hyphen some keyboards produce instead.
+     * The generated clause runs to the end of the string. It is cut from where
+     * it starts — after the last dash the screens join a typed remark with, or
+     * from the beginning — so the works named in front of "given to" go with
+     * the vendor's name, and whatever the office actually wrote stays.
+     *
+     * Found in use: matched as "Given to" with a capital, the part-folder
+     * clause, "HPA given to Shailendra Pandey Motihari", reached a customer's
+     * timeline whole. Matched in any case now, and whatever is left is still
+     * checked for a vendor's name or number (withoutVendors) — a name typed
+     * by hand is caught there too.
      *
      * Matched against our own wording, which is why WorkFileTest drives a real
      * assignment through the controller rather than trusting this pattern to
      * still describe what that screen writes.
+     *
+     * @param  array<int, array{0: string, 1: string}>|null  $marks  vendorMarks(), when already read
      */
-    public static function customerRemark(?string $remark): ?string
+    public static function customerRemark(?string $remark, ?array $marks = null): ?string
     {
         if (! is_string($remark) || trim($remark) === '') {
             return null;
         }
 
-        $clean = preg_replace(
-            '/\s*[-–—]?\s*(Given to|Papers returned by)\b.*$/us',
-            '',
-            $remark
-        );
+        $clean = $remark;
 
-        $clean = trim((string) $clean, " \t\n\r\0\x0B-–—");
+        if (preg_match('/\b(given\s+to|papers\s+returned\s+by)\b/iu', $clean, $found, PREG_OFFSET_CAPTURE)) {
+            $head = substr($clean, 0, $found[0][1]);
 
-        return $clean === '' ? null : $clean;
+            // Back to the dash a typed remark was joined with, if there is one.
+            $cut = preg_match_all('/\s[-–—]\s/u', $head, $dashes, PREG_OFFSET_CAPTURE)
+                ? end($dashes[0])[1]
+                : 0;
+
+            $clean = substr($clean, 0, $cut);
+        }
+
+        $clean = trim($clean, " \t\n\r\0\x0B-–—");
+
+        return self::withoutVendors($clean === '' ? null : $clean, $marks);
+    }
+
+    /**
+     * What identifies a vendor in free text: each one's name, the first word
+     * of it, and their numbers — lower case, spaces run together.
+     *
+     * The first word because a name is typed however the typist likes —
+     * "Shailendra ji" for Shailendra Pandey Motihari — and a first name is the
+     * part most often typed. Only a word of four letters or more, and not one
+     * of the courtesies or trade words that begin a name without identifying
+     * it; the town at the end of a name is not taken, being a word customers
+     * use of themselves.
+     *
+     * @return array<int, array{0: string, 1: string}>  [kind, mark]: 'text' or 'digits'
+     */
+    public static function vendorMarks(): array
+    {
+        $common = ['shri', 'shree', 'smt', 'mr', 'mrs', 'm/s', 'ms', 'the', 'new', 'auto', 'autos', 'motor', 'motors', 'rto', 'agency', 'services', 'service', 'bihar', 'patna'];
+        $marks = [];
+
+        $vendors = DB::table('party')->where('party_type', 'vendor')->get(['name', 'mobile', 'whatsapp']);
+
+        foreach ($vendors as $vendor) {
+            $name = trim((string) preg_replace('/\s+/u', ' ', mb_strtolower((string) $vendor->name)));
+
+            if (mb_strlen($name) >= 3) {
+                $marks[] = ['text', $name];
+            }
+
+            $first = explode(' ', $name)[0] ?? '';
+
+            if (mb_strlen($first) >= 4 && ! in_array($first, $common, true) && $first !== $name) {
+                $marks[] = ['text', $first];
+            }
+
+            foreach ([$vendor->mobile, $vendor->whatsapp] as $number) {
+                $digits = substr(preg_replace('/\D/', '', (string) $number), -10);
+
+                if (strlen($digits) === 10) {
+                    $marks[] = ['digits', $digits];
+                }
+            }
+        }
+
+        return $marks;
+    }
+
+    /**
+     * Text for a customer, or null when it names a vendor.
+     *
+     * The owner's rule is that no customer is told who does the work, and
+     * free text is typed by people: a remark, a file's details, a note. What
+     * names a vendor — by name, first name or number — is not shown at all,
+     * rather than shown with the name cut out: cut, it can still say more
+     * than it should, and the status beside it says where the file is.
+     *
+     * @param  array<int, array{0: string, 1: string}>|null  $marks  vendorMarks(), when already read
+     */
+    public static function withoutVendors(?string $text, ?array $marks = null): ?string
+    {
+        if ($text === null || trim($text) === '') {
+            return null;
+        }
+
+        $marks ??= self::vendorMarks();
+        $plain = ' '.trim((string) preg_replace('/\s+/u', ' ', mb_strtolower($text))).' ';
+        $digits = preg_replace('/\D/', '', $text);
+
+        foreach ($marks as [$kind, $mark]) {
+            if ($kind === 'digits' ? str_contains($digits, $mark)
+                : preg_match('/(?<![\p{L}\p{N}])'.preg_quote($mark, '/').'(?![\p{L}\p{N}])/u', $plain)) {
+                return null;
+            }
+        }
+
+        return $text;
     }
 
     /**
@@ -3471,6 +3563,7 @@ class WorkFileModel extends Model
             ->get();
 
         $out = [];
+        $marks = self::vendorMarks();
 
         foreach (self::withoutUndoneHandovers($rows) as $row) {
             $handover = $row->event === self::HANDED_OVER;
@@ -3502,7 +3595,7 @@ class WorkFileModel extends Model
                 // already was.
                 'moved' => $row->from_status !== null && $row->from_status !== $row->to_status,
                 'work_type' => $row->work_type,
-                'remark' => self::customerRemark($row->remark),
+                'remark' => self::customerRemark($row->remark, $marks),
             ];
         }
 
@@ -3549,7 +3642,7 @@ class WorkFileModel extends Model
             // The office's own additions are trimmed first, so an entry whose
             // only content was "Given to <vendor>" does not count as the last
             // thing anybody said.
-            $remark = self::customerRemark($row->remark);
+            $remark = self::customerRemark($row->remark, $marks ??= self::vendorMarks());
 
             if ($remark !== null) {
                 $out[$row->work_file_id]['remark'] = $remark;
