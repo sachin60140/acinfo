@@ -34,7 +34,8 @@ export function pendingMessage(rows) {
             files.set(key, { file_no: row.file_no, vehicle: row.registration_no, customer: row.customer, papers: [] });
         }
 
-        files.get(key).papers.push({ paper: row.paper, note: row.note });
+        // As the customer may read it: the server takes any vendor out.
+        files.get(key).papers.push({ paper: row.paper, note: row.share_note ?? row.note });
     }
 
     const customers = new Set(rows.map((row) => row.customer).filter(Boolean));

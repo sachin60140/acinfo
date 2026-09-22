@@ -120,7 +120,8 @@ class UserController extends Controller
                 // future sort has to use: dd-mm-yyyy compared as text orders by
                 // day of the month.
                 'txn_date_raw' => $item->txn_date,
-                'particular' => $item->particular,
+                // Typed by hand on the client ledger; no vendor in it.
+                'particular' => \App\Models\WorkFileModel::redactVendors($item->particular, $marks ??= \App\Models\WorkFileModel::vendorMarks()),
                 'payment_type' => $item->payment_type,
                 'receipt' => $item->amount > 0 ? (float) $item->amount : null,
                 'payment' => $item->amount < 0 ? (float) abs($item->amount) : null,

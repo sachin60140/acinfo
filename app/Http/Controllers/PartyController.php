@@ -1382,6 +1382,15 @@ class PartyController extends Controller
         // Carried to the Adjust screen, so its way back keeps the period.
         $period = array_filter(['from' => $from, 'to' => $to]);
 
+        /*
+         * A customer's statement is the page most often printed, exported and
+         * sent to them, so what was typed on it is read for vendors here too.
+         * A vendor's own statement is theirs and is left as it is.
+         */
+        $forCustomer = $party->party_type === 'customer';
+        $marks = $forCustomer ? WorkFileModel::vendorMarks() : [];
+        $said = fn (?string $text) => $forCustomer ? WorkFileModel::redactVendors($text, $marks) : $text;
+
         foreach ($data['getRecords'] as $entry) {
             $running += $entry->signedAmount();
             $isDebit = $entry->entry_type === 'debit';
@@ -1389,9 +1398,9 @@ class PartyController extends Controller
             $entries[] = [
                 'id' => $entry->id,
                 'txn_date' => date('d-m-Y', strtotime($entry->txn_date)),
-                'particular' => $entry->particular,
+                'particular' => $said($entry->particular),
                 'payment_mode' => $entry->payment_mode,
-                'ref_no' => $entry->ref_no,
+                'ref_no' => $said($entry->ref_no),
                 // Entries a work file generated link back to it; entries typed
                 // straight into the ledger just carry whatever reference was given.
                 'ref_url' => $entry->work_file_id ? route('workfile.edit', $entry->work_file_id) : null,
@@ -1400,7 +1409,9 @@ class PartyController extends Controller
                 'debit' => $isDebit ? (float) $entry->amount : null,
                 'credit' => $isDebit ? null : (float) $entry->amount,
                 'balance' => round($running, 2),
-                'remarks' => $remarks[$entry->work_file_id] ?? null,
+                'remarks' => $forCustomer
+                    ? WorkFileModel::withoutVendors($remarks[$entry->work_file_id] ?? null, $marks)
+                    : ($remarks[$entry->work_file_id] ?? null),
                 // The files a payment was adjusted against, when it was.
                 'against' => PartyLedgerModel::againstText($against[$entry->id] ?? []),
             ] + self::changeFields($entry, $reversedBy, $reversible, self::paymentSide($party->party_type), $history, $period);

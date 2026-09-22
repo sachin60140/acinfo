@@ -669,7 +669,8 @@ class WorkFileModel extends Model
                 continue;
             }
 
-            $needed[] = ['name' => $line->name, 'works' => $works, 'note' => $line->note ?: null];
+            // The note is written for the customer, but typed by hand: no vendor in it.
+            $needed[] = ['name' => $line->name, 'works' => $works, 'note' => self::redactVendors($line->note ?: null, $marks ??= self::vendorMarks())];
         }
 
         return [
@@ -3498,6 +3499,59 @@ class WorkFileModel extends Model
         }
 
         return $marks;
+    }
+
+    /**
+     * Text for a customer with every vendor's name and number taken out.
+     *
+     * For a line that has to stay on the page — a statement's particulars, a
+     * file's details, a document's name, a note against a paper the customer
+     * still has to bring — where leaving the whole line out would leave a gap
+     * nobody could explain. Each name, first name and number is replaced; the
+     * rest reads as typed. Loose notes, which can simply not be shown, go
+     * through withoutVendors() instead.
+     *
+     * Found in review, after the timeline was put right: each of these is
+     * typed by hand and reached the customer as typed.
+     *
+     * @param  array<int, array{0: string, 1: string}>|null  $marks  vendorMarks(), when already read
+     */
+    public static function redactVendors(?string $text, ?array $marks = null, string $with = '…'): ?string
+    {
+        if ($text === null || trim($text) === '') {
+            return $text;
+        }
+
+        $marks ??= self::vendorMarks();
+
+        // The longest first, so a full name goes whole rather than leaving its
+        // surname behind its first name's replacement.
+        $names = array_map(fn ($mark) => $mark[1], array_filter($marks, fn ($mark) => $mark[0] === 'text'));
+        usort($names, fn ($a, $b) => mb_strlen($b) <=> mb_strlen($a));
+
+        foreach ($names as $name) {
+            // Spaces in a name match any run of them, as withoutVendors reads it.
+            $pattern = implode('\s+', array_map(fn ($word) => preg_quote($word, '/'), explode(' ', $name)));
+            $text = (string) preg_replace('/(?<![\p{L}\p{N}])'.$pattern.'(?![\p{L}\p{N}])/iu', $with, $text);
+        }
+
+        $numbers = array_map(fn ($mark) => $mark[1], array_filter($marks, fn ($mark) => $mark[0] === 'digits'));
+
+        if ($numbers) {
+            $text = (string) preg_replace_callback('/\+?\d[\d\s\-]{8,}\d/u', function ($found) use ($numbers, $with) {
+                $digits = preg_replace('/\D/', '', $found[0]);
+
+                foreach ($numbers as $number) {
+                    if (str_contains($digits, $number)) {
+                        return $with;
+                    }
+                }
+
+                return $found[0];
+            }, $text);
+        }
+
+        return $text;
     }
 
     /**
