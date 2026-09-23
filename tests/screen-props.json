@@ -108,6 +108,7 @@
                     "href": "string",
                     "label": "string",
                     "note": "string",
+                    "tone": "string",
                     "type": "string",
                     "value": "number"
                 }

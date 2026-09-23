@@ -82,20 +82,6 @@ class AuthController extends Controller
          * is a different and much calmer statement than the truth.
          */
         $tiles = [
-            /*
-             * The old Client Ledger, closed by the owner on 2026-09-23. Its own
-             * figures — what it holds, how it moved this month — would read the
-             * carrying-over as movement, so they are gone. What is left to carry
-             * is said instead, and only while there is any.
-             */
-            ...($oldBook ? [[
-                'group' => 'Client ledger',
-                'label' => 'Left in Old Book',
-                'value' => $oldBook,
-                'type' => 'count',
-                'note' => Str::plural('client', $oldBook).' to carry to Customers',
-                'href' => route('client.closebook'),
-            ]] : []),
             [
                 'group' => 'Parties',
                 'label' => 'Receivable',
@@ -419,6 +405,25 @@ class AuthController extends Controller
                 'format' => 'count',
                 'rows' => $turnaround,
                 'href' => route('report.vendors'),
+            ];
+        }
+
+        /*
+         * The old Client Ledger, closed by the owner on 2026-09-23. Its own
+         * figures — what it held, how it moved this month — would read the
+         * carrying-over as movement, so they are gone. What is left to carry
+         * is said instead, only while there is any, and last: it is a job to
+         * finish, not a figure to watch — and the first tile's shape is what
+         * the page is checked against, which must not hang on this.
+         */
+        if ($oldBook) {
+            $tiles[] = [
+                'group' => 'Client ledger',
+                'label' => 'Left in Old Book',
+                'value' => $oldBook,
+                'type' => 'count',
+                'note' => Str::plural('client', $oldBook).' to carry to Customers',
+                'href' => route('client.closebook'),
             ];
         }
 
