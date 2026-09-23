@@ -27,6 +27,12 @@
             .party-statement .grid__action {
                 display: none !important;
             }
+
+            /* The message to send the customer after a reversal is the
+               office's to send, not part of the statement it prints. */
+            .customer-receipt {
+                display: none !important;
+            }
         }
     </style>
 @endsection
@@ -97,6 +103,12 @@
                         {{-- The shared messages: a filter refused, and now an entry
                              reversed from the Change dialog, or why it could not be. --}}
                         @include('admin.party._alerts')
+
+                        {{-- After a reversal, what to send the customer on WhatsApp;
+                             see PartyController::reverse(). Only pre-filled. --}}
+                        @if ($receipt)
+                            <div data-vue="vue-customer-receipt" data-props="{{ \App\Support\VueProps::encode($receipt) }}"></div>
+                        @endif
 
                         {{-- Opening and closing stay outside the table: the Balance
                              column starts from the opening figure and the table can

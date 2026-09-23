@@ -506,35 +506,19 @@ class PartyController extends Controller
 
             /*
              * Money in from a customer: offer them a receipt on WhatsApp.
-             *
-             * Carried to the next page in the session, because the form posts
-             * and comes back; it is there once, beside the "saved" message, and
-             * gone on the next load. What it says is built from the figures
-             * named here and nothing else — never the particular, which is
-             * the office's own description of the entry.
+             * See customerMessage().
              */
             if ($type === 'customer' && $entry->entry_type === 'credit'
                 && in_array($entry->payment_mode, PartyLedgerModel::MONEY_MODES, true)) {
-                $party = PartyModel::find($entry->party_id);
+                $saved->with('receipt', self::customerMessage(PartyModel::find($entry->party_id), $entry));
+            }
 
-                $saved->with('receipt', [
-                    'name' => $party->name,
-                    // Their WhatsApp number when one is saved, as everywhere.
-                    'mobile' => (string) ($party->whatsapp ?: $party->mobile),
-                    'amount' => (float) $entry->amount,
-                    'dateLabel' => date('d-m-Y', strtotime($entry->txn_date)),
-                    'mode' => $entry->payment_mode,
-                    'reference' => (string) $entry->ref_no,
-                    // Today's, after this payment — not as of the day it is
-                    // dated, which can be earlier.
-                    'balance' => round(PartyLedgerModel::currentBalance($party->id), 2),
-                    // So the message can say so: a payment dated last month
-                    // beside an undated balance reads as last month's balance.
-                    'todayLabel' => now()->format('d-m-Y'),
-                    // The files it was adjusted against, as the customer knows
-                    // them: the vehicle and the work, never a vendor.
-                    'against' => PartyLedgerModel::againstFor([$entry->id])[$entry->id] ?? [],
-                ]);
+            /*
+             * A difference written off: the customer is told of it as of any
+             * adjustment — their statement says Discount, and so does this.
+             */
+            if ($type === 'customer' && $writeOff) {
+                $saved->with('receipt', self::customerMessage(PartyModel::find($entry->party_id), $entry, 'writeoff'));
             }
 
             return $saved;
@@ -628,6 +612,47 @@ class PartyController extends Controller
     private static function paymentSide(string $type): string
     {
         return $type === 'customer' ? 'credit' : 'debit';
+    }
+
+    /**
+     * What a customer is offered on WhatsApp after their account changes: a
+     * payment's receipt, or word of a set-off, a discount or a reversal.
+     *
+     * Carried to the next page in the session and shown there once. Only
+     * pre-filled — the office presses Send. Built from the figures named here
+     * and nothing else: never the particular, which is the office's own
+     * description of the entry. A vendor is never sent one.
+     *
+     * @param  ?string  $kind  null for a payment's receipt, or setoff, writeoff, reversal
+     * @param  array<string, mixed>  $with  what a kind adds
+     * @return array<string, mixed>
+     */
+    private static function customerMessage(PartyModel $customer, PartyLedgerModel $entry, ?string $kind = null, array $with = []): array
+    {
+        return ($kind ? ['kind' => $kind] : []) + [
+            'name' => $customer->name,
+            // Their WhatsApp number when one is saved, as everywhere.
+            'mobile' => (string) ($customer->whatsapp ?: $customer->mobile),
+            'amount' => (float) $entry->amount,
+            'dateLabel' => date('d-m-Y', strtotime($entry->txn_date)),
+            // Only a payment has a mode worth saying.
+            'mode' => $kind ? '' : (string) $entry->payment_mode,
+            /*
+             * The customer's own reference, for finding it in their bank. Typed
+             * by hand, so read for vendors as their statement reads it. Found
+             * after the vendor-side sweep: it went onto the WhatsApp as typed.
+             */
+            'reference' => (string) WorkFileModel::redactVendors($entry->ref_no, WorkFileModel::vendorMarksFor((int) $customer->id)),
+            // Today's, after this entry — not as of the day it is dated,
+            // which can be earlier.
+            'balance' => round(PartyLedgerModel::currentBalance($customer->id), 2),
+            // So the message can say so: an entry dated last month beside an
+            // undated balance reads as last month's balance.
+            'todayLabel' => now()->format('d-m-Y'),
+            // The files it was adjusted against, as the customer knows them:
+            // the vehicle and the work, never a vendor.
+            'against' => PartyLedgerModel::againstFor([$entry->id])[$entry->id] ?? [],
+        ] + $with;
     }
 
     /** A refused save's amounts under one key, file by file, to be put back. */
@@ -779,18 +804,7 @@ class PartyController extends Controller
              * to send on WhatsApp, never sent from here. Their half only —
              * the vendor half's files are other customers' vehicles.
              */
-            ->with('receipt', [
-                'kind' => 'setoff',
-                'name' => $customer->name,
-                'mobile' => (string) ($customer->whatsapp ?: $customer->mobile),
-                'amount' => (float) $amount,
-                'dateLabel' => date('d-m-Y', strtotime($customerHalf->txn_date)),
-                'mode' => '',
-                'reference' => '',
-                'balance' => round(PartyLedgerModel::currentBalance($customer->id), 2),
-                'todayLabel' => now()->format('d-m-Y'),
-                'against' => PartyLedgerModel::againstFor([$customerHalf->id])[$customerHalf->id] ?? [],
-            ]);
+            ->with('receipt', self::customerMessage($customer, $customerHalf, 'setoff'));
     }
 
     /**
@@ -1711,6 +1725,22 @@ class PartyController extends Controller
 
         $type = PartyModel::whereKey($entry->party_id)->value('party_type');
 
+        /*
+         * The customer is told their balance moved, as they are of any
+         * adjustment: the half that was on a customer's account, whichever
+         * statement it was taken back from. Offered where the office lands —
+         * the statement, or the Entry screen on Correct — and only pre-filled.
+         * A vendor is never sent one.
+         */
+        $customerHalf = collect([$entry, $partner])->filter()
+            ->first(fn ($half) => PartyModel::whereKey($half->party_id)->value('party_type') === 'customer');
+
+        $told = fn ($response) => $customerHalf
+            ? $response->with('receipt', self::customerMessage(
+                PartyModel::find($customerHalf->party_id), $customerHalf, 'reversal', ['entryNo' => (int) $customerHalf->id]
+            ))
+            : $response;
+
         $asInput = fn ($lines) => $lines->mapWithKeys(fn ($line) => [(int) $line->work_file_id => [
             'work_file_id' => (int) $line->work_file_id,
             'amount' => (string) (float) $line->amount,
@@ -1725,7 +1755,7 @@ class PartyController extends Controller
              */
             $setOff = $partner !== null;
 
-            return redirect()->route('party.entry', $type)
+            return $told(redirect()->route('party.entry', $type))
                 ->withInput([
                     'party_id' => (string) $entry->party_id,
                     'entry_type' => $entry->entry_type,
@@ -1758,11 +1788,11 @@ class PartyController extends Controller
         $when = date('Y-m-d', strtotime($dated)) === now()->toDateString() ? 'today' : date('d-m-Y', strtotime($dated));
 
         if ($partner) {
-            return back()->with('success', 'Set-off entries #'.$entry->id.' and #'.$partner->id.' have been reversed, on both accounts. '
+            return $told(back())->with('success', 'Set-off entries #'.$entry->id.' and #'.$partner->id.' have been reversed, on both accounts. '
                 .'The reversals are dated '.$when.'.');
         }
 
-        return back()->with('success', 'Entry #'.$entry->id.' has been reversed. The reversal is dated '.$when.'.');
+        return $told(back())->with('success', 'Entry #'.$entry->id.' has been reversed. The reversal is dated '.$when.'.');
     }
 
     /**
@@ -2099,6 +2129,8 @@ class PartyController extends Controller
             : $today->copy()->subYear()->startOfYear()->addMonths(3);
 
         return Screen::make('admin.party.statement', 'vue-party-statement', $props, [
+            // The customer's message after a reversal made from here; see reverse().
+            'receipt' => session('receipt'),
             'type' => $party->party_type,
             'label' => PartyModel::label($party->party_type),
             'partyName' => $party->name,
