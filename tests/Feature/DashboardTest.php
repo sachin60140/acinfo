@@ -708,10 +708,30 @@ class DashboardTest extends TestCase
             $this->assertSame('ok', $fresh['tone']);
             $this->assertSame(now()->subDay()->format('d-m-Y').' 01:30 · 3 KB', $fresh['note']);
 
-            $this->travel(3)->days();
+            $this->travel(2)->days();
+            $slipping = $tile();
+            $this->assertSame('3 days ago', $slipping['value']);
+            $this->assertSame('warn', $slipping['tone']);
+            $this->assertStringContainsString('run php artisan db:backup', $slipping['note'], 'amber says what to do too');
+
+            $this->travel(1)->days();
             $late = $tile();
             $this->assertSame('4 days ago', $late['value']);
             $this->assertSame('bad', $late['tone']);
+
+            // Tonight's, and one after it that was killed part way.
+            file_put_contents($dir.DIRECTORY_SEPARATOR.$database.'-'.now()->format('Y-m-d').'-0100.sql.gz', 'x');
+            $killed = $dir.DIRECTORY_SEPARATOR.$database.'-'.now()->format('Y-m-d').'-0200.sql.gz.writing';
+            file_put_contents($killed, 'half');
+            touch($killed, now()->subHours(2)->getTimestamp());
+
+            $today = $tile();
+            $this->assertSame('Today', $today['value']);
+            $this->assertSame('ok', $today['tone']);
+            $this->assertStringContainsString('the last one did not finish · run php artisan db:backup', $today['note']);
+
+            unlink($killed);
+            $this->assertStringNotContainsString('run php artisan', $tile()['note'], 'nothing to do when it is fine');
 
             $tiles = collect($this->getJson('admin/dashboard')->json('props.tiles'));
             $this->assertSame('Receivable', $tiles->first()['label'], 'never the first tile: the page is checked against its shape');

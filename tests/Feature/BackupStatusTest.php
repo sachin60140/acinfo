@@ -124,8 +124,17 @@ class BackupStatusTest extends TestCase
     {
         $this->backup('2026-09-23-0130', 'acinfo', '.writing');
         $this->backup('2026-09-23-0130', 'acinfo_old');
+        // Starts "acinfo-" as a backup of acinfo does: only the whole name tells.
+        $this->backup('2026-09-23-0130', 'acinfo-old');
 
         $this->assertNull($this->latest()['at']);
+        $this->assertSame([], Backups::written($this->dir, 'acinfo'));
+
+        // Nor is another database's run that did not finish one of ours.
+        touch($this->dir.DIRECTORY_SEPARATOR.'acinfo-2026-09-23-0130.sql.gz.writing', now()->getTimestamp());
+        touch($this->backup('2026-09-23-0130', 'acinfo-old', '.writing'), now()->subHours(2)->getTimestamp());
+
+        $this->assertFalse($this->latest()['unfinished']);
     }
 
     /**
@@ -149,6 +158,28 @@ class BackupStatusTest extends TestCase
         $this->assertFalse($this->latest()['unfinished'], 'may still be running');
 
         touch($partial, now()->subHours(2)->getTimestamp());
+        $this->assertTrue($this->latest()['unfinished']);
+    }
+
+    /**
+     * A run killed part way, then a night that finished: the later backup
+     * makes the earlier one history. Found in review: counted whenever, one
+     * killed run kept "did not finish" on a green tile for good.
+     */
+    public function test_a_later_backup_that_finished_clears_an_earlier_one_that_did_not(): void
+    {
+        $partial = $this->backup('2026-09-20-0130', 'acinfo', '.writing');
+        touch($partial, now()->subDays(3)->getTimestamp());
+
+        $this->assertTrue($this->latest()['unfinished'], 'nothing finished since');
+
+        $this->backup('2026-09-22-0130');
+
+        $this->assertFalse($this->latest()['unfinished']);
+
+        // And one killed after that is news again.
+        touch($this->backup('2026-09-23-0130', 'acinfo', '.writing'), now()->subHours(2)->getTimestamp());
+
         $this->assertTrue($this->latest()['unfinished']);
     }
 }

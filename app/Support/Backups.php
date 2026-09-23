@@ -90,26 +90,36 @@ class Backups
                 $days >= self::WARN_DAYS => 'warn',
                 default => 'ok',
             },
-            'unfinished' => self::unfinished($directory, $database),
+            // Only a run after the newest good one: a later backup that
+            // finished makes an earlier one that did not history. Found in
+            // review: counted whenever, one killed run kept "did not finish"
+            // on a green tile for good.
+            'unfinished' => array_filter(
+                self::abandoned($directory, $database),
+                fn ($partial) => $newest === null || substr(basename($partial), 0, -strlen('.writing')) > basename($newest)
+            ) !== [],
         ];
     }
 
     /**
-     * Whether a backup was started and never finished — the night's run
-     * killed part way, by the host or by a time limit — and left its half-written
-     * file behind. Given an hour, so one being written right now is not it.
+     * Backups that were started and never finished — the run killed part way,
+     * by the host, a time limit or Ctrl+C — and left their half-written file
+     * behind, which nothing else will ever remove. Given an hour, so one being
+     * written right now is not among them. By the whole name, as written().
+     *
+     * @return list<string> paths
      */
-    private static function unfinished(string $directory, string $database): bool
+    public static function abandoned(string $directory, string $database): array
     {
-        foreach (glob(rtrim($directory, '/\\').DIRECTORY_SEPARATOR.$database.'-*.sql.gz.writing') ?: [] as $partial) {
-            $modified = @filemtime($partial);
+        $pattern = '/^'.preg_quote($database, '/').'-\d{4}-\d{2}-\d{2}-\d{4}\.sql\.gz\.writing$/';
+        $hourAgo = now()->subHour()->getTimestamp();
 
-            if ($modified !== false && $modified < now()->subHour()->getTimestamp()) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_values(array_filter(
+            glob(rtrim($directory, '/\\').DIRECTORY_SEPARATOR.$database.'-*.sql.gz.writing') ?: [],
+            fn ($path) => preg_match($pattern, basename($path)) === 1
+                && ($modified = @filemtime($path)) !== false
+                && $modified < $hourAgo
+        ));
     }
 
     /** "acinfo-2026-09-23-0130.sql.gz" was written at 01:30 on 23-09-2026, office time. */

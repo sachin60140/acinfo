@@ -375,11 +375,6 @@
 .ui-money--cr { color: var(--cr-700); }
 .ui-money--nil { color: var(--n-400); }
 
-/* A state, not a side of the ledger: how something is going. */
-.ui-money--ok { color: var(--dr-700); }
-.ui-money--warn { color: var(--warn-600); }
-.ui-money--bad { color: var(--cr-700); }
-
 /*
  * The two sides, as bare classes.
  *
@@ -612,6 +607,14 @@
     font-variant-numeric: tabular-nums;
     font-weight: 700;
 }
+
+/*
+ * And its words in the same colour as the tile. Scoped to the tile and after
+ * the rule above, which would otherwise win: found in review, a colour class
+ * on the value alone drew "Never" in near-black on the red tile.
+ */
+.ui-stat--warn .ui-stat__value { color: var(--warn-600); }
+.ui-stat--bad .ui-stat__value { color: var(--cr-700); }
 
 .ui-stat__note {
     color: var(--n-400);

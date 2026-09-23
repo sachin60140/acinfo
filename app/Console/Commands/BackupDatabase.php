@@ -258,5 +258,17 @@ class BackupDatabase extends Command
                 $this->line('  removed '.basename($old));
             }
         }
+
+        /*
+         * And what an earlier run killed part way left behind — the host, a
+         * time limit, Ctrl+C — which no other step ever removes. This one
+         * finished, so those are history; an hour old at least, so a run
+         * still going alongside is not taken for one.
+         */
+        foreach (Backups::abandoned($directory, $database) as $partial) {
+            if (@unlink($partial)) {
+                $this->line('  removed unfinished '.basename($partial));
+            }
+        }
     }
 }

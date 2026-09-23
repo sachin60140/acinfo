@@ -326,6 +326,29 @@ class BackupDatabaseTest extends TestCase
         $this->assertCount(3, $names, 'tonight\'s, the newest of the old ones, and the copy');
     }
 
+    /**
+     * A run killed part way leaves its half-written file, which nothing else
+     * removes. A run that finishes clears those an hour old or more — and not
+     * one that may still be being written alongside it.
+     */
+    public function test_a_finished_run_clears_what_a_killed_one_left_behind(): void
+    {
+        $source = $this->scratch('partial');
+        $this->on($source)->unprepared('CREATE TABLE `t` (`id` int NOT NULL)');
+
+        $killed = $this->folder.DIRECTORY_SEPARATOR.$source.'-2026-09-20-0130.sql.gz.writing';
+        file_put_contents($killed, 'half');
+        touch($killed, time() - 7200);
+
+        $running = $this->folder.DIRECTORY_SEPARATOR.$source.'-2026-09-20-0131.sql.gz.writing';
+        file_put_contents($running, 'still going');
+
+        $this->assertSame(0, $this->backup($source));
+
+        $this->assertFileDoesNotExist($killed);
+        $this->assertFileExists($running);
+    }
+
     public function test_a_database_that_cannot_be_read_leaves_nothing_behind(): void
     {
         config(['database.connections.nowhere' => array_merge(

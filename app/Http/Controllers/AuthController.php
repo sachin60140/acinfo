@@ -327,8 +327,8 @@ class AuthController extends Controller
                 $backup['at']
                     ? $backup['at']->format('d-m-Y H:i').' · '.Backups::readable((int) $backup['bytes'])
                     : 'None in storage/app/backups',
-                $backup['tone'] === 'ok' ? null : 'run php artisan db:backup on the server',
-                $backup['unfinished'] ? 'a backup was left half-written' : null,
+                $backup['unfinished'] ? 'the last one did not finish' : null,
+                $backup['tone'] === 'ok' && ! $backup['unfinished'] ? null : 'run php artisan db:backup on the server',
             ])),
         ];
 

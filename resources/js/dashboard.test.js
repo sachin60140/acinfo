@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApp, nextTick } from 'vue';
 import Dashboard from './components/Dashboard.vue';
@@ -44,7 +45,6 @@ describe('the Last Backup tile', () => {
         const [bad, warn] = host.querySelectorAll('.ui-stat');
 
         expect(bad.classList.contains('ui-stat--bad')).toBe(true);
-        expect(bad.querySelector('.ui-stat__value').classList.contains('ui-money--bad')).toBe(true);
         expect(warn.classList.contains('ui-stat--warn')).toBe(true);
     });
 
@@ -54,7 +54,6 @@ describe('the Last Backup tile', () => {
 
         expect(tile.classList.contains('ui-stat--bad')).toBe(false);
         expect(tile.classList.contains('ui-stat--warn')).toBe(false);
-        expect(tile.querySelector('.ui-stat__value').classList.contains('ui-money--ok')).toBe(true);
     });
 
     it('never takes a colour that means a side of the ledger', async () => {
@@ -80,5 +79,26 @@ describe('the money tiles', () => {
         expect(host.querySelector('.ui-stat__value').textContent.trim()).toBe('1,250.00');
         expect(host.querySelector('.ui-stat__value').classList.contains('ui-money--dr')).toBe(true);
         expect(host.querySelector('.ui-stat').className).not.toContain('ui-stat--null');
+    });
+});
+
+/*
+ * Found in review: the colour was put on the value by a class of its own, and
+ * the tile's own rule for its value, one line later in the sheet and no less
+ * specific, drew "Never" in near-black on the red tile. A class being there is
+ * not the words being red; the rule that colours them has to outrank that one.
+ */
+describe('the stylesheet', () => {
+    const css = readFileSync('resources/css/app.css', 'utf8');
+    const at = (rule) => css.indexOf(rule);
+
+    it('colours the words of a late tile, after the rule that would win otherwise', () => {
+        const plain = at('.ui-stat__value {');
+
+        for (const [state, colour] of [['warn', '--warn-600'], ['bad', '--cr-700']]) {
+            const rule = `.ui-stat--${state} .ui-stat__value { color: var(${colour}); }`;
+
+            expect(at(rule), rule).toBeGreaterThan(plain);
+        }
     });
 });
