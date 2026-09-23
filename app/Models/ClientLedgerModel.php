@@ -79,6 +79,57 @@ class ClientLedgerModel extends Model
             ->all();
     }
 
+    /**
+     * Since when a debt carried out of the old book has really been owed.
+     *
+     * The line that carried it to Customers is dated the day it was carried,
+     * so a statement already sent does not change — which makes a debt from
+     * 2025 look like one from today. What the old book says instead: its
+     * charges oldest first, with what the client paid settling the oldest, and
+     * so does whatever they have paid off the carried balance since. The day
+     * of the first charge left is the answer. Only charges are read, so the
+     * line that closed the book — money in, for a client who owed — is not
+     * taken for one.
+     *
+     * @param  array<int, float>  $owed  client id => how much of what was carried is still unpaid
+     * @return array<int, string>  client id => Y-m-d
+     */
+    public static function owedSince(array $owed): array
+    {
+        if (! $owed) {
+            return [];
+        }
+
+        $lines = DB::table('client_ledger')
+            ->whereIn('client_id', array_keys($owed))
+            ->orderBy('txn_date')
+            ->orderBy('id')
+            ->get(['client_id', 'txn_date', 'amount'])
+            ->groupBy('client_id');
+
+        $since = [];
+
+        foreach ($lines as $clientId => $rows) {
+            // Negative in the old book is money the client owed.
+            $charges = $rows->filter(fn ($row) => (float) $row->amount < 0);
+
+            // Everything but the last $owed of their charges has been paid.
+            $settled = -$charges->sum(fn ($row) => (float) $row->amount) - ($owed[$clientId] ?? 0);
+            $running = 0.0;
+
+            foreach ($charges as $row) {
+                $running += -(float) $row->amount;
+
+                if ($running > $settled + 0.005) {
+                    $since[(int) $clientId] = substr((string) $row->txn_date, 0, 10);
+                    break;
+                }
+            }
+        }
+
+        return $since;
+    }
+
     /** Whether anything at all is left in the old book to carry over. */
     public static function hasOpenBalances(): bool
     {

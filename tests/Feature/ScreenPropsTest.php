@@ -99,6 +99,41 @@ class ScreenPropsTest extends TestCase
         }
 
         /*
+         * A customer who owes for a file, from long ago, for the Collection
+         * List. Being the oldest debt, it is the row recorded here and on
+         * every other database alike — and owing on a file, the row records
+         * the Files link as the address it is, not as the null of a customer
+         * who owes only a balance typed by hand (which accepts anything).
+         */
+        $owing = new \App\Models\PartyModel;
+        $owing->party_type = 'customer';
+        $owing->name = 'Props Owing Customer';
+        $owing->mobile = '92400'.random_int(10000, 99999);
+        $owing->is_active = 1;
+        $owing->save();
+
+        $owed = new \App\Models\WorkFileModel;
+        $owed->file_no = 'F-PROPS-'.uniqid();
+        $owed->received_date = '2000-01-01';
+        $owed->registration_no = 'BR01PR'.random_int(1000, 9999);
+        $owed->description = 'Props fixture, owed';
+        $owed->work_type_id = $type->id;
+        $owed->customer_id = $owing->id;
+        $owed->customer_amount = 500;
+        $owed->status = \App\Models\WorkFileModel::APPROVED;
+        $owed->save();
+
+        $owedItem = new \App\Models\WorkFileItemModel;
+        $owedItem->work_file_id = $owed->id;
+        $owedItem->work_type_id = $type->id;
+        $owedItem->customer_amount = 500;
+        $owedItem->status = \App\Models\WorkFileModel::APPROVED;
+        $owedItem->approved_on = '2000-01-10';
+        $owedItem->save();
+
+        $owed->syncLedger();
+
+        /*
          * A client too. The client ledger's own screens are in the list below,
          * and a screen with no rows hands its component an empty array rather
          * than a row's worth of shape — which reads as the shape having changed.
@@ -267,6 +302,7 @@ class ScreenPropsTest extends TestCase
             'paper-types' => 'admin/paper-types',
             'report-customer' => 'admin/reports/files?party_type=customer',
             'report-vendor' => 'admin/reports/files?party_type=vendor',
+            'report-collection' => 'admin/reports/collection',
             // The old book: Add, Receipt and Payment are closed and mount
             // nothing now (see CloseClientLedgerController); its list,
             // statements and logins stay.

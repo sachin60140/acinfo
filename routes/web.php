@@ -191,6 +191,9 @@ Route::group(['middleware' => 'admin'], function () {
     // Work that is finished and not paid for.
     Route::get('admin/reports/uncollected', [ReportController::class, 'uncollected'])->name('report.uncollected');
 
+    // Every customer who owes, the longest-owed first, to ring or message down.
+    Route::get('admin/reports/collection', [ReportController::class, 'collection'])->name('report.collection');
+
     /*
      * JSON for the browser-side screens. Inside the admin group on purpose: a
      * vehicle's history and prices are not public just because they are JSON.
