@@ -182,6 +182,31 @@ class PartyLedgerModel extends Model
     /** The payment mode a reversal is written with. */
     public const REVERSAL_MODE = 'Reversal';
 
+    /** The kind a write-off is, in entry_kind. */
+    public const WRITEOFF = 'writeoff';
+
+    /**
+     * What a write-off says on the customer's statement.
+     *
+     * "Discount", because that is what it is to them: the office decided not to
+     * ask for the rest. Written by the server and never typed, so it reads the
+     * same on every one. Why it was given is the office's own, and is kept in
+     * the note beside it.
+     */
+    public const WRITEOFF_PARTICULAR = 'Discount';
+
+    /**
+     * Whether a difference can be written off yet.
+     *
+     * The office's own limit says so: the table it lives in arrives with a
+     * migration, and a deploy here is a git pull that does not run one. Until
+     * it has run, and until a figure above nought is set, nothing is offered.
+     */
+    public static function writeOffCap(): float
+    {
+        return self::reversible() ? OfficeSettingModel::amount(OfficeSettingModel::WRITEOFF_CAP) : 0.0;
+    }
+
     /**
      * What is still owed, file by file.
      *
@@ -271,7 +296,7 @@ class PartyLedgerModel extends Model
             ->orderBy('id')
             ->get(array_merge(
                 ['id', 'party_id', 'txn_date', 'work_file_id', 'entry_type', 'amount'],
-                self::reversible() ? ['reverses_id'] : []
+                self::reversible() ? ['reverses_id', 'entry_kind'] : []
             ))
             ->groupBy('party_id');
 
@@ -418,7 +443,15 @@ class PartyLedgerModel extends Model
 
             $held[(int) $row->id] = $amount;
 
-            if ($counts($row)) {
+            /*
+             * Money settles whatever is oldest once its own files are done.
+             * Forgiveness does not: a write-off is the office giving up one
+             * named bill, and what its lines can no longer take — the file
+             * returned, cancelled or re-priced under it — settles nothing and
+             * waits to be taken back. Found in review: pooled, the 50 given up
+             * on one bill quietly closed 50 of another.
+             */
+            if ($counts($row) && ($row->entry_kind ?? null) !== self::WRITEOFF) {
                 $pooled[(int) $row->id] = true;
             }
         }

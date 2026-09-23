@@ -330,7 +330,16 @@ class PartyController extends Controller
                 'amount' => 'required|numeric|gt:0|max:99999999',
                 'payment_mode' => ['nullable', Rule::in(PartyLedgerModel::PAYMENT_MODES)],
                 'ref_no' => 'nullable|string|max:50',
-                'particular' => 'required|string|max:255',
+                // Not asked for on a write-off: the server writes "Discount".
+                'particular' => [Rule::requiredIf($req->input('entry_kind') !== PartyLedgerModel::WRITEOFF), 'nullable', 'string', 'max:255'],
+
+                /*
+                 * Writing off a difference rather than taking money: the entry
+                 * is the same shape, said as a Discount on the customer's
+                 * statement, and why it was given is kept for the office.
+                 */
+                'entry_kind' => ['nullable', Rule::in([PartyLedgerModel::WRITEOFF])],
+                'reason' => [Rule::requiredIf($req->input('entry_kind') === PartyLedgerModel::WRITEOFF), 'nullable', 'string', 'max:255'],
 
                 // The files this payment is adjusted against, keyed by file;
                 // see below. An empty box is no line at all.
@@ -340,6 +349,7 @@ class PartyController extends Controller
                 'alloc.*.amount' => 'nullable|numeric|min:0|max:99999999',
             ], [
                 'alloc.*.amount.numeric' => 'An amount against a file must be a number.',
+                'reason.required' => 'Say why the rest is being given up — it is kept for the office and the customer never sees it.',
             ]);
 
             /*
@@ -351,6 +361,24 @@ class PartyController extends Controller
 
             // A customer pays with a credit; the office pays a vendor with a debit.
             $paymentSide = self::paymentSide($type);
+
+            $writeOff = $req->input('entry_kind') === PartyLedgerModel::WRITEOFF;
+            $cap = PartyLedgerModel::writeOffCap();
+
+            if ($writeOff && ($refused = self::writeOffRefusal($req, $type, $lines, $cap))) {
+                return back()->withInput()->withErrors(['alloc' => $refused]);
+            }
+
+            /*
+             * The word belongs to a write-off. Typed on an ordinary entry it
+             * would read to the customer exactly as one, with none of the rules
+             * behind it and nothing in the report that counts them.
+             */
+            if (! $writeOff && strcasecmp(trim((string) $req->particular), PartyLedgerModel::WRITEOFF_PARTICULAR) === 0) {
+                return back()->withInput()->withErrors([
+                    'particular' => 'Tick "Write this off" to give up a difference. An ordinary entry cannot be called a Discount.',
+                ]);
+            }
 
             if ($lines->isNotEmpty()) {
                 if ($req->entry_type !== $paymentSide) {
@@ -371,7 +399,7 @@ class PartyController extends Controller
                 return back()->withInput()->withErrors(['alloc' => $refused]);
             }
 
-            $entry = DB::transaction(function () use ($req, $lines, $type) {
+            $entry = DB::transaction(function () use ($req, $lines, $type, $writeOff, $cap) {
                 /*
                  * One payment for a party at a time. Two typed at once would
                  * otherwise both be checked against the same open amount on a
@@ -381,6 +409,12 @@ class PartyController extends Controller
 
                 // Checked here, under the lock, against what the ledger says —
                 // never against what the page showed.
+                // Its own rules first: they say what is wrong in the words
+                // of a write-off rather than of an adjustment.
+                if ($writeOff) {
+                    self::checkWriteOffAgainstLedger((int) $req->party_id, $type, $lines, $cap);
+                }
+
                 self::checkAgainstLedger((int) $req->party_id, $type, $lines);
 
                 $entry = new PartyLedgerModel;
@@ -388,9 +422,18 @@ class PartyController extends Controller
                 $entry->txn_date = $req->txn_date;
                 $entry->entry_type = $req->entry_type;
                 $entry->amount = (float) $req->amount;
-                $entry->payment_mode = $req->payment_mode;
+                /*
+                 * A write-off moves no money, so it carries no mode; what it
+                 * says is the server's word, and why is the office's own.
+                 */
+                $entry->payment_mode = $writeOff ? null : $req->payment_mode;
                 $entry->ref_no = $req->ref_no;
-                $entry->particular = $req->particular;
+                $entry->particular = $writeOff ? PartyLedgerModel::WRITEOFF_PARTICULAR : $req->particular;
+
+                if ($writeOff) {
+                    $entry->entry_kind = PartyLedgerModel::WRITEOFF;
+                    $entry->note = trim((string) $req->input('reason'));
+                }
 
                 // Who typed it in, from the day it could be recorded.
                 if (PartyLedgerModel::adjustable()) {
@@ -486,6 +529,8 @@ class PartyController extends Controller
                 'payment_mode' => (string) old('payment_mode'),
                 'ref_no' => (string) old('ref_no'),
                 'particular' => (string) old('particular'),
+                'entry_kind' => (string) old('entry_kind'),
+                'reason' => (string) old('reason'),
             ],
 
             /*
@@ -495,6 +540,12 @@ class PartyController extends Controller
              */
             'adjustable' => PartyLedgerModel::adjustable(),
             'paymentSide' => $type === 'customer' ? 'credit' : 'debit',
+            /*
+             * Writing a difference off, on the customer's side only, and only
+             * while the office's own limit says it may be.
+             */
+            'writeOffCap' => $type === 'customer' ? PartyLedgerModel::writeOffCap() : 0.0,
+            'limitsUrl' => route('setting.index'),
             'billsUrl' => route('party.bills', ['id' => '__ID__']),
             // A refused save's amounts, file by file, to be put back.
             'initialAlloc' => (object) collect((array) old('alloc', []))
@@ -564,6 +615,98 @@ class PartyController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * What is wrong with a write-off before the ledger is read.
+     *
+     * A write-off is a difference given up, not a payment taken: it is the
+     * customer's side only, it must say which bill it closes and cover the
+     * whole of itself against bills, and it may not be larger than the figure
+     * the office set for itself (Setup → Limits).
+     */
+    private static function writeOffRefusal(Request $req, string $type, Collection $lines, float $cap): ?string
+    {
+        if ($cap <= 0) {
+            return PartyLedgerModel::reversible()
+                ? 'Writing off is off until a limit above nought is set in Setup → Limits.'
+                : 'Writing off needs the database update that came with it (php artisan migrate).';
+        }
+
+        if ($type !== 'customer') {
+            return "A vendor's bill is not written off here. Correct what was agreed on the file instead.";
+        }
+
+        if ($req->entry_type !== self::paymentSide($type)) {
+            return 'A write-off is a Credit on a customer\'s account: it lowers what they owe.';
+        }
+
+        $amount = round((float) $req->amount, 2);
+
+        if ($amount > $cap + 0.005) {
+            return 'At most '.number_format($cap, 2, '.', ',').' can be written off at one time. '
+                .'Raise the limit in Setup → Limits, or correct the charge on the file instead.';
+        }
+
+        if ($lines->isEmpty()) {
+            return 'Say which bill this is off. Left on account it would settle the oldest one instead.';
+        }
+
+        if (abs($lines->sum('amount') - $amount) > 0.005) {
+            return 'The whole '.number_format($amount, 2, '.', ',').' has to be against bills; '
+                .number_format($lines->sum('amount'), 2, '.', ',').' is.';
+        }
+
+        return null;
+    }
+
+    /**
+     * A write-off's lines against the ledger, under the party's lock.
+     *
+     * Two rules of its own, beyond the ones every adjustment has. A bill can
+     * only be forgiven what it is still owed — "open" counts money on account
+     * as not yet spoken for, and forgiving that would be giving up what has
+     * already been paid. And the office's limit holds per bill as well as per
+     * entry, or a 5,000 debt goes in a hundred lots of 50.
+     */
+    private static function checkWriteOffAgainstLedger(int $partyId, string $type, Collection $lines, float $cap): void
+    {
+        $bills = PartyLedgerModel::bills($partyId, $type === 'customer' ? 'debit' : 'credit')['files'];
+        $names = DB::table('work_file')->whereIn('id', $lines->pluck('work_file_id'))->pluck('file_no', 'id');
+
+        // What has already been written off against each of these bills.
+        $already = DB::table('party_ledger_allocation as a')
+            ->join('party_ledger as e', 'e.id', '=', 'a.entry_id')
+            ->where('e.entry_kind', PartyLedgerModel::WRITEOFF)
+            ->whereNull('a.released_at')
+            // This party's own: a file given to somebody else since carries
+            // what was forgiven them, which is not this customer's allowance.
+            ->where('a.party_id', $partyId)
+            ->whereIn('a.work_file_id', $lines->pluck('work_file_id'))
+            ->groupBy('a.work_file_id')
+            ->selectRaw('a.work_file_id, SUM(a.amount) as given')
+            ->pluck('given', 'work_file_id');
+
+        $problems = [];
+
+        foreach ($lines as $line) {
+            $name = $names[$line['work_file_id']] ?? 'That file';
+            $due = (float) ($bills[$line['work_file_id']]['due'] ?? 0);
+            $off = (float) ($already[$line['work_file_id']] ?? 0);
+
+            if ($line['amount'] > $due + 0.005) {
+                $problems[] = $due > 0.005
+                    ? $name.' is owed only '.number_format($due, 2, '.', ',').' now.'
+                    : $name.' is not owed anything now, so there is nothing on it to write off.';
+            } elseif ($off + $line['amount'] > $cap + 0.005) {
+                $problems[] = $name.' has already had '.number_format($off, 2, '.', ',')
+                    .' written off, and the limit is '.number_format($cap, 2, '.', ',').' a bill.';
+            }
+        }
+
+        if ($problems) {
+            throw ValidationException::withMessages(['alloc' => implode(' ', $problems)]);
+        }
     }
 
     /**
@@ -1265,7 +1408,17 @@ class PartyController extends Controller
                     'amount' => (string) (float) $entry->amount,
                     'payment_mode' => (string) $entry->payment_mode,
                     'ref_no' => (string) $entry->ref_no,
-                    'particular' => (string) $entry->particular,
+                    /*
+                     * A write-off comes back as one. Found in review: only the
+                     * money fields were carried, so the tick came back off with
+                     * "Discount" typed in Particulars — and saving it wrote an
+                     * ordinary credit that read as a discount to the customer,
+                     * under no limit and in no report. Its own label is left
+                     * behind with it: the server writes that word, nobody types it.
+                     */
+                    'particular' => $entry->entry_kind === PartyLedgerModel::WRITEOFF ? '' : (string) $entry->particular,
+                    'entry_kind' => (string) $entry->entry_kind,
+                    'reason' => (string) $entry->note,
                     'alloc' => $lines->mapWithKeys(fn ($line) => [(int) $line->work_file_id => [
                         'work_file_id' => (int) $line->work_file_id,
                         'amount' => (string) (float) $line->amount,
@@ -1322,8 +1475,11 @@ class PartyController extends Controller
         return [
             'change' => $entry->work_file_id ? null : 'Change',
             'row_state' => null,
-            // When its files were last changed, and what it was for before.
-            'office_note' => $history[$entry->id] ?? null,
+            // Why a difference was given up, and when its files were last
+            // changed. The customer's own statement says neither.
+            'office_note' => $entry->entry_kind === PartyLedgerModel::WRITEOFF && $entry->note
+                ? 'Why: '.$entry->note
+                : ($history[$entry->id] ?? null),
             'adjust_url' => $byHand && $entry->entry_type === $paymentSide
                 ? route('party.adjust', ['id' => $entry->id] + $period)
                 : null,

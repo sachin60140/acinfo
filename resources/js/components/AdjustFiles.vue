@@ -19,6 +19,8 @@ const props = defineProps({
     coveredBy: { type: String, default: 'money on account' },
     // What happens when the files cannot be fetched, as this screen can say it.
     failedText: { type: String, default: 'The files could not be loaded. The payment can still be saved, on account.' },
+    // And what it means for this screen when the party owes nothing.
+    emptyText: { type: String, default: '' },
 });
 
 // Taken apart once, so the template reads each as the ref it is.
@@ -79,7 +81,7 @@ const {
         <div v-if="billsState === 'loading'" class="ui-hint">Looking up {{ partyName }}'s files…</div>
         <div v-else-if="billsState === 'failed'" class="ui-hint adjust__error">{{ failedText }}</div>
         <div v-else-if="!visibleBills.length && !keptRows.length" class="ui-hint">
-            Nothing owed on {{ partyName }}'s files — the payment goes on account.
+            {{ emptyText || `Nothing owed on ${partyName}'s files — the payment goes on account.` }}
         </div>
 
         <div v-else class="adjust__list">

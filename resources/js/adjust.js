@@ -20,6 +20,11 @@ import { money } from './money';
  * @param {() => string} options.partyName
  * @param {() => number} options.amount  the payment's amount
  * @param {() => boolean} options.active  whether the section is on screen at all
+ * @param {(() => boolean)|null} [options.coverAll]  whether every rupee of the
+ *     amount has to be against files, as a write-off's must be
+ * @param {(() => string)|null} [options.ceiling]  what a line may reach on a
+ *     file: 'open', what no other adjustment has taken, or 'due', what the file
+ *     is still owed — which is all a write-off may forgive
  * @param {number|null} [options.except]  a saved payment being re-adjusted: its
  *     own adjustments and its money are left out of what the files show
  * @param {Array<{id: number, fileNo: string, vehicle: string, amount: number, settles: number, why: ?string}>} [options.kept]
@@ -190,8 +195,16 @@ export function useAdjust(options) {
         return [...kept.values()].filter((line) => ! listed.has(String(line.id)));
     });
 
-    // As much as is open, or as much as the payment has on it already.
-    const limitOf = (bill) => Math.max(Number(bill.open) || 0, keptAmount(bill.id));
+    /*
+     * As much as is open, or as much as the payment has on it already. A
+     * write-off asks for 'due' instead: money already on account has paid that
+     * part, and it is not the office's to give up. Found in review: offered
+     * against 'open', the screen let a write-off be typed that the server
+     * refused on saving.
+     */
+    const ceiling = (bill) => Number(bill[options.ceiling?.() ?? 'open']) || 0;
+
+    const limitOf = (bill) => Math.max(ceiling(bill), keptAmount(bill.id));
 
     /*
      * What Full puts: as much as is open, or as much as its line settles now —
@@ -199,7 +212,7 @@ export function useAdjust(options) {
      * re-priced, was put back whole, and the page counted all of it as on the
      * file.
      */
-    const fullOf = (bill) => Math.max(Number(bill.open) || 0, keptSettles(bill.id));
+    const fullOf = (bill) => Math.max(ceiling(bill), keptSettles(bill.id));
 
     const keptOn = (bill) => keptAmount(bill.id);
 
@@ -252,7 +265,13 @@ export function useAdjust(options) {
         const over = bills.value.filter(overOpen);
 
         if (over.length) {
-            return `${over.map((bill) => bill.fileNo).join(', ')}: more than is open on the file.`;
+            return options.ceiling?.() === 'due'
+                ? `${over.map((bill) => bill.fileNo).join(', ')}: more than the bill is owed.`
+                : `${over.map((bill) => bill.fileNo).join(', ')}: more than is open on the file.`;
+        }
+
+        if (options.coverAll?.() && amount.value > 0 && Math.abs(allocated.value - amount.value) > 0.005) {
+            return `Put the whole ${money(amount.value)} against the bill it closes — ${money(allocated.value)} is.`;
         }
 
         const raised = keptRows.value.filter(overKept);
