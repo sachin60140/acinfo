@@ -1178,14 +1178,17 @@
             "indexUrl": "string",
             "initial": {
                 "amount": "string",
+                "entry_kind": "string",
                 "entry_type": "string",
                 "particular": "string",
                 "party_id": "string",
                 "payment_mode": "string",
+                "reason": "string",
                 "ref_no": "string"
             },
             "initialAlloc": "[]",
             "label": "string",
+            "limitsUrl": "string",
             "parties": {
                 "list_of": {
                     "current_balance": "number",
@@ -1199,7 +1202,8 @@
             },
             "paymentSide": "string",
             "sideHint": "string",
-            "statementUrl": "string"
+            "statementUrl": "string",
+            "writeOffCap": "number"
         }
     },
     "party-list-customer": {

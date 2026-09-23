@@ -40,9 +40,19 @@ const props = defineProps({
     billsUrl: { type: String, default: '' },
     // A refused save's amounts, by file, to be put back.
     initialAlloc: { type: Object, default: () => ({}) },
+
+    /*
+     * Writing a difference off: the customer owes 5,000, pays 4,950, and the
+     * 50 is given up rather than left on their statement for ever. Nought —
+     * a vendor, or no limit set in Setup → Limits — means it is not offered.
+     */
+    writeOffCap: { type: Number, default: 0 },
+    limitsUrl: { type: String, default: '' },
 });
 
-const entry = reactive({ ...props.initial });
+// The two a write-off adds are named here as well, so a page drawn without
+// them still resets to empty rather than keeping what was typed.
+const entry = reactive({ entry_kind: '', reason: '', ...props.initial });
 
 // Ids arrive as numbers and a form field is always a string, so the comparison
 // is made on one type rather than left to ==.
@@ -84,9 +94,39 @@ const hint = computed(() => {
         return 'Enter an amount.';
     }
 
-    const verb = entry.entry_type === 'credit' ? 'Credits' : 'Debits';
+    const verb = isWriteOff.value
+        ? 'Writes off'
+        : (entry.entry_type === 'credit' ? 'Credits' : 'Debits');
 
     return `${verb} ${money(entry.amount)} — ${selected.value.name} ends on ${balance(after.value)}.`;
+});
+
+/* ---- Writing a difference off ------------------------------------------ */
+
+/*
+ * Offered where a payment would be — the customer's own side — and only while
+ * the office has set a limit. It is the same entry as a payment, said as a
+ * Discount on the customer's statement, so what changes here is only what is
+ * asked for: why instead of particulars, no payment mode, and the whole of it
+ * against the bill it closes.
+ */
+const canWriteOff = computed(() =>
+    props.writeOffCap > 0 && Boolean(selected.value) && entry.entry_type === props.paymentSide
+);
+
+const isWriteOff = computed(() => canWriteOff.value && entry.entry_kind === 'writeoff');
+
+// Said before Save is pressed; the server refuses the same.
+const writeOffProblem = computed(() => {
+    if (! isWriteOff.value) {
+        return '';
+    }
+
+    if (Number(entry.amount) > props.writeOffCap + 0.005) {
+        return `At most ${money(props.writeOffCap)} can be written off at one time.`;
+    }
+
+    return '';
 });
 
 /* ---- Adjusting against files ------------------------------------------- */
@@ -107,6 +147,8 @@ const adjust = useAdjust({
     partyName: () => selected.value?.name ?? '',
     amount: () => entry.amount,
     active: () => showAdjust.value,
+    // A write-off says which bill it closes, and the whole of it.
+    coverAll: () => isWriteOff.value,
 });
 
 /*
@@ -125,7 +167,14 @@ watch(() => [entry.party_id, entry.entry_type], (now, before) => {
     adjust.loadBills();
 }, { immediate: true });
 
-const adjustProblem = adjust.problem;
+// A charge is not written off, so the tick goes with the side.
+watch(canWriteOff, (can) => {
+    if (! can) {
+        entry.entry_kind = '';
+    }
+});
+
+const adjustProblem = computed(() => writeOffProblem.value || adjust.problem.value);
 
 const dateBox = ref(null);
 
@@ -271,7 +320,7 @@ function resetDateField() {
                     </div>
                 </div>
 
-                <div class="ui-field">
+                <div v-if="! isWriteOff" class="ui-field">
                     <label class="ui-label" for="payment_mode">Payment Mode</label>
                     <select id="payment_mode" class="ui-select" name="payment_mode" v-model="entry.payment_mode">
                         <option value="">Not specified</option>
@@ -291,7 +340,9 @@ function resetDateField() {
                         placeholder="Optional">
                 </div>
 
-                <div class="ui-field entry-grid__wide">
+                <!-- Replaced rather than hidden on a write-off: a hidden box
+                     would go on posting whatever was last typed in it. -->
+                <div v-if="! isWriteOff" class="ui-field entry-grid__wide">
                     <label class="ui-label" for="particular">
                         Particulars <span class="ui-label__req">*</span>
                     </label>
@@ -304,14 +355,60 @@ function resetDateField() {
                         v-model="entry.particular"
                         required></textarea>
                 </div>
+
+                <div v-else class="ui-field entry-grid__wide">
+                    <label class="ui-label" for="reason">
+                        Why is it being given up? <span class="ui-label__req">*</span>
+                    </label>
+                    <textarea
+                        id="reason"
+                        class="ui-textarea"
+                        name="reason"
+                        rows="3"
+                        maxlength="255"
+                        v-model="entry.reason"
+                        placeholder="e.g. Rounded off, customer paid in full"
+                        required></textarea>
+                    <div class="ui-hint">
+                        Kept for the office. The customer's statement says only Discount.
+                    </div>
+                </div>
             </div>
 
-            <!-- Which files this payment is for. Optional: left empty, the
-                 payment settles the oldest files first, as it always has. -->
-            <AdjustFiles v-if="showAdjust" :state="adjust" />
+            <!-- Giving up the rest of a bill rather than taking money for it. -->
+            <label v-if="canWriteOff" class="entry-writeoff">
+                <!-- The value as well as the bound one: a checkbox posts its
+                     value attribute, and the server reads what was posted. -->
+                <input
+                    type="checkbox"
+                    name="entry_kind"
+                    value="writeoff"
+                    true-value="writeoff"
+                    false-value=""
+                    v-model="entry.entry_kind">
+                <span>
+                    Write this off — the customer's statement will call it a Discount
+                    <span class="ui-hint">
+                        Up to {{ money(writeOffCap) }} at a time, and {{ money(writeOffCap) }} on any one bill.
+                        <a v-if="limitsUrl" :href="limitsUrl">Change the limit</a>
+                    </span>
+                </span>
+            </label>
+
+            <!-- Which files this payment is for. Optional on a payment: left
+                 empty it settles the oldest files first, as it always has. A
+                 write-off says which bill it closes, and the whole of it. -->
+            <AdjustFiles
+                v-if="showAdjust"
+                :state="adjust"
+                :optional="! isWriteOff"
+                :title="isWriteOff ? 'Which bill is being written off' : 'Adjust against files'"
+                :lead="isWriteOff
+                    ? 'Put the whole of it against the bill it closes — left on account it would settle the oldest one instead.'
+                    : 'Leave these empty and the payment settles the oldest files first, as before.'" />
 
             <div class="ui-card__foot" :class="{ 'ui-card__foot--dirty': touched }">
-                <span class="ui-hint">{{ hint }}</span>
+                <span class="ui-hint" :class="{ 'entry-writeoff__error': writeOffProblem }">{{ writeOffProblem || hint }}</span>
                 <div class="foot-actions">
                     <button type="reset" class="ui-btn">
                         <i class="bi bi-arrow-counterclockwise"></i> Reset
@@ -561,6 +658,25 @@ function resetDateField() {
 .party-entry .foot-actions {
     display: flex;
     gap: var(--s-2);
+}
+
+/* ---- Writing a difference off ------------------------------------------ */
+
+.party-entry .entry-writeoff {
+    align-items: start;
+    border-top: 1px solid var(--n-200);
+    display: flex;
+    gap: var(--s-2);
+    padding: var(--s-4) var(--s-4) 0;
+}
+
+.party-entry .entry-writeoff .ui-hint {
+    display: block;
+}
+
+.party-entry .entry-writeoff__error {
+    color: var(--cr-700);
+    font-weight: 600;
 }
 
 /* Below the large breakpoint the two columns stack and every field takes the

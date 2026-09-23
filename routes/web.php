@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\WorkFileApiController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CustomerPortalController;
 use App\Http\Controllers\ExpenseTypeController;
+use App\Http\Controllers\OfficeSettingController;
 use App\Http\Controllers\PaperTypeController;
 use App\Http\Controllers\PartyController;
 use App\Http\Controllers\ReportController;
@@ -90,6 +91,9 @@ Route::group(['middleware' => 'admin'], function () {
  * depends on that one — but nothing outside these two groups depends on either.
  */
 Route::group(['middleware' => 'admin'], function () {
+    // The figures the office sets for itself; the write-off limit, so far.
+    Route::match(['get', 'post'], 'admin/setup/limits', [OfficeSettingController::class, 'index'])->name('setting.index');
+
     Route::match(['get', 'post'], 'admin/work-types', [WorkTypeController::class, 'index'])->name('worktype.index');
 
     /*

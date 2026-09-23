@@ -182,6 +182,31 @@ class PartyLedgerModel extends Model
     /** The payment mode a reversal is written with. */
     public const REVERSAL_MODE = 'Reversal';
 
+    /** The kind a write-off is, in entry_kind. */
+    public const WRITEOFF = 'writeoff';
+
+    /**
+     * What a write-off says on the customer's statement.
+     *
+     * "Discount", because that is what it is to them: the office decided not to
+     * ask for the rest. Written by the server and never typed, so it reads the
+     * same on every one. Why it was given is the office's own, and is kept in
+     * the note beside it.
+     */
+    public const WRITEOFF_PARTICULAR = 'Discount';
+
+    /**
+     * Whether a difference can be written off yet.
+     *
+     * The office's own limit says so: the table it lives in arrives with a
+     * migration, and a deploy here is a git pull that does not run one. Until
+     * it has run, and until a figure above nought is set, nothing is offered.
+     */
+    public static function writeOffCap(): float
+    {
+        return self::reversible() ? OfficeSettingModel::amount(OfficeSettingModel::WRITEOFF_CAP) : 0.0;
+    }
+
     /**
      * What is still owed, file by file.
      *

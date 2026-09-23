@@ -20,6 +20,8 @@ import { money } from './money';
  * @param {() => string} options.partyName
  * @param {() => number} options.amount  the payment's amount
  * @param {() => boolean} options.active  whether the section is on screen at all
+ * @param {(() => boolean)|null} [options.coverAll]  whether every rupee of the
+ *     amount has to be against files, as a write-off's must be
  * @param {number|null} [options.except]  a saved payment being re-adjusted: its
  *     own adjustments and its money are left out of what the files show
  * @param {Array<{id: number, fileNo: string, vehicle: string, amount: number, settles: number, why: ?string}>} [options.kept]
@@ -253,6 +255,10 @@ export function useAdjust(options) {
 
         if (over.length) {
             return `${over.map((bill) => bill.fileNo).join(', ')}: more than is open on the file.`;
+        }
+
+        if (options.coverAll?.() && amount.value > 0 && Math.abs(allocated.value - amount.value) > 0.005) {
+            return `Put the whole ${money(amount.value)} against the bill it closes — ${money(allocated.value)} is.`;
         }
 
         const raised = keptRows.value.filter(overKept);

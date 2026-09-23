@@ -2426,7 +2426,7 @@ class WorkFileModel extends Model
 
         self::betweenDates($each, $from, $to);
 
-        return DB::query()
+        $rows = DB::query()
             ->fromSub($each, 'each_file')
             ->select('group_key', 'group_label')
             ->selectRaw('COUNT(*) as files')
@@ -2437,6 +2437,56 @@ class WorkFileModel extends Model
             ->groupBy('group_key', 'group_label')
             ->orderByRaw($order)
             ->get();
+
+        return self::withGivenUp($rows, $from, $to);
+    }
+
+    /**
+     * What the office gave up on its bills, as a row of its own.
+     *
+     * A customer owes 5,000, pays 4,950, and the 50 is written off: the charge
+     * stays as it was — it was the right charge — so every cut of this report
+     * goes on reporting 5,000 earned on that file. The 50 is real money not
+     * taken, and it belongs here, in the same period as the charge it reduces:
+     * dated by the day the papers came in, which is the date every other figure
+     * on this report is filtered by.
+     *
+     * Its own line rather than a column, for the reason counter expenses have
+     * one: a discount belongs to a bill, and a bill is not a work type or a
+     * vendor. Under any cut, the same figure.
+     */
+    private static function withGivenUp($rows, ?string $from, ?string $to)
+    {
+        if (! PartyLedgerModel::adjustable()) {
+            return $rows;
+        }
+
+        $query = DB::table('party_ledger_allocation as a')
+            ->join('party_ledger as e', 'e.id', '=', 'a.entry_id')
+            ->join('work_file', 'work_file.id', '=', 'a.work_file_id')
+            ->where('e.entry_kind', PartyLedgerModel::WRITEOFF)
+            // A write-off taken back released its lines; it gave up nothing.
+            ->whereNull('a.released_at');
+
+        self::betweenDates($query, $from, $to);
+
+        $total = round((float) $query->sum('a.amount'), 2);
+
+        if ($total <= 0) {
+            return $rows;
+        }
+
+        return $rows->push((object) [
+            // Apart from counter expenses, which is 0 on the work type cut.
+            'group_key' => -1,
+            'group_label' => 'Discounts & write-offs',
+            'note' => 'Given up on a bill; the charge stays as it was',
+            'files' => 0,
+            'billed' => 0,
+            'cost' => $total,
+            'margin' => -$total,
+            'unpriced' => 0,
+        ]);
     }
     /**
      * The same question asked of the works rather than the folders.
@@ -2479,9 +2529,10 @@ class WorkFileModel extends Model
             ->orderByRaw('billed desc')
             ->get();
 
-        $counter = self::counterExpenses($from, $to);
-
-        return $counter === null ? $rows : $rows->push($counter);
+        return self::withGivenUp($rows->when(
+            ($counter = self::counterExpenses($from, $to)) !== null,
+            fn ($all) => $all->push($counter)
+        ), $from, $to);
     }
 
     /**
