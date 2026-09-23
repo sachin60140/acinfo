@@ -296,7 +296,7 @@ class PartyLedgerModel extends Model
             ->orderBy('id')
             ->get(array_merge(
                 ['id', 'party_id', 'txn_date', 'work_file_id', 'entry_type', 'amount'],
-                self::reversible() ? ['reverses_id'] : []
+                self::reversible() ? ['reverses_id', 'entry_kind'] : []
             ))
             ->groupBy('party_id');
 
@@ -443,7 +443,15 @@ class PartyLedgerModel extends Model
 
             $held[(int) $row->id] = $amount;
 
-            if ($counts($row)) {
+            /*
+             * Money settles whatever is oldest once its own files are done.
+             * Forgiveness does not: a write-off is the office giving up one
+             * named bill, and what its lines can no longer take — the file
+             * returned, cancelled or re-priced under it — settles nothing and
+             * waits to be taken back. Found in review: pooled, the 50 given up
+             * on one bill quietly closed 50 of another.
+             */
+            if ($counts($row) && ($row->entry_kind ?? null) !== self::WRITEOFF) {
                 $pooled[(int) $row->id] = true;
             }
         }

@@ -16,6 +16,10 @@
     <section class="section">
         @include('admin.party._alerts')
 
+        @if ($missing)
+            <div class="alert alert-warning">{{ $missing }}</div>
+        @endif
+
         <div class="row">
             <div class="col-lg-7">
                 <div class="card">
@@ -42,6 +46,7 @@
                                         name="writeoff_cap"
                                         class="form-control @error('writeoff_cap') is-invalid @enderror"
                                         value="{{ old('writeoff_cap', number_format($cap, 2, '.', '')) }}"
+                                        @disabled($missing)
                                         required>
                                 </div>
                                 @error('writeoff_cap')
@@ -49,7 +54,7 @@
                                 @enderror
                             </div>
                             <div class="col-sm-auto">
-                                <button type="submit" class="btn btn-primary">Save limit</button>
+                                <button type="submit" class="btn btn-primary" @disabled($missing)>Save limit</button>
                             </div>
                         </form>
                     </div>

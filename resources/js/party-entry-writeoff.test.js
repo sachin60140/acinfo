@@ -19,11 +19,14 @@ const BILLS = [
 ];
 
 const mounted = [];
+let bills;
 
 beforeEach(() => {
+    bills = BILLS;
+
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ bills: BILLS, covered: 0 }),
+        json: () => Promise.resolve({ bills, covered: 0 }),
     })));
 });
 
@@ -185,6 +188,44 @@ describe('what it refuses before Save', () => {
         await type(host, 'input[aria-label="Amount against F-00050"]', '50');
 
         expect(save(host).disabled).toBe(false);
+    });
+
+    /*
+     * Only what the bill is still owed. A bill covered by money on account has
+     * room under "open" that a payment may take and a write-off may not: the
+     * customer has already paid that part.
+     */
+    it('more than the bill is owed, even where the file is open', async () => {
+        bills = [{ ...BILLS[0], charged: 5000, adjusted: 0, open: 5000, due: 50 }];
+
+        const host = mount();
+        await pick(host);
+        tick(host).click();
+        await nextTick();
+
+        await type(host, 'input[name="amount"]', '100');
+        await type(host, 'input[aria-label="Amount against F-00050"]', '100');
+
+        expect(save(host).disabled).toBe(true);
+        expect(host.textContent).toContain('more than the bill is owed');
+
+        // And Full offers what is owed, not what is open.
+        [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Full').click();
+        await nextTick();
+
+        expect(host.querySelector('input[aria-label="Amount against F-00050"]').value).toBe('50.00');
+    });
+
+    it('says so when the customer owes nothing on any bill', async () => {
+        bills = [];
+
+        const host = mount();
+        await pick(host);
+        tick(host).click();
+        await nextTick();
+
+        expect(host.textContent).toContain('nothing to write off');
+        expect(host.textContent).not.toContain('goes on account');
     });
 
     /* A payment is not a write-off: it may still be left on account. */

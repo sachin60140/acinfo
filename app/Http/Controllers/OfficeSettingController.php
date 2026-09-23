@@ -21,6 +21,15 @@ class OfficeSettingController extends Controller
 {
     public function index(Request $req)
     {
+        // The table arrives with a migration the office runs by hand.
+        if (! OfficeSettingModel::available()) {
+            return view('admin.setup.limits', [
+                'cap' => 0.0,
+                'history' => collect(),
+                'missing' => 'These figures need the database update that came with them. Run php artisan migrate on the server, then set the limit here.',
+            ]);
+        }
+
         if ($req->isMethod('POST')) {
             $req->validate([
                 'writeoff_cap' => 'required|numeric|gte:0|max:99999999',
@@ -44,6 +53,7 @@ class OfficeSettingController extends Controller
         return view('admin.setup.limits', [
             'cap' => OfficeSettingModel::amount(OfficeSettingModel::WRITEOFF_CAP),
             'history' => OfficeSettingModel::history(OfficeSettingModel::WRITEOFF_CAP),
+            'missing' => null,
         ]);
     }
 }

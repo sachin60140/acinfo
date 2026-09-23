@@ -207,6 +207,128 @@ class WriteOffTest extends TestCase
         $this->assertStringNotContainsString('Rounded off', $said);
     }
 
+    /**
+     * Forgiveness is not money.
+     *
+     * The bill it was given up on can go — the papers returned, the work
+     * struck off, the price brought down under it — and what it forgave then
+     * settles nothing. Found in review: treated as money on account, the 50
+     * given up on one bill quietly closed 50 of another.
+     */
+    public function test_what_it_forgave_never_settles_another_bill(): void
+    {
+        // Small enough that what was paid cannot cover the other bill by itself.
+        $returned = $this->file(100);
+        $other = $this->file(2000, '2026-08-02');
+
+        $this->pay(50, [$returned->id => 50]);
+        $this->writeOff(50, [$returned->id => 50])->assertSessionHas('success');
+
+        $this->assertSame([$other->id => 2000.0], $this->owed(), 'the premise: the other bill stands');
+
+        // The papers go back, so the charge it forgave is credited in full.
+        $returned->status = WorkFileModel::RETURNED;
+        $returned->returned_on = now()->toDateString();
+        $returned->save();
+        $returned->items()->update(['status' => WorkFileModel::RETURNED]);
+        $returned->fresh()->syncLedger();
+
+        // The 50 paid settles 50 of the other bill; the 50 forgiven settles nothing.
+        $this->assertSame([$other->id => 1950.0], $this->owed(), 'the discount walked on to another bill');
+
+        // And the office is told to take it back, rather than left to notice.
+        $this->assertSame(1, \Illuminate\Support\Facades\Artisan::call('files:audit'));
+        $said = \Illuminate\Support\Facades\Artisan::output();
+
+        $this->assertStringContainsString($returned->file_no, $said);
+        $this->assertStringContainsString('settles nothing', $said);
+    }
+
+    /** Taken back after that, the account says only what was really paid. */
+    public function test_taking_it_back_squares_the_account(): void
+    {
+        $file = $this->file(5000);
+        $this->pay(4950, [$file->id => 4950]);
+        $this->writeOff(50, [$file->id => 50]);
+
+        $file->status = WorkFileModel::RETURNED;
+        $file->returned_on = now()->toDateString();
+        $file->save();
+        $file->items()->update(['status' => WorkFileModel::RETURNED]);
+        $file->fresh()->syncLedger();
+
+        $this->actingAs($this->admin)
+            ->post(route('party.reverse', $this->written()->id), ['reason' => 'The papers went back'])
+            ->assertSessionHas('success');
+
+        // 4,950 came in and 5,000 went back out: the office owes 4,950.
+        $this->assertEqualsWithDelta(-4950, PartyLedgerModel::currentBalance($this->customer->id), 0.005);
+    }
+
+    /** Entered again after a reversal, a write-off comes back as one. */
+    public function test_reverse_and_enter_it_again_keeps_it_a_write_off(): void
+    {
+        $file = $this->file(1000);
+        $this->pay(900, [$file->id => 900]);
+        $this->writeOff(100, [$file->id => 100]);
+
+        $this->actingAs($this->admin)
+            ->post(route('party.reverse', $this->written()->id), ['reason' => 'Wrong bill', 'correct' => '1'])
+            ->assertRedirect(route('party.entry', 'customer'));
+
+        $initial = $this->actingAs($this->admin)->getJson(route('party.entry', 'customer'))->json('props.initial');
+
+        $this->assertSame('writeoff', $initial['entry_kind'], 'it came back as an ordinary credit');
+        // Its own reason comes back with it, to be kept or changed.
+        $this->assertSame('Rounded off, customer paid in full', $initial['reason']);
+        $this->assertSame('', $initial['particular'], 'the word Discount was handed back to be typed');
+    }
+
+    /** Nothing else may call itself a Discount on a customer's statement. */
+    public function test_an_ordinary_entry_cannot_be_called_a_discount(): void
+    {
+        $this->actingAs($this->admin)
+            ->from(route('party.entry', 'customer'))
+            ->post(route('party.entry', 'customer'), [
+                'party_id' => $this->customer->id,
+                'entry_type' => 'credit',
+                'txn_date' => '2026-09-20',
+                'amount' => 100,
+                'payment_mode' => 'Cash',
+                'particular' => 'discount',
+            ])
+            ->assertSessionHasErrors('particular');
+
+        $this->assertSame(0, PartyLedgerModel::where('party_id', $this->customer->id)->where('particular', 'discount')->count());
+    }
+
+    /** The per-bill limit is this customer's own: a file given to somebody else brings none of theirs. */
+    public function test_the_per_bill_limit_does_not_follow_a_file_to_another_customer(): void
+    {
+        $file = $this->file(5000);
+        $this->writeOff(500, [$file->id => 500])->assertSessionHas('success');
+
+        $theirs = $this->party('customer');
+        $file->customer_id = $theirs->id;
+        $file->save();
+        $file->fresh()->syncLedger();
+
+        $this->actingAs($this->admin)
+            ->from(route('party.entry', 'customer'))
+            ->post(route('party.entry', 'customer'), [
+                'party_id' => $theirs->id,
+                'entry_type' => 'credit',
+                'txn_date' => '2026-09-21',
+                'amount' => 500,
+                'entry_kind' => 'writeoff',
+                'reason' => 'Their own rounding',
+                'alloc' => $this->lines([$file->id => 500]),
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(1, PartyLedgerModel::where('party_id', $theirs->id)->where('entry_kind', PartyLedgerModel::WRITEOFF)->count());
+    }
+
     // ---------------------------------------------------------------- refused
 
     private function assertRefusedAndNothingWritten($response): void
@@ -349,7 +471,7 @@ class WriteOffTest extends TestCase
 
         $line = fn (array $query) => collect($this->actingAs($this->admin)
             ->getJson(route('report.profit').'?'.http_build_query($query))->assertOk()->json('props.rows'))
-            ->firstWhere('label', 'Discounts & write-offs');
+            ->first(fn ($row) => str_starts_with((string) $row['label'], 'Discounts & write-offs'));
 
         $given = $line(['group' => 'month']);
 
@@ -365,6 +487,49 @@ class WriteOffTest extends TestCase
         // The same figure however the report is cut.
         $this->assertEquals(50, $line(['group' => 'customer'])['cost']);
         $this->assertEquals(50, $line(['group' => 'work_type'])['cost']);
+    }
+
+    /** Cut by month, each month's discounts sit with that month. */
+    public function test_each_period_carries_its_own_discounts(): void
+    {
+        $august = $this->file(1000, '2026-08-05');
+        $september = $this->file(1000, '2026-09-05');
+
+        $this->pay(900, [$august->id => 900]);
+        $this->pay(900, [$september->id => 900]);
+        $this->writeOff(100, [$august->id => 100])->assertSessionHas('success');
+        $this->writeOff(60, [$september->id => 60])->assertSessionHas('success');
+
+        $rows = collect($this->actingAs($this->admin)->getJson(route('report.profit').'?group=month')
+            ->assertOk()->json('props.rows'));
+
+        $given = $rows->filter(fn ($row) => str_starts_with((string) $row['label'], 'Discounts & write-offs'));
+
+        $this->assertSame(100.0, (float) $given->first(fn ($row) => str_contains($row['label'], 'Aug 2026'))['cost']);
+        $this->assertSame(60.0, (float) $given->first(fn ($row) => str_contains($row['label'], 'Sep 2026'))['cost']);
+
+        // Each under the month whose margin it corrects.
+        $keys = $rows->pluck('label')->values()->all();
+        $this->assertSame('Aug 2026', $keys[array_search('Discounts & write-offs · Aug 2026', $keys, true) - 1] ?? null);
+    }
+
+    /** The dashboard's own figures say the same as the report they link to. */
+    public function test_the_dashboard_counts_what_was_given_up(): void
+    {
+        $file = $this->file(1000, now()->startOfMonth()->toDateString());
+        $this->pay(900, [$file->id => 900]);
+
+        $before = WorkFileModel::summary()['month_margin'];
+        $chartBefore = collect(WorkFileModel::monthlyMoney())->firstWhere('month', now()->format('Y-m'));
+
+        $this->writeOff(100, [$file->id => 100])->assertSessionHas('success');
+
+        $after = WorkFileModel::summary()['month_margin'];
+        $chartAfter = collect(WorkFileModel::monthlyMoney())->firstWhere('month', now()->format('Y-m'));
+
+        $this->assertEqualsWithDelta($before - 100, $after, 0.005, 'the tile still reads as though nothing was given up');
+        $this->assertEqualsWithDelta($chartBefore['margin'] - 100, $chartAfter['margin'], 0.005);
+        $this->assertEqualsWithDelta($chartBefore['cost'] + 100, $chartAfter['cost'], 0.005);
     }
 
     /** Taken back, it gave up nothing: the bill is owed again and the report says so. */
@@ -383,7 +548,7 @@ class WriteOffTest extends TestCase
         $this->assertSame([$file->id => 100.0], $this->owed());
 
         $given = collect($this->actingAs($this->admin)->getJson(route('report.profit').'?group=month')
-            ->json('props.rows'))->firstWhere('label', 'Discounts & write-offs');
+            ->json('props.rows'))->first(fn ($row) => str_starts_with((string) $row['label'], 'Discounts & write-offs'));
 
         $this->assertNull($given, 'a write-off taken back is still counted as given up');
     }

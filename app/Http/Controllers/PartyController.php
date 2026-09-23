@@ -369,6 +369,17 @@ class PartyController extends Controller
                 return back()->withInput()->withErrors(['alloc' => $refused]);
             }
 
+            /*
+             * The word belongs to a write-off. Typed on an ordinary entry it
+             * would read to the customer exactly as one, with none of the rules
+             * behind it and nothing in the report that counts them.
+             */
+            if (! $writeOff && strcasecmp(trim((string) $req->particular), PartyLedgerModel::WRITEOFF_PARTICULAR) === 0) {
+                return back()->withInput()->withErrors([
+                    'particular' => 'Tick "Write this off" to give up a difference. An ordinary entry cannot be called a Discount.',
+                ]);
+            }
+
             if ($lines->isNotEmpty()) {
                 if ($req->entry_type !== $paymentSide) {
                     return back()->withInput()->withErrors([
@@ -668,6 +679,9 @@ class PartyController extends Controller
             ->join('party_ledger as e', 'e.id', '=', 'a.entry_id')
             ->where('e.entry_kind', PartyLedgerModel::WRITEOFF)
             ->whereNull('a.released_at')
+            // This party's own: a file given to somebody else since carries
+            // what was forgiven them, which is not this customer's allowance.
+            ->where('a.party_id', $partyId)
             ->whereIn('a.work_file_id', $lines->pluck('work_file_id'))
             ->groupBy('a.work_file_id')
             ->selectRaw('a.work_file_id, SUM(a.amount) as given')
@@ -1394,7 +1408,17 @@ class PartyController extends Controller
                     'amount' => (string) (float) $entry->amount,
                     'payment_mode' => (string) $entry->payment_mode,
                     'ref_no' => (string) $entry->ref_no,
-                    'particular' => (string) $entry->particular,
+                    /*
+                     * A write-off comes back as one. Found in review: only the
+                     * money fields were carried, so the tick came back off with
+                     * "Discount" typed in Particulars — and saving it wrote an
+                     * ordinary credit that read as a discount to the customer,
+                     * under no limit and in no report. Its own label is left
+                     * behind with it: the server writes that word, nobody types it.
+                     */
+                    'particular' => $entry->entry_kind === PartyLedgerModel::WRITEOFF ? '' : (string) $entry->particular,
+                    'entry_kind' => (string) $entry->entry_kind,
+                    'reason' => (string) $entry->note,
                     'alloc' => $lines->mapWithKeys(fn ($line) => [(int) $line->work_file_id => [
                         'work_file_id' => (int) $line->work_file_id,
                         'amount' => (string) (float) $line->amount,

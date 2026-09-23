@@ -91,7 +91,7 @@ class AuditWorkFiles extends Command
             ->whereNull('a.released_at')
             ->get([
                 'a.entry_id', 'a.party_id', 'a.work_file_id', 'a.amount',
-                'e.party_id as entry_party', 'e.entry_type', 'e.work_file_id as entry_file', 'e.amount as entry_amount',
+                'e.party_id as entry_party', 'e.entry_type', 'e.work_file_id as entry_file', 'e.amount as entry_amount', 'e.entry_kind',
                 'p.party_type', 'f.file_no',
             ]);
 
@@ -113,6 +113,35 @@ class AuditWorkFiles extends Command
             foreach ($mine as $line) {
                 if ((int) $line->party_id !== (int) $line->entry_party) {
                     $note($label, "has a line against {$line->file_no} recorded for a different party");
+                }
+            }
+        }
+
+        /*
+         * A write-off whose bill is no longer charged that much: the papers
+         * went back, the work was struck off, or the price came down under it.
+         * The forgiveness settles nothing now and sits on the account until it
+         * is taken back, so it is named here rather than left to be noticed in
+         * a balance.
+         */
+        $forgiven = $lines->filter(fn ($line) => $line->entry_kind === \App\Models\PartyLedgerModel::WRITEOFF);
+
+        if ($forgiven->isNotEmpty()) {
+            $charges = \Illuminate\Support\Facades\DB::table('party_ledger')
+                ->whereIn('work_file_id', $forgiven->pluck('work_file_id')->unique())
+                ->whereNotNull('file_role')
+                ->get(['work_file_id', 'party_id', 'file_role', 'amount'])
+                ->groupBy(fn ($row) => $row->work_file_id.':'.$row->party_id)
+                ->map(fn ($rows) => round($rows->sum(fn ($row) => str_ends_with($row->file_role, '_return')
+                    ? -(float) $row->amount
+                    : (float) $row->amount), 2));
+
+            foreach ($forgiven as $line) {
+                $left = (float) ($charges[$line->work_file_id.':'.$line->party_id] ?? 0);
+
+                if ((float) $line->amount > $left + 0.005) {
+                    $note($line->file_no, "was given a discount of {$line->amount} by entry #{$line->entry_id}, "
+                        ."but only $left is charged on it now — the discount settles nothing and is sitting on the account. Take it back on the statement.");
                 }
             }
         }

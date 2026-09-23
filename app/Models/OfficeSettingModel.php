@@ -53,15 +53,26 @@ class OfficeSettingModel extends Model
         return round((float) self::current($key), 2);
     }
 
-    /** A new figure, which becomes the one in force. */
-    public static function put(string $key, ?string $value, ?int $by = null): void
+    /**
+     * A new figure, which becomes the one in force.
+     *
+     * Refused while the table is not there: a deploy is a git pull that does
+     * not run a migration, and a screen that throws says nothing about why.
+     */
+    public static function put(string $key, ?string $value, ?int $by = null): bool
     {
+        if (! self::available()) {
+            return false;
+        }
+
         DB::table('office_setting')->insert([
             'key' => $key,
             'value' => $value,
             'created_by' => $by,
             'created_at' => now(),
         ]);
+
+        return true;
     }
 
     /**

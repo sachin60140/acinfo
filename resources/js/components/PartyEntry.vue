@@ -147,8 +147,10 @@ const adjust = useAdjust({
     partyName: () => selected.value?.name ?? '',
     amount: () => entry.amount,
     active: () => showAdjust.value,
-    // A write-off says which bill it closes, and the whole of it.
+    // A write-off says which bill it closes, and the whole of it — and may
+    // forgive only what that bill is still owed.
     coverAll: () => isWriteOff.value,
+    ceiling: () => (isWriteOff.value ? 'due' : 'open'),
 });
 
 /*
@@ -405,7 +407,10 @@ function resetDateField() {
                 :title="isWriteOff ? 'Which bill is being written off' : 'Adjust against files'"
                 :lead="isWriteOff
                     ? 'Put the whole of it against the bill it closes — left on account it would settle the oldest one instead.'
-                    : 'Leave these empty and the payment settles the oldest files first, as before.'" />
+                    : 'Leave these empty and the payment settles the oldest files first, as before.'"
+                :empty-text="isWriteOff
+                    ? `Nothing is owed on any of ${selected?.name}'s bills, so there is nothing to write off.`
+                    : ''" />
 
             <div class="ui-card__foot" :class="{ 'ui-card__foot--dirty': touched }">
                 <span class="ui-hint" :class="{ 'entry-writeoff__error': writeOffProblem }">{{ writeOffProblem || hint }}</span>

@@ -2438,7 +2438,7 @@ class WorkFileModel extends Model
             ->orderByRaw($order)
             ->get();
 
-        return self::withGivenUp($rows, $from, $to);
+        return self::withGivenUp($rows, $from, $to, $group);
     }
 
     /**
@@ -2455,9 +2455,11 @@ class WorkFileModel extends Model
      * one: a discount belongs to a bill, and a bill is not a work type or a
      * vendor. Under any cut, the same figure.
      */
-    private static function withGivenUp($rows, ?string $from, ?string $to)
+    private static function withGivenUp($rows, ?string $from, ?string $to, string $group = 'month')
     {
-        if (! PartyLedgerModel::adjustable()) {
+        // entry_kind arrives with the reversal migration, the allocation table
+        // with the one before it; this reads both.
+        if (! PartyLedgerModel::reversible()) {
             return $rows;
         }
 
@@ -2470,23 +2472,69 @@ class WorkFileModel extends Model
 
         self::betweenDates($query, $from, $to);
 
-        $total = round((float) $query->sum('a.amount'), 2);
+        /*
+         * Cut by period, the discounts are cut by period too, and each lands
+         * under the month or year whose margin it corrects. Found in review: a
+         * single figure at the foot of twelve months said which months were
+         * overstated to nobody.
+         */
+        $by = match ($group) {
+            'month' => "DATE_FORMAT(work_file.received_date, '%Y-%m')",
+            'year' => "DATE_FORMAT(work_file.received_date, '%Y')",
+            default => null,
+        };
 
-        if ($total <= 0) {
+        if ($by === null) {
+            $total = round((float) $query->sum('a.amount'), 2);
+
+            return $total > 0 ? $rows->push(self::givenUpRow($total)) : $rows;
+        }
+
+        $periods = $query->selectRaw("$by as period")
+            ->selectRaw('SUM(a.amount) as given')
+            ->groupBy('period')
+            ->pluck('given', 'period');
+
+        if ($periods->isEmpty()) {
             return $rows;
         }
 
-        return $rows->push((object) [
+        // Each period's own, under it; anything whose period has no row of its
+        // own — every file of it cancelled, say — at the end rather than lost.
+        $out = collect();
+
+        foreach ($rows as $row) {
+            $out->push($row);
+
+            if (($given = round((float) ($periods[$row->group_key] ?? 0), 2)) > 0) {
+                $out->push(self::givenUpRow($given, $row->group_label));
+                $periods->forget($row->group_key);
+            }
+        }
+
+        foreach ($periods as $period => $given) {
+            if (round((float) $given, 2) > 0) {
+                $out->push(self::givenUpRow(round((float) $given, 2), (string) $period));
+            }
+        }
+
+        return $out;
+    }
+
+    /** The row itself: a cost that charges nobody, so the margin carries it. */
+    private static function givenUpRow(float $total, ?string $period = null): object
+    {
+        return (object) [
             // Apart from counter expenses, which is 0 on the work type cut.
             'group_key' => -1,
-            'group_label' => 'Discounts & write-offs',
+            'group_label' => 'Discounts & write-offs'.($period ? ' · '.$period : ''),
             'note' => 'Given up on a bill; the charge stays as it was',
             'files' => 0,
             'billed' => 0,
             'cost' => $total,
             'margin' => -$total,
             'unpriced' => 0,
-        ]);
+        ];
     }
     /**
      * The same question asked of the works rather than the folders.
@@ -2532,7 +2580,7 @@ class WorkFileModel extends Model
         return self::withGivenUp($rows->when(
             ($counter = self::counterExpenses($from, $to)) !== null,
             fn ($all) => $all->push($counter)
-        ), $from, $to);
+        ), $from, $to, 'work_type');
     }
 
     /**
@@ -2603,6 +2651,37 @@ class WorkFileModel extends Model
     }
 
     /**
+     * What was given up, month by month, on the files of each.
+     *
+     * By the day the papers came in, as every figure beside it is, so a
+     * discount corrects the month whose margin it overstated.
+     *
+     * @return \Illuminate\Support\Collection<string, float>
+     */
+    private static function givenUpByMonth(?string $from = null)
+    {
+        if (! PartyLedgerModel::reversible()) {
+            return collect();
+        }
+
+        $query = DB::table('party_ledger_allocation as a')
+            ->join('party_ledger as e', 'e.id', '=', 'a.entry_id')
+            ->join('work_file', 'work_file.id', '=', 'a.work_file_id')
+            ->where('e.entry_kind', PartyLedgerModel::WRITEOFF)
+            ->whereNull('a.released_at');
+
+        if ($from) {
+            $query->whereDate('work_file.received_date', '>=', $from);
+        }
+
+        return $query->selectRaw("DATE_FORMAT(work_file.received_date, '%Y-%m') as month")
+            ->selectRaw('SUM(a.amount) as given')
+            ->groupBy('month')
+            ->pluck('given', 'month')
+            ->map(fn ($given) => round((float) $given, 2));
+    }
+
+    /**
      * Headline figures for the dashboard.
      *
      * Cancelled files are excluded from the money throughout — they post nothing
@@ -2667,13 +2746,23 @@ class WorkFileModel extends Model
             ->get()
             ->keyBy('month');
 
-        return self::overTheMonths($months, function (Carbon $month) use ($rows) {
+        /*
+         * What was given up on those months' files, so the tile and the chart
+         * do not read higher than the Profit report they link to.
+         */
+        $given = self::givenUpByMonth($from->toDateString());
+
+        return self::overTheMonths($months, function (Carbon $month) use ($rows, $given) {
             $row = $rows[$month->format('Y-m')] ?? null;
+            $off = (float) ($given[$month->format('Y-m')] ?? 0);
 
             return [
                 'billed' => round((float) ($row->billed ?? 0), 2),
-                'cost' => round((float) ($row->cost ?? 0), 2),
-                'margin' => round((float) ($row->margin ?? 0), 2),
+                // What was given up is money the office does not keep, so it
+                // sits with the cost and comes off the margin — the same place
+                // the Profit report puts it.
+                'cost' => round((float) ($row->cost ?? 0) + $off, 2),
+                'margin' => round((float) ($row->margin ?? 0) - $off, 2),
                 'files' => (int) ($row->files ?? 0),
             ];
         });
@@ -2842,10 +2931,14 @@ class WorkFileModel extends Model
             ->selectRaw('COUNT(*) as files')
             ->first();
 
+        // And what was given up on this month's files, as the chart beside it
+        // and the Profit report both count it.
+        $given = (float) (self::givenUpByMonth(now()->startOfMonth()->toDateString())[now()->format('Y-m')] ?? 0);
+
         return [
             'open' => $open,
             'month_billed' => (float) ($month->billed ?? 0),
-            'month_margin' => (float) ($month->margin ?? 0),
+            'month_margin' => round((float) ($month->margin ?? 0) - $given, 2),
             'month_files' => (int) ($month->files ?? 0),
             'month_unpriced' => (int) ($month->unpriced ?? 0),
         ];
