@@ -21,6 +21,11 @@
             width: 100%;
         }
 
+        /* A phone at the counter: the table scrolls rather than the page. */
+        .sheet__table {
+            overflow-x: auto;
+        }
+
         .sheet th,
         .sheet td {
             border-bottom: 1px solid #dee2e6;
@@ -41,6 +46,21 @@
             min-width: 8rem;
         }
 
+        /* Said once at the top of the sheet already; this is the copy that
+           repeats when the table runs onto a second sheet of paper. */
+        .sheet__running th {
+            border-bottom: 0;
+            font-size: .75rem;
+            padding-bottom: 0;
+            text-transform: none;
+        }
+
+        @media screen {
+            .sheet__running {
+                display: none;
+            }
+        }
+
         .sheet__sign {
             display: flex;
             gap: 3rem;
@@ -57,18 +77,25 @@
          * What goes on the paper: the sheet, and nothing else. The office's own
          * navigation, the pickers and the Print button are on screen to reach
          * it with, and a vendor signs the sheet rather than the screen.
+         *
+         * Every rule hangs off a page that actually holds a sheet. Found in
+         * review: a screen's styles stay in the document once it has been
+         * visited (see seenStyles in resources/js/navigate.js), so rules
+         * written plainly went on hiding the menu from every other screen's
+         * printout for the rest of the visit.
          */
         @media print {
-            .sidebar,
-            .header,
-            .footer,
-            .pagetitle,
-            .sheet-tools,
-            .alert {
+            body:has(.sheet) .sidebar,
+            body:has(.sheet) .header,
+            body:has(.sheet) .footer,
+            body:has(.sheet) .back-to-top,
+            body:has(.sheet) .pagetitle,
+            body:has(.sheet) .sheet-tools,
+            body:has(.sheet) .alert {
                 display: none !important;
             }
 
-            #main,
+            body:has(.sheet) #main,
             .sheet {
                 border: 0;
                 margin: 0 !important;
@@ -78,6 +105,16 @@
 
             .sheet {
                 font-size: 12px;
+            }
+
+            /* Page after page: the heading row repeats, so a second sheet of
+               paper still says whose it is and for which day. */
+            .sheet thead {
+                display: table-header-group;
+            }
+
+            .sheet tr {
+                break-inside: avoid;
             }
         }
     </style>
@@ -110,6 +147,8 @@
                         <label for="vendor" class="form-label">Vendor</label>
                         <select id="vendor" name="vendor" class="form-select" required>
                             <option value="">Select vendor</option>
+                            {{-- Every vendor, working with the office or not:
+                                 an old sheet belongs to whoever signed it. --}}
                             @foreach ($vendors as $one)
                                 <option value="{{ $one->id }}" @selected($vendor && (int) $one->id === (int) $vendor->id)>
                                     {{ $one->name }}
@@ -121,7 +160,9 @@
                     <div class="col-sm-4">
                         <label for="date" class="form-label">Day given</label>
                         @if ($days->isNotEmpty())
-                            <select id="date" name="date" class="form-select" required>
+                            {{-- Not required: a vendor on their own lists the
+                                 days they were given something. --}}
+                            <select id="date" name="date" class="form-select">
                                 <option value="">Select day</option>
                                 @foreach ($days as $day)
                                     <option value="{{ $day->day }}" @selected($date === $day->day)>
@@ -131,7 +172,7 @@
                                 @endforeach
                             </select>
                         @else
-                            <input type="date" id="date" name="date" class="form-control" value="{{ $date }}" required>
+                            <input type="date" id="date" name="date" class="form-control" value="{{ $date }}">
                         @endif
                     </div>
 
@@ -166,8 +207,12 @@
                     </div>
                 </div>
 
+                <div class="sheet__table">
                 <table>
                     <thead>
+                        <tr class="sheet__running">
+                            <th colspan="5">{{ $vendor->name }} &middot; {{ $dateText }}</th>
+                        </tr>
                         <tr>
                             <th style="width: 2.5rem;">#</th>
                             <th>File No.</th>
@@ -188,6 +233,7 @@
                         @endforeach
                     </tbody>
                 </table>
+                </div>
 
                 <p class="mt-3 mb-0">
                     <strong>{{ $files->count() }}</strong> {{ Str::plural('file', $files->count()) }},

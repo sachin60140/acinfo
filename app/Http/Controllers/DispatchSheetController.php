@@ -46,9 +46,13 @@ class DispatchSheetController extends Controller
             'dateText' => $date ? date('d-m-Y', strtotime($date)) : null,
             'files' => $files,
             'works' => $files->sum(fn ($file) => count($file->works)),
-            // Whom the office has given anything to, and when: the two boxes
-            // above the sheet, so it can be printed again months later.
-            'vendors' => PartyModel::selectList('vendor', $vendorId ?: null),
+            /*
+             * Whom the office has given anything to, and when: the two boxes
+             * above the sheet, so it can be printed again months later. Every
+             * vendor, working with the office or not — a sheet from last year
+             * belongs to whoever signed it.
+             */
+            'vendors' => PartyModel::where('party_type', 'vendor')->orderBy('name')->get(['id', 'name']),
             'days' => $vendor ? self::daysFor((int) $vendor->id) : collect(),
         ]);
     }
@@ -65,7 +69,7 @@ class DispatchSheetController extends Controller
      */
     private static function handedOver(int $vendorId, string $date)
     {
-        return DB::table('work_file_item as i')
+        $items = DB::table('work_file_item as i')
             ->join('work_file as f', 'f.id', '=', 'i.work_file_id')
             ->leftJoin('work_type as t', 't.id', '=', 'i.work_type_id')
             ->where('i.vendor_id', $vendorId)
@@ -79,8 +83,29 @@ class DispatchSheetController extends Controller
                 'file_no' => $rows->first()->file_no,
                 'registration_no' => $rows->first()->registration_no,
                 'works' => $rows->pluck('work')->filter()->unique()->values()->all(),
-            ])
-            ->values();
+            ]);
+
+        /*
+         * And the folders that hold no works of their own. Give to Vendor
+         * hands those over on the folder itself, so nothing about them is in
+         * the works at all — and the office was offered a sheet for them that
+         * said nothing had been given.
+         */
+        $folders = DB::table('work_file as f')
+            ->leftJoin('work_type as t', 't.id', '=', 'f.work_type_id')
+            ->where('f.vendor_id', $vendorId)
+            ->whereDate('f.vendor_date', $date)
+            ->where('f.status', '<>', WorkFileModel::CANCELLED)
+            ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('work_file_item as x')->whereColumn('x.work_file_id', 'f.id'))
+            ->get(['f.id', 'f.file_no', 'f.registration_no', 't.name as work'])
+            ->keyBy('id')
+            ->map(fn ($row) => (object) [
+                'file_no' => $row->file_no,
+                'registration_no' => $row->registration_no,
+                'works' => array_values(array_filter([$row->work])),
+            ]);
+
+        return $items->merge($folders)->sortBy('file_no')->values();
     }
 
     /**
@@ -91,17 +116,37 @@ class DispatchSheetController extends Controller
      */
     private static function daysFor(int $vendorId)
     {
-        return DB::table('work_file_item as i')
+        $byWork = DB::table('work_file_item as i')
             ->where('i.vendor_id', $vendorId)
             ->whereNotNull('i.vendor_date')
             ->where('i.status', '<>', WorkFileModel::CANCELLED)
             ->groupBy('i.vendor_date')
-            ->orderByDesc('i.vendor_date')
-            ->limit(60)
             ->get([
                 'i.vendor_date as day',
                 DB::raw('COUNT(DISTINCT i.work_file_id) as files'),
-                DB::raw('COUNT(*) as works'),
             ]);
+
+        // The folders that hold no works, counted the same way.
+        $byFolder = DB::table('work_file as f')
+            ->where('f.vendor_id', $vendorId)
+            ->whereNotNull('f.vendor_date')
+            ->where('f.status', '<>', WorkFileModel::CANCELLED)
+            ->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('work_file_item as x')->whereColumn('x.work_file_id', 'f.id'))
+            ->groupBy('f.vendor_date')
+            ->get(['f.vendor_date as day', DB::raw('COUNT(*) as files')]);
+
+        // Added together, so a day with both kinds is one line with one count.
+        $days = [];
+
+        foreach ($byWork->concat($byFolder) as $row) {
+            $day = substr((string) $row->day, 0, 10);
+            $days[$day] = ($days[$day] ?? 0) + (int) $row->files;
+        }
+
+        krsort($days);
+
+        // Every day, newest first: an old sheet is reprinted months later, and
+        // a window of the last sixty would have hidden it.
+        return collect($days)->map(fn ($files, $day) => (object) ['day' => $day, 'files' => $files])->values();
     }
 }

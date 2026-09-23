@@ -119,6 +119,25 @@ class DispatchSheetTest extends TestCase
         ])));
     }
 
+    /** The file edit screen's save, with whatever is being corrected. */
+    private function save(WorkFileModel $file, array $changes = [])
+    {
+        return $this->actingAs($this->admin)->post(route('workfile.edit', $file->id), $changes + [
+            'file_no' => $file->file_no,
+            'received_date' => $file->received_date,
+            'work_type_id' => $file->work_type_id,
+            'registration_no' => $file->registration_no,
+            'customer_id' => $file->customer_id,
+            'customer_amount' => $file->customer_amount,
+            'vendor_id' => $file->vendor_id,
+            'vendor_amount' => $file->vendor_amount,
+            'vendor_date' => $file->vendor_date ? date('Y-m-d', strtotime($file->vendor_date)) : null,
+            'status' => $file->status,
+            'remarks' => $file->remarks,
+            'drawn' => $file->editFingerprint(),
+        ])->assertSessionHasNoErrors()->assertSessionHas('success');
+    }
+
     private function sheet(?string $date = '2026-09-20', ?PartyModel $vendor = null)
     {
         return $this->actingAs($this->admin)->get(route('workfile.dispatchsheet', array_filter([
@@ -242,9 +261,175 @@ class DispatchSheetTest extends TestCase
         $said = $this->sheet()->assertOk()->getContent();
 
         $this->assertMatchesRegularExpression(
-            '/@media print\s*\{.*\.sidebar,\s*\.header,\s*\.footer,\s*\.pagetitle,\s*\.sheet-tools,\s*\.alert\s*\{\s*display: none !important;/s',
+            '/@media print\s*\{.*body:has\(\.sheet\) \.sidebar,.*display: none !important;/s',
             $said
         );
+
+        /*
+         * And every rule says which page it is for. A screen's styles stay in
+         * the document once it has been visited, so a rule written plainly
+         * would hide the menu from every other screen's printout too.
+         */
+        $print = preg_replace('/^.*?@media print\s*\{/s', '', $said);
+        $print = substr($print, 0, (int) strpos($print, '.sheet {'));
+
+        foreach (['.sidebar', '.header', '.footer', '.pagetitle', '.back-to-top'] as $ofTheScreen) {
+            $this->assertStringNotContainsString("\n            $ofTheScreen", $print, "$ofTheScreen is hidden on every screen's printout");
+        }
+    }
+
+    /** A folder holding no works of its own is handed over whole — and is on the sheet. */
+    public function test_a_folder_with_no_works_is_on_the_sheet(): void
+    {
+        $file = $this->file();
+        $file->items()->delete();
+        $file->refresh();
+
+        $this->actingAs($this->admin)->post(route('workfile.assign'), [
+            'vendor_id' => $this->vendor->id,
+            'vendor_date' => '2026-09-20',
+            'files' => [$file->id],
+        ])->assertSessionHas('sheet');
+
+        $said = $this->sheet()->assertOk()->getContent();
+
+        $this->assertStringContainsString($file->file_no, $said);
+        $this->assertStringContainsString($file->registration_no, $said);
+        $this->assertStringNotContainsString('Nothing was given to', $said);
+
+        // And its day is offered for reprinting, counted once.
+        $days = $this->actingAs($this->admin)
+            ->get(route('workfile.dispatchsheet', ['vendor' => $this->vendor->id]))
+            ->assertOk()->getContent();
+
+        $this->assertSame(1, substr_count($days, '20-09-2026'));
+    }
+
+    /** An old day is still offered, however many days came after it. */
+    public function test_a_day_long_past_is_still_offered(): void
+    {
+        $longAgo = $this->file();
+        $this->give($longAgo, now()->subYear()->toDateString());
+
+        // And a run of days since, any window over which would hide it.
+        for ($back = 0; $back < 5; $back++) {
+            $this->give($this->file(), now()->subDays($back)->toDateString());
+        }
+
+        $said = $this->actingAs($this->admin)
+            ->get(route('workfile.dispatchsheet', ['vendor' => $this->vendor->id]))
+            ->assertOk()->getContent();
+
+        $this->assertStringContainsString(now()->subYear()->format('d-m-Y'), $said);
+        $this->assertStringContainsString(now()->format('d-m-Y'), $said);
+    }
+
+    /** A vendor the office has stopped working with still has their sheets. */
+    public function test_a_vendor_switched_off_can_still_be_chosen(): void
+    {
+        $file = $this->file();
+        $this->give($file, '2026-09-20');
+
+        $this->vendor->is_active = 0;
+        $this->vendor->save();
+
+        $said = $this->actingAs($this->admin)->get(route('workfile.dispatchsheet'))->assertOk()->getContent();
+
+        // The option itself: the name alone could be on the page for other reasons.
+        $this->assertStringContainsString('<option value="'.$this->vendor->id.'"', $said);
+        $this->assertStringContainsString($this->vendor->name, $said);
+    }
+
+    /**
+     * A folder can go out over two days. Saving the file for any other reason
+     * must not move what went out when, or one sheet lists papers the vendor
+     * never took that day and the other says nothing went at all.
+     */
+    public function test_saving_the_file_does_not_move_what_went_out_when(): void
+    {
+        $file = $this->file();
+        $works = $file->items()->orderBy('id')->get();
+
+        $this->give($file, '2026-09-20', null, [$works[0]->id]);
+        $this->give($file, '2026-09-21', null, [$works[1]->id]);
+
+        $this->assertStringContainsString($this->tr->name, $this->sheet('2026-09-20')->getContent());
+        $this->assertStringContainsString($this->hpa->name, $this->sheet('2026-09-21')->getContent());
+
+        $this->assertSame(['2026-09-20', '2026-09-21'], $file->items()->orderBy('id')->pluck('vendor_date')->map(fn ($d) => substr((string) $d, 0, 10))->all(), 'the premise: two days');
+        $this->assertSame('2026-09-20', substr((string) $file->fresh()->vendor_date, 0, 10), 'the premise: the folder carries the earlier day');
+
+        // An ordinary save: a remark, nothing to do with the vendor.
+        $file->refresh();
+        $this->actingAs($this->admin)->post(route('workfile.edit', $file->id), [
+            'file_no' => $file->file_no,
+            'received_date' => $file->received_date,
+            'work_type_id' => $file->work_type_id,
+            'registration_no' => $file->registration_no,
+            'customer_id' => $file->customer_id,
+            'customer_amount' => $file->customer_amount,
+            'vendor_id' => $file->vendor_id,
+            'vendor_amount' => $file->vendor_amount,
+            'vendor_date' => $file->vendor_date ? date('Y-m-d', strtotime($file->vendor_date)) : null,
+            'status' => $file->status,
+            'remarks' => 'Nothing to do with the vendor',
+            'drawn' => $file->editFingerprint(),
+        ])->assertSessionHasNoErrors()->assertSessionHas('success');
+
+        // The premise of the rest: the file really was saved.
+        $this->assertSame('Nothing to do with the vendor', $file->fresh()->remarks);
+
+        // The works themselves: the sheet is read from these.
+        $dates = $file->items()->orderBy('id')->pluck('vendor_date')->map(fn ($d) => substr((string) $d, 0, 10))->all();
+        $this->assertSame(['2026-09-20', '2026-09-21'], $dates, 'the day a work went out was moved by an unrelated save');
+
+        $twentieth = $this->sheet('2026-09-20')->getContent();
+        $twentyFirst = $this->sheet('2026-09-21')->getContent();
+
+        $this->assertStringContainsString($this->tr->name, $twentieth);
+        $this->assertStringNotContainsString($this->hpa->name, $twentieth, 'the sheet lists papers taken another day');
+        $this->assertStringContainsString($this->hpa->name, $twentyFirst, 'the day the papers went out was moved');
+
+        // And both days are still offered.
+        $days = $this->actingAs($this->admin)
+            ->get(route('workfile.dispatchsheet', ['vendor' => $this->vendor->id]))
+            ->assertOk()->getContent();
+
+        $this->assertStringContainsString('20-09-2026', $days);
+        $this->assertStringContainsString('21-09-2026', $days);
+    }
+
+    /** The day corrected on the file: the works that carried it move, and no others. */
+    public function test_correcting_the_day_moves_only_the_works_that_carried_it(): void
+    {
+        $file = $this->file();
+        $works = $file->items()->orderBy('id')->get();
+
+        $this->give($file, '2026-09-20', null, [$works[0]->id]);
+        $this->give($file, '2026-09-21', null, [$works[1]->id]);
+
+        // The 20th was mistyped: it went out on the 22nd.
+        $this->save($file->fresh(), ['vendor_date' => '2026-09-22']);
+
+        $dates = $file->items()->orderBy('id')->pluck('vendor_date')->map(fn ($d) => substr((string) $d, 0, 10))->all();
+
+        $this->assertSame(['2026-09-22', '2026-09-21'], $dates);
+        $this->assertStringContainsString($this->tr->name, $this->sheet('2026-09-22')->getContent());
+        $this->assertStringContainsString($this->hpa->name, $this->sheet('2026-09-21')->getContent());
+    }
+
+    /** Work still on the desk is not stamped as handed over by a save. */
+    public function test_a_save_does_not_hand_over_work_still_in_the_office(): void
+    {
+        $file = $this->file();
+        $works = $file->items()->orderBy('id')->get();
+
+        $this->give($file, '2026-09-20', null, [$works[0]->id]);
+
+        $this->save($file->fresh(), ['remarks' => 'Nothing to do with the vendor']);
+
+        $this->assertNull($file->items()->whereKey($works[1]->id)->value('vendor_date'), 'work still here was dated as given out');
+        $this->assertStringNotContainsString($this->hpa->name, $this->sheet('2026-09-20')->getContent());
     }
 
     public function test_nobody_signed_out_can_read_it(): void
