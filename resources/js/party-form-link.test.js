@@ -114,3 +114,15 @@ describe('on a vendor\'s Edit screen', () => {
         expect(host.textContent).not.toContain('Same mobile as customer');
     });
 });
+
+describe('pressing Link them', () => {
+    it('leaves focus on the box it picked into, not on nothing', async () => {
+        const host = await mount();
+
+        [...hint(host).querySelectorAll('button')].find((b) => b.textContent.includes('Link them')).click();
+        await nextTick();
+        await nextTick();
+
+        expect(document.activeElement).toBe(select(host));
+    });
+});

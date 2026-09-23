@@ -2221,8 +2221,12 @@ class PartyController extends Controller
          * linked to anybody: they may be one person, and the office is asked —
          * never told. The link is made on the customer's screen, which owns it.
          * Asked for by the owner on 2026-09-23.
+         *
+         * Not for an inactive vendor. Found in review: the customer's screen
+         * offers active vendors only, so the note sent the office to a link
+         * it could not make there.
          */
-        $same = $customer ? null : PartyModel::where('party_type', 'customer')
+        $same = ($customer || ! $party->is_active) ? null : PartyModel::where('party_type', 'customer')
             ->where('mobile', $party->mobile)
             ->whereNull('linked_vendor_id')
             ->first();

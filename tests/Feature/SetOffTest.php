@@ -755,6 +755,13 @@ class SetOffTest extends TestCase
         $this->assertSame(route('party.edit', $customer->id), $link['suggestUrl']);
         $this->assertNull($customer->fresh()->linked_vendor_id, 'opening the screen linked them');
 
+        // Not for an inactive vendor: the customer's screen could not offer it.
+        $vendor->is_active = 0;
+        $vendor->save();
+        $this->assertSame('', $this->actingAs($this->admin)->getJson(route('party.edit', $vendor->id))->json('props.link.suggestName'));
+        $vendor->is_active = 1;
+        $vendor->save();
+
         // Not a customer already linked to somebody else.
         $customer->linked_vendor_id = $this->vendor->id;
         $this->link($this->customer, null);

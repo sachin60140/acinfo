@@ -12,7 +12,7 @@
  * usually entries sitting on top of it — so it is corrected as an entry, not by
  * quietly restating the ledger from underneath.
  */
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { balance, side } from '../money';
 
 const props = defineProps({
@@ -56,6 +56,18 @@ const suggested = computed(() => {
 
     return props.link.options.find((vendor) => vendor.mobile === form.mobile) ?? null;
 });
+
+const vendorBox = ref(null);
+
+/*
+ * Picked, and the note that offered it goes. Focus goes to the box it was
+ * picked into: the button pressed is gone with the note, and focus left on
+ * nothing would send a keyboard back to the top of the page.
+ */
+function linkSuggested() {
+    linkedVendor.value = String(suggested.value.id);
+    nextTick(() => vendorBox.value?.focus());
+}
 
 const form = reactive({
     name: props.values.name ?? '',
@@ -234,6 +246,7 @@ onMounted(() => {
                     class="ui-select"
                     :class="{ 'ui-input--invalid': errors.linked_vendor_id }"
                     name="linked_vendor_id"
+                    ref="vendorBox"
                     v-model="linkedVendor">
                     <option value="">Not a vendor</option>
                     <option
@@ -248,7 +261,7 @@ onMounted(() => {
                         Same mobile as vendor <strong>{{ suggested.name }}</strong>.
                         If they are the same person, link them for set-off.
                     </span>
-                    <button type="button" class="ui-btn ui-btn--sm" @click="linkedVendor = String(suggested.id)">
+                    <button type="button" class="ui-btn ui-btn--sm" @click="linkSuggested">
                         Link them
                     </button>
                     <span class="ui-hint">Nothing is linked until you press Update.</span>
