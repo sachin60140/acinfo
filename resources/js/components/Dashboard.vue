@@ -34,15 +34,29 @@ const props = defineProps({
 function text(tile) {
     if (tile.type === 'count') return String(tile.value);
     if (tile.type === 'balance') return balance(tile.value);
+    // Words, not a figure: "Yesterday", "Never". Through money() they read 0.00.
+    if (tile.type === 'text') return String(tile.value ?? '');
 
     return money(tile.value);
 }
 
+/*
+ * A text tile's tone is a state — ok, warn, bad — and never a side of the
+ * ledger: green is what the ledger means by owed to you, and a backup is not
+ * that. So its words take no ledger colour, and a state that needs doing
+ * something about colours the whole tile (ui-stat--warn, ui-stat--bad).
+ */
+const STATES = ['warn', 'bad'];
+
 function tone(tile) {
-    if (tile.type === 'count') return 'nil';
+    if (tile.type === 'count' || tile.type === 'text') return 'nil';
     if (tile.type === 'balance') return side(tile.value);
 
     return tile.tone || 'nil';
+}
+
+function state(tile) {
+    return tile.type === 'text' && STATES.includes(tile.tone) ? tile.tone : null;
 }
 
 const groups = computed(() => {
@@ -74,7 +88,7 @@ const groups = computed(() => {
                     :key="tile.label"
                     :href="tile.href || null"
                     class="ui-stat"
-                    :class="{ 'ui-stat--link': tile.href }">
+                    :class="[{ 'ui-stat--link': tile.href }, state(tile) ? `ui-stat--${state(tile)}` : '']">
                     <span class="ui-stat__label">{{ tile.label }}</span>
                     <span class="ui-stat__value" :class="`ui-money--${tone(tile)}`">{{ text(tile) }}</span>
                     <span v-if="tile.note" class="ui-stat__note">{{ tile.note }}</span>

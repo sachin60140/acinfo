@@ -678,4 +678,67 @@ class DashboardTest extends TestCase
         $this->assertSame([$recent->id, $middle->id, $oldest->id], $unfiltered);
     }
 
+    /**
+     * When the ledger was last backed up: said always, never the first tile,
+     * and linking nowhere — there is no screen of backups and none should
+     * offer the files. The rules for each tone are in BackupStatusTest; this
+     * is how the dashboard words them.
+     */
+    public function test_the_dashboard_says_when_the_last_backup_was(): void
+    {
+        $this->actingAs($this->admin());
+
+        $dir = storage_path('framework/testing/dashboard-backups-'.uniqid());
+        \Illuminate\Support\Facades\File::ensureDirectoryExists($dir);
+        config(['backups.path' => $dir]);
+
+        $database = \Illuminate\Support\Facades\DB::connection()->getDatabaseName();
+        $tile = fn () => collect($this->getJson('admin/dashboard')->json('props.tiles'))->firstWhere('label', 'Last Backup');
+
+        try {
+            $never = $tile();
+            $this->assertSame('Never', $never['value']);
+            $this->assertSame('text', $never['type']);
+            $this->assertSame('bad', $never['tone']);
+            $this->assertStringContainsString('run php artisan db:backup', $never['note']);
+            $this->assertArrayNotHasKey('href', $never);
+
+            file_put_contents($dir.DIRECTORY_SEPARATOR.$database.'-'.now()->subDay()->format('Y-m-d').'-0130.sql.gz', str_repeat('x', 3072));
+
+            $fresh = $tile();
+            $this->assertSame('Yesterday', $fresh['value']);
+            $this->assertSame('ok', $fresh['tone']);
+            $this->assertSame(now()->subDay()->format('d-m-Y').' 01:30 · 3 KB', $fresh['note']);
+
+            $this->travel(2)->days();
+            $slipping = $tile();
+            $this->assertSame('3 days ago', $slipping['value']);
+            $this->assertSame('warn', $slipping['tone']);
+            $this->assertStringContainsString('run php artisan db:backup', $slipping['note'], 'amber says what to do too');
+
+            $this->travel(1)->days();
+            $late = $tile();
+            $this->assertSame('4 days ago', $late['value']);
+            $this->assertSame('bad', $late['tone']);
+
+            // Tonight's, and one after it that was killed part way.
+            file_put_contents($dir.DIRECTORY_SEPARATOR.$database.'-'.now()->format('Y-m-d').'-0100.sql.gz', 'x');
+            $killed = $dir.DIRECTORY_SEPARATOR.$database.'-'.now()->format('Y-m-d').'-0200.sql.gz.writing';
+            file_put_contents($killed, 'half');
+            touch($killed, now()->subHours(2)->getTimestamp());
+
+            $today = $tile();
+            $this->assertSame('Today', $today['value']);
+            $this->assertSame('ok', $today['tone']);
+            $this->assertStringContainsString('the last one did not finish · run php artisan db:backup', $today['note']);
+
+            unlink($killed);
+            $this->assertStringNotContainsString('run php artisan', $tile()['note'], 'nothing to do when it is fine');
+
+            $tiles = collect($this->getJson('admin/dashboard')->json('props.tiles'));
+            $this->assertSame('Receivable', $tiles->first()['label'], 'never the first tile: the page is checked against its shape');
+        } finally {
+            \Illuminate\Support\Facades\File::deleteDirectory($dir);
+        }
+    }
 }
