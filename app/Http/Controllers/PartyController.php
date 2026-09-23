@@ -2189,7 +2189,7 @@ class PartyController extends Controller
      */
     private static function linkProps(?PartyModel $party): array
     {
-        $link = ['shown' => false, 'side' => '', 'value' => '', 'options' => [], 'linkedName' => '', 'linkedUrl' => ''];
+        $link = ['shown' => false, 'side' => '', 'value' => '', 'options' => [], 'linkedName' => '', 'linkedUrl' => '', 'suggestName' => '', 'suggestUrl' => ''];
 
         if (! $party || ! PartyLedgerModel::canSetOff()) {
             return $link;
@@ -2216,11 +2216,28 @@ class PartyController extends Controller
 
         $customer = PartyModel::where('party_type', 'customer')->where('linked_vendor_id', $party->id)->first();
 
+        /*
+         * Not linked, and a customer has this vendor's own mobile and is not
+         * linked to anybody: they may be one person, and the office is asked —
+         * never told. The link is made on the customer's screen, which owns it.
+         * Asked for by the owner on 2026-09-23.
+         *
+         * Not for an inactive vendor. Found in review: the customer's screen
+         * offers active vendors only, so the note sent the office to a link
+         * it could not make there.
+         */
+        $same = ($customer || ! $party->is_active) ? null : PartyModel::where('party_type', 'customer')
+            ->where('mobile', $party->mobile)
+            ->whereNull('linked_vendor_id')
+            ->first();
+
         return [
             'shown' => true,
             'side' => 'vendor',
             'linkedName' => $customer ? $customer->name.' ('.$customer->mobile.')' : '',
             'linkedUrl' => $customer ? route('party.edit', $customer->id) : '',
+            'suggestName' => $same ? (string) $same->name : '',
+            'suggestUrl' => $same ? route('party.edit', $same->id) : '',
         ] + $link;
     }
 

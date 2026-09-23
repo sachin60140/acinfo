@@ -1104,6 +1104,8 @@
                 "options": "[]",
                 "shown": "bool",
                 "side": "string",
+                "suggestName": "string",
+                "suggestUrl": "string",
                 "value": "string"
             },
             "values": {
@@ -1167,6 +1169,8 @@
                 },
                 "shown": "bool",
                 "side": "string",
+                "suggestName": "string",
+                "suggestUrl": "string",
                 "value": "string"
             },
             "values": {

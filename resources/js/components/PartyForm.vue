@@ -12,7 +12,7 @@
  * usually entries sitting on top of it — so it is corrected as an entry, not by
  * quietly restating the ledger from underneath.
  */
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { balance, side } from '../money';
 
 const props = defineProps({
@@ -34,9 +34,40 @@ const props = defineProps({
      */
     link: {
         type: Object,
-        default: () => ({ shown: false, side: '', value: '', options: [], linkedName: '', linkedUrl: '' }),
+        default: () => ({ shown: false, side: '', value: '', options: [], linkedName: '', linkedUrl: '', suggestName: '', suggestUrl: '' }),
     },
 });
+
+/* ---- The same person as a vendor --------------------------------------- */
+
+// Which vendor this customer is linked to: '' for none.
+const linkedVendor = ref(props.link.value ?? '');
+
+/*
+ * A vendor with the mobile typed above, not linked to anybody else — they may
+ * be one person. Offered, never chosen: nothing is linked until the office
+ * picks it and saves. Read from the mobile as it is typed, so a number put
+ * right on this form is what is compared. Asked for by the owner (2026-09-23).
+ */
+const suggested = computed(() => {
+    if (props.link.side !== 'customer' || linkedVendor.value !== '') {
+        return null;
+    }
+
+    return props.link.options.find((vendor) => vendor.mobile === form.mobile) ?? null;
+});
+
+const vendorBox = ref(null);
+
+/*
+ * Picked, and the note that offered it goes. Focus goes to the box it was
+ * picked into: the button pressed is gone with the note, and focus left on
+ * nothing would send a keyboard back to the top of the page.
+ */
+function linkSuggested() {
+    linkedVendor.value = String(suggested.value.id);
+    nextTick(() => vendorBox.value?.focus());
+}
 
 const form = reactive({
     name: props.values.name ?? '',
@@ -214,16 +245,27 @@ onMounted(() => {
                     id="linked_vendor_id"
                     class="ui-select"
                     :class="{ 'ui-input--invalid': errors.linked_vendor_id }"
-                    name="linked_vendor_id">
-                    <option value="" :selected="link.value === ''">Not a vendor</option>
+                    name="linked_vendor_id"
+                    ref="vendorBox"
+                    v-model="linkedVendor">
+                    <option value="">Not a vendor</option>
                     <option
                         v-for="vendor in link.options"
                         :key="vendor.id"
-                        :value="String(vendor.id)"
-                        :selected="link.value === String(vendor.id)">
+                        :value="String(vendor.id)">
                         {{ vendor.name }} ({{ vendor.mobile }})
                     </option>
                 </select>
+                <div v-if="suggested" class="ui-note ui-note--info pf-suggest">
+                    <span>
+                        Same mobile as vendor <strong>{{ suggested.name }}</strong>.
+                        If they are the same person, link them for set-off.
+                    </span>
+                    <button type="button" class="ui-btn ui-btn--sm" @click="linkSuggested">
+                        Link them
+                    </button>
+                    <span class="ui-hint">Nothing is linked until you press Update.</span>
+                </div>
                 <div class="ui-hint">
                     Linked, what they owe as a customer can be set off against what we owe them as a vendor,
                     on the Entry screen.
@@ -236,6 +278,11 @@ onMounted(() => {
                 <div v-if="link.linkedName">
                     {{ link.linkedName }}
                     <a :href="link.linkedUrl" class="ui-link">Change on the customer</a>
+                </div>
+                <!-- Asked, never assumed: the link is made on the customer's screen. -->
+                <div v-else-if="link.suggestName" class="ui-note ui-note--info">
+                    Same mobile as customer <strong>{{ link.suggestName }}</strong>. If they are the same person,
+                    <a :href="link.suggestUrl" class="ui-link">link them on the customer's Edit screen</a>.
                 </div>
                 <div v-else class="ui-hint">
                     Not linked. A vendor is linked from the customer's Edit screen.
@@ -445,6 +492,19 @@ onMounted(() => {
     height: 1rem;
     margin: 0;
     width: 1rem;
+}
+
+/* A vendor with the same mobile, offered under the link picker. */
+.pf-suggest {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    margin-top: var(--s-2);
+}
+
+.pf-suggest .ui-hint {
+    flex-basis: 100%;
 }
 
 .pf-side {
