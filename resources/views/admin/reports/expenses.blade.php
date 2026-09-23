@@ -46,6 +46,18 @@
                     </div>
 
                     <div class="col-sm-auto">
+                        <label for="vendor_id" class="form-label">Vendor</label>
+                        <select class="form-select" id="vendor_id" name="vendor_id">
+                            <option value="">All vendors</option>
+                            @foreach ($vendors as $party)
+                                <option value="{{ $party->id }}" @selected($vendorId === (int) $party->id)>
+                                    {{ $party->name }}
+                                </option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div class="col-sm-auto">
                         <label for="vehicle" class="form-label">Vehicle</label>
                         <input
                             type="text"
@@ -75,18 +87,21 @@
 
         <div class="card">
             <div class="card-body pt-4">
-                @if ($vehicle !== '')
-                    {{-- Asked about one vehicle: what its work cost altogether,
-                         the vendor's charge with every expense on the file. --}}
+                @if ($heading !== '')
+                    {{-- Asked about one vehicle, or one vendor: what the work
+                         cost altogether, the vendor's charge with every
+                         expense on the file. --}}
                     <h5 class="card-title p-0 m-0">{{ $heading }}</h5>
                     <div class="statement-period">
                         {{ $periodText }} &middot; {{ $count }} {{ Str::plural($withVendor ? 'line' : 'expense', $count) }}
                         on {{ $fileCount }} {{ Str::plural('file', $fileCount) }}
                         &middot;
-                        @if ($withVendor)
+                        @if (! $withVendor)
+                            the vendor's charge is left out when a kind is chosen
+                        @elseif ($vehicle !== '')
                             the vendor's charge and every expense, file by file
                         @else
-                            the vendor's charge is left out when a kind is chosen
+                            their charge and every expense on the files they were given
                         @endif
                     </div>
                     @if (count($plates) > 1)
