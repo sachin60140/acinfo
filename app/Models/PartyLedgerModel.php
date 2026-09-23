@@ -279,6 +279,50 @@ class PartyLedgerModel extends Model
     }
 
     /**
+     * What each party still owes, bill by bill, oldest first: every file with
+     * something due and every charge typed straight into the ledger that is
+     * not yet paid, by the same rule as outstandingByFile().
+     *
+     * "Since" is the day of the oldest charge on the bill that is not paid —
+     * for a file, the day the customer was charged for it (the day its papers
+     * came in), or for a vendor the day the work went out.
+     *
+     * A party that owes nothing on any bill is left out.
+     *
+     * @param  array<int, int>  $partyIds
+     * @param  string  $chargeSide  'debit' for customers, 'credit' for vendors
+     * @return array<int, array<int, array{file_id: int|null, entry_id: int|null, seq: int, since: string, due: float}>>
+     */
+    public static function dueBills(array $partyIds, string $chargeSide = 'debit'): array
+    {
+        $out = [];
+
+        foreach (self::settleAll($partyIds, $chargeSide) as $partyId => $settled) {
+            $bills = [];
+
+            foreach ($settled['files'] as $fileId => $file) {
+                if ($file['due'] > 0.005 && $file['since'] !== null) {
+                    $bills[] = ['file_id' => (int) $fileId, 'entry_id' => null, 'seq' => $file['seq'], 'since' => $file['since'], 'due' => $file['due']];
+                }
+            }
+
+            foreach ($settled['loose'] as $loose) {
+                $bills[] = ['file_id' => null, 'entry_id' => $loose['entry_id'], 'seq' => $loose['seq'], 'since' => $loose['date'], 'due' => $loose['due']];
+            }
+
+            if ($bills) {
+                // The oldest unpaid day first; a file's first charge can be
+                // paid and a later one not, so its place in the queue alone
+                // is not quite the order.
+                usort($bills, fn ($a, $b) => [$a['since'], $a['seq']] <=> [$b['since'], $b['seq']]);
+                $out[$partyId] = $bills;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * One party's files as bills: charged, returned, adjusted, and what is
      * still open against each.
      *
@@ -298,7 +342,7 @@ class PartyLedgerModel extends Model
      * money received in March settled January's file first, and Fill oldest
      * first put a January receipt on a file charged six weeks after it.
      *
-     * @return array{files: array<int, array{charged: float, returned: float, adjusted: float, open: float, due: float, seq: int}>, unadjusted: array<int, float>}
+     * @return array{files: array<int, array{charged: float, returned: float, adjusted: float, open: float, due: float, seq: int, since: string|null}>, unadjusted: array<int, float>}
      */
     public static function bills(int $partyId, string $chargeSide = 'debit', ?int $except = null): array
     {
@@ -443,8 +487,10 @@ class PartyLedgerModel extends Model
             if ($row->entry_type === $chargeSide) {
                 // Keyed by position, not by file: one file can carry more than
                 // one charge, and a charge belonging to no file still has to
-                // hold its place in the queue.
-                $charges[] = ['file_id' => $fileId, 'left' => $amount];
+                // hold its place in the queue. Its day and its entry, for
+                // saying how long what is left of it has been owed.
+                $charges[] = ['file_id' => $fileId, 'left' => $amount,
+                    'date' => substr((string) $row->txn_date, 0, 10), 'id' => (int) $row->id];
 
                 if ($fileId !== null) {
                     $byFile[$fileId][] = array_key_last($charges);
@@ -534,19 +580,28 @@ class PartyLedgerModel extends Model
         // And what is still owed on charges belonging to no file — a bill typed
         // straight into the ledger — with their places in the queue.
         $loose = [];
+        // The day of each file's oldest charge still not paid: the queue is in
+        // date order, so the first one met.
+        $since = [];
 
         foreach ($charges as $i => $charge) {
             if ($charge['file_id'] !== null) {
                 $files[$charge['file_id']]['due'] += max(0, $charge['left']);
+
+                if ($charge['left'] > 0.005) {
+                    $since[$charge['file_id']] ??= $charge['date'];
+                }
             } elseif ($charge['left'] > 0.005) {
-                $loose[] = ['seq' => $i + 1, 'due' => round($charge['left'], 2)];
+                $loose[] = ['seq' => $i + 1, 'due' => round($charge['left'], 2), 'date' => $charge['date'], 'entry_id' => $charge['id']];
             }
         }
 
+        // Set after the rounding, which would make a number of a date.
         foreach ($files as $id => $sums) {
             $seq = $sums['seq'];
             $files[$id] = array_map(fn ($value) => round($value, 2), $sums);
             $files[$id]['seq'] = $seq;
+            $files[$id]['since'] = $since[$id] ?? null;
         }
 
         return [

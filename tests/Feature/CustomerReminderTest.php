@@ -246,12 +246,12 @@ class CustomerReminderTest extends TestCase
     /** One click from the name on the tile to the customer's statement, where the reminder is. */
     public function test_owing_longest_opens_that_customers_statement(): void
     {
-        $oldest = PartyModel::oldestUnpaid('customer');
+        $oldest = PartyModel::oldestUnpaid();
 
         if (! $oldest) {
             $customer = $this->party();
             $this->file($customer, [[$this->tr, WorkFileModel::APPROVED]]);
-            $oldest = PartyModel::oldestUnpaid('customer');
+            $oldest = PartyModel::oldestUnpaid();
         }
 
         $tile = collect($this->actingAs($this->admin)

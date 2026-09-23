@@ -96,7 +96,7 @@
                     </div>
                 </div>
 
-                <div class="owed-summary">
+                <div class="statement-summary owed-summary">
                     <div class="stat closing">
                         <span class="label">Outstanding</span>
                         <span class="value dr">{{ number_format($totals['outstanding'], 2, '.', ',') }}</span>

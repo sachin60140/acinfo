@@ -92,6 +92,8 @@ const props = defineProps({
      *          place in the list the reader was working in
      * searchable: false  keep a fixed label like "Edit" out of the search text,
      *          or every row matches the word
+     * titleFrom  an action button's tooltip, from this field of its row — what
+     *          pressing it will do, said before it is pressed
      */
     columns: { type: Array, required: true },
     // Per-row extra classes: { rowKeyField: 'class-name' } applied by row[key].
@@ -838,6 +840,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                     v-else-if="column.type === 'action' && (! column.onlyIf || row[column.onlyIf])"
                                     type="button"
                                     class="ui-btn ui-btn--sm"
+                                    :title="column.titleFrom ? row[column.titleFrom] || null : null"
                                     @click="emit('action', row, column)">
                                     <i v-if="column.icon" class="bi" :class="column.icon"></i>
                                     {{ display(row, column) || column.label }}
