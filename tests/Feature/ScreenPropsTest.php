@@ -99,10 +99,11 @@ class ScreenPropsTest extends TestCase
         }
 
         /*
-         * A customer who owes, from long ago, for the Collection List: the
-         * files below post nothing to the ledger, so on an empty database it
-         * would record no row's shape at all — and being the oldest debt, it
-         * is the row recorded here and on every other database alike.
+         * A customer who owes for a file, from long ago, for the Collection
+         * List. Being the oldest debt, it is the row recorded here and on
+         * every other database alike — and owing on a file, the row records
+         * the Files link as the address it is, not as the null of a customer
+         * who owes only a balance typed by hand (which accepts anything).
          */
         $owing = new \App\Models\PartyModel;
         $owing->party_type = 'customer';
@@ -111,15 +112,26 @@ class ScreenPropsTest extends TestCase
         $owing->is_active = 1;
         $owing->save();
 
-        \Illuminate\Support\Facades\DB::table('party_ledger')->insert([
-            'party_id' => $owing->id,
-            'txn_date' => '2000-01-01',
-            'entry_type' => 'debit',
-            'amount' => 500,
-            'particular' => 'Opening Balance',
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        $owed = new \App\Models\WorkFileModel;
+        $owed->file_no = 'F-PROPS-'.uniqid();
+        $owed->received_date = '2000-01-01';
+        $owed->registration_no = 'BR01PR'.random_int(1000, 9999);
+        $owed->description = 'Props fixture, owed';
+        $owed->work_type_id = $type->id;
+        $owed->customer_id = $owing->id;
+        $owed->customer_amount = 500;
+        $owed->status = \App\Models\WorkFileModel::APPROVED;
+        $owed->save();
+
+        $owedItem = new \App\Models\WorkFileItemModel;
+        $owedItem->work_file_id = $owed->id;
+        $owedItem->work_type_id = $type->id;
+        $owedItem->customer_amount = 500;
+        $owedItem->status = \App\Models\WorkFileModel::APPROVED;
+        $owedItem->approved_on = '2000-01-10';
+        $owedItem->save();
+
+        $owed->syncLedger();
 
         /*
          * A client too. The client ledger's own screens are in the list below,

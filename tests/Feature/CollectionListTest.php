@@ -147,6 +147,7 @@ class CollectionListTest extends TestCase
         $this->assertSame(1200.0, (float) $row['owes']);
         $this->assertSame(0.0, (float) $row['finished'], 'none of it for finished work');
         $this->assertSame(1, $row['files']);
+        $this->assertSame(route('report.uncollected', ['party_id' => $customer->id, 'show' => 'all']), $row['files_url']);
     }
 
     public function test_it_lists_a_customer_owing_only_an_opening_balance(): void
@@ -233,15 +234,143 @@ class CollectionListTest extends TestCase
     public function test_a_payment_adjusted_against_the_newer_file_leaves_the_older_one_owed(): void
     {
         $customer = $this->party();
-        $old = $this->file($customer, 1000, 40);
-        $new = $this->file($customer, 600, 20);
+        $old = $this->file($customer, 600, 40);
+        $new = $this->file($customer, 1000, 20);
 
+        // Exactly the older file's amount: not adjusted, it would clear that.
         $this->pay($customer, 600, [$new->id => 600]);
 
         $row = $this->row($customer);
         $this->assertSame(1000.0, (float) $row['owes']);
-        $this->assertSame(now()->subDays(40)->format('d-m-Y'), $row['since']);
-        $this->assertNotNull($old);
+        $this->assertSame(now()->subDays(40)->format('d-m-Y'), $row['since'], 'the older file is still owed in full');
+        $this->assertSame(2, $row['files']);
+
+        $bills = PartyLedgerModel::dueBills([$customer->id])[$customer->id];
+        $this->assertSame([$old->id => 600.0, $new->id => 400.0], array_column($bills, 'due', 'file_id'));
+    }
+
+    /**
+     * Carried to Customers today, owed since the old book says. The carrying
+     * line is dated the day it was carried so a statement already sent does
+     * not change — which alone would put the oldest debts at the bottom.
+     */
+    public function test_a_balance_from_the_old_book_is_owed_since_the_old_book_says(): void
+    {
+        $client = DB::table('client')->insertGetId([
+            'name' => 'Old Debt Client '.uniqid(),
+            'mobile' => '93802'.random_int(10000, 99999),
+            'password' => Hash::make('password-for-tests'),
+            'address' => 'Near the RTO, Motihari',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        foreach ([[400, -3000], [300, 1000], [200, -2000]] as [$daysAgo, $amount]) {
+            DB::table('client_ledger')->insert([
+                'client_id' => $client,
+                'payment_by' => '1',
+                'amount' => $amount,
+                'particular' => 'Old book',
+                'txn_date' => now()->subDays($daysAgo)->toDateString(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        $this->actingAs($this->admin)
+            ->from(route('client.closebook'))
+            ->post(route('client.carry', $client), ['customer' => 'new'])
+            ->assertSessionHasNoErrors();
+
+        $customer = PartyModel::where('party_type', 'customer')->latest('id')->first();
+
+        $recent = $this->party();
+        $this->file($recent, 900, 7);
+
+        $rows = collect($this->page()->json('props.rows'));
+        $row = $rows->firstWhere('id', $customer->id);
+
+        // 3,000 then 2,000 charged, 1,000 paid: the first charge is part unpaid.
+        $this->assertSame(4000.0, (float) $row['owes']);
+        $this->assertSame(now()->subDays(400)->format('d-m-Y'), $row['since']);
+        $this->assertSame('400 days', $row['days_text']);
+        $this->assertLessThan($rows->search(fn ($r) => $r['id'] === $recent->id), $rows->search(fn ($r) => $r['id'] === $customer->id));
+
+        // Paying 2,500 off it since finishes the first charge: owed since the second.
+        $this->entry($customer, 'credit', 2500, 0);
+
+        $this->assertSame(now()->subDays(200)->format('d-m-Y'), $this->row($customer)['since']);
+    }
+
+    public function test_a_charge_dated_ahead_says_so_rather_than_today(): void
+    {
+        $customer = $this->party();
+        $this->entry($customer, 'debit', 350, -7);
+
+        $row = $this->row($customer);
+
+        $this->assertSame(now()->addDays(7)->format('d-m-Y'), $row['since']);
+        $this->assertSame('dated ahead', $row['days_text']);
+        $this->assertSame(0, $row['days']);
+    }
+
+    public function test_remind_says_which_chat_it_opens(): void
+    {
+        $mobile = $this->party();
+        $mobile->mobile = '9835230001';
+        $mobile->save();
+        $this->file($mobile, 500, 5);
+
+        // The mobile column shows a mobile; the WhatsApp number is a landline.
+        $landline = $this->party();
+        $landline->mobile = '9835230002';
+        $landline->whatsapp = '0612222333';
+        $landline->save();
+        $this->file($landline, 500, 5);
+
+        $page = $this->page();
+        $rows = collect($page->json('props.rows'));
+
+        $this->assertSame('on +91 98352 30001', $rows->firstWhere('id', $mobile->id)['remind_note']);
+        $this->assertStringContainsString('Nothing is sent until you press Send', $rows->firstWhere('id', $mobile->id)['remind_title']);
+        $this->assertSame('no WhatsApp number — you pick the chat', $rows->firstWhere('id', $landline->id)['remind_note']);
+
+        $remind = collect($page->json('props.columns'))->firstWhere('key', 'remind');
+        $this->assertSame('remind_note', $remind['sub']);
+        $this->assertSame('remind_title', $remind['titleFrom']);
+    }
+
+    public function test_it_says_the_order_it_arrives_in(): void
+    {
+        $this->assertSame('since', $this->page()->json('props.sortedBy'));
+    }
+
+    /**
+     * Owing Longest, on the dashboard beside the tile that opens this list,
+     * names the list's first customer and the same day. A customer since long
+     * ago who paid everything and owes for last week has owed for a week.
+     */
+    public function test_owing_longest_is_the_lists_first_row(): void
+    {
+        $probe = $this->party();
+        $this->entry($probe, 'debit', 1000, 17000);
+        $this->entry($probe, 'credit', 1000, 16999);
+        $this->entry($probe, 'debit', 500, 5);
+
+        $page = $this->page();
+        $first = $page->json('props.rows.0');
+
+        $tile = collect($this->actingAs($this->admin)->getJson('admin/dashboard')->json('props.tiles'))
+            ->firstWhere('label', 'Owing Longest');
+
+        $this->assertSame(route('party.statement', $first['id']), $tile['href']);
+        $this->assertStringContainsString('since '.$first['since'], $tile['note']);
+        $this->assertSame($page->json('page.totals.oldest'), $first['days']);
+
+        $oldest = PartyModel::oldestUnpaid();
+        $this->assertSame($first['id'], $oldest['id']);
+        $this->assertLessThan(17000, $oldest['days'], 'not dated from a charge paid long ago');
+        $this->assertSame(5, $this->row($probe)['days']);
     }
 
     public function test_the_longest_owed_comes_first(): void
@@ -380,7 +509,7 @@ class CollectionListTest extends TestCase
 
         $this->actingAs($this->admin)->get(route('report.collection'))
             ->assertOk()
-            ->assertSee('not billed to the customer yet')
+            ->assertSee('work not yet priced for the customer')
             ->assertSee(route('workfile.index', ['pending' => 'customer']), false);
     }
 
@@ -421,7 +550,9 @@ class CollectionListTest extends TestCase
 
         $this->actingAs($this->admin)->get(route('report.collection'))
             ->assertOk()
-            ->assertSee('data-vue="vue-collection-list"', false);
+            ->assertSee('data-vue="vue-collection-list"', false)
+            // The figures above the list, under the class their styles hang off.
+            ->assertSee('class="statement-summary owed-summary"', false);
 
         auth()->logout();
 

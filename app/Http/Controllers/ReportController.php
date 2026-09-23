@@ -9,6 +9,7 @@ use App\Models\PartyModel;
 use App\Models\WorkFileExpenseModel;
 use App\Models\WorkFileModel;
 use App\Support\Screen;
+use App\Support\WhatsApp;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -1137,21 +1138,14 @@ class ReportController extends Controller
         $owing = $customers->filter(fn ($party) => (float) $party->current_balance > 0.005)->keyBy('id');
 
         $ids = $owing->keys()->map(fn ($id) => (int) $id)->all();
-        $bills = PartyLedgerModel::dueBills($ids);
+        // A balance carried from the old Client Ledger dated from the old
+        // book's own charges, not the day it was carried; see dues().
+        $bills = PartyModel::dues($ids);
 
         $fileIds = collect($bills)->flatten(1)->pluck('file_id')->filter()->unique()->values()->all();
         $finishedFiles = $fileIds
             ? DB::table('work_file')->whereIn('id', $fileIds)
                 ->whereIn('status', [WorkFileModel::APPROVED, WorkFileModel::RETURNED])
-                ->pluck('id')->flip()->all()
-            : [];
-
-        // Balances carried from the old Client Ledger are dated the day they
-        // were carried, so a row says so rather than look like a new debt.
-        $looseIds = collect($bills)->flatten(1)->pluck('entry_id')->filter()->values()->all();
-        $brought = $looseIds
-            ? DB::table('party_ledger')->whereIn('id', $looseIds)
-                ->where('particular', CloseClientLedgerController::BROUGHT)
                 ->pluck('id')->flip()->all()
             : [];
 
@@ -1161,16 +1155,21 @@ class ReportController extends Controller
 
         $today = now()->startOfDay();
 
-        $rows = $owing->map(function ($party) use ($bills, $finishedFiles, $brought, $vendorSide, $today) {
+        $rows = $owing->map(function ($party) use ($bills, $finishedFiles, $vendorSide, $today) {
             $mine = $bills[(int) $party->id] ?? [];
             $owes = round((float) $party->current_balance, 2);
             $since = $mine ? $mine[0]['since'] : $today->toDateString();
-            $days = max(0, (int) Carbon::parse($since)->startOfDay()->diffInDays($today));
+            // Signed: a charge dated ahead comes out below nothing.
+            $days = (int) Carbon::parse($since)->startOfDay()->diffInDays($today);
 
             $files = array_filter($mine, fn ($bill) => $bill['file_id'] !== null);
             $loose = array_filter($mine, fn ($bill) => $bill['file_id'] === null);
-            $old = round(array_sum(array_map(fn ($bill) => isset($brought[$bill['entry_id']]) ? $bill['due'] : 0, $loose)), 2);
+            $old = round(array_sum(array_map(fn ($bill) => $bill['old_book'] ? $bill['due'] : 0, $loose)), 2);
             $typed = round(array_sum(array_column($loose, 'due')) - $old, 2);
+
+            // The chat Remind opens, said before it is pressed, as every other
+            // Send on WhatsApp does: the number, or that there is none to use.
+            $chat = WhatsApp::number($party->whatsapp ?: $party->mobile);
 
             /*
              * A write-off whose bill has since gone takes nothing from any file
@@ -1199,11 +1198,13 @@ class ReportController extends Controller
                 'since' => date('d-m-Y', strtotime($since)),
                 'since_raw' => $since,
                 'days_text' => match (true) {
+                    // Typed for a day still to come: not owed for minus days.
+                    $days < 0 => 'dated ahead',
                     $days === 0 => 'today',
                     $days === 1 => '1 day',
                     default => $days.' days',
                 },
-                'days' => $days,
+                'days' => max(0, $days),
                 'files' => count($files),
                 // File by file, on Not Yet Collected — where there are files.
                 'files_url' => $files ? route('report.uncollected', ['party_id' => $party->id, 'show' => 'all']) : null,
@@ -1213,6 +1214,12 @@ class ReportController extends Controller
                 ])),
                 'finished' => $finished,
                 'remind' => 'Remind',
+                'remind_note' => $chat
+                    ? 'on +91 '.substr($chat, 2, 5).' '.substr($chat, 7)
+                    : 'no WhatsApp number — you pick the chat',
+                'remind_title' => $chat
+                    ? 'Opens a chat with '.$party->name.' on +91 '.substr($chat, 2, 5).' '.substr($chat, 7).'. Nothing is sent until you press Send.'
+                    : $party->name.' has no mobile number WhatsApp can use — you will choose the chat yourself.',
             ];
         })
             // Longest owed first; of the same day, the most owed.
@@ -1225,6 +1232,8 @@ class ReportController extends Controller
             'emptyText' => 'Nobody owes anything. Every customer is settled or has paid in advance.',
             'totals' => ['owes' => 'sum', 'finished' => 'sum'],
             'todayLabel' => now()->format('d-m-Y'),
+            // Already in this order, so the first click on it turns it round.
+            'sortedBy' => 'since',
             'columns' => [
                 ['key' => 'customer', 'label' => 'Customer', 'type' => 'link', 'linkTo' => 'statement_url',
                     'note' => 'setoff_note', 'sub' => 'inactive_note'],
@@ -1234,6 +1243,7 @@ class ReportController extends Controller
                 ['key' => 'files', 'label' => 'Files', 'type' => 'link', 'linkTo' => 'files_url', 'sub' => 'loose_note'],
                 ['key' => 'finished', 'label' => 'On Finished Work', 'type' => 'money'],
                 ['key' => 'remind', 'label' => 'Remind', 'type' => 'action', 'icon' => 'bi-whatsapp', 'class' => 'cl-remind',
+                    'sub' => 'remind_note', 'titleFrom' => 'remind_title',
                     'sortable' => false, 'searchable' => false, 'exportable' => false],
                 // Found by searching, as on the customer list.
                 ['key' => 'inactive_note', 'label' => 'Status', 'hidden' => true],

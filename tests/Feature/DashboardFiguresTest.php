@@ -266,7 +266,7 @@ class DashboardFiguresTest extends TestCase
 
         $this->entry($ancient, '1999-01-04', 'debit', 4321);
 
-        $oldest = PartyModel::oldestUnpaid('customer');
+        $oldest = PartyModel::oldestUnpaid();
 
         $this->assertNotNull($oldest);
         $this->assertSame($ancient->name, $oldest['name'], 'somebody newer was reported as the oldest');
@@ -283,7 +283,7 @@ class DashboardFiguresTest extends TestCase
         $this->entry($settled, '1998-01-04', 'debit', 5000);
         $this->entry($settled, '1998-01-04', 'credit', 5000);
 
-        $oldest = PartyModel::oldestUnpaid('customer');
+        $oldest = PartyModel::oldestUnpaid();
 
         $this->assertNotSame($settled->name, $oldest['name'] ?? null);
     }

@@ -229,7 +229,7 @@ class AuthController extends Controller
          * conversation from 50,000 from last week, and only one of them is a
          * conversation nobody has had.
          */
-        $overdue = PartyModel::oldestUnpaid('customer');
+        $overdue = PartyModel::oldestUnpaid();
 
         if ($overdue) {
             $tiles[] = [

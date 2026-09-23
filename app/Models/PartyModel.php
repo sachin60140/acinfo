@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Http\Controllers\CloseClientLedgerController;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
@@ -122,46 +123,117 @@ class PartyModel extends Model
      * different conversation from 50,000 from last week, and only one of them
      * is a problem that has been ignored.
      *
-     * Dated from the earliest entry a customer still has money outstanding
-     * against, rather than from their last movement: somebody who part-paid
-     * last week has not stopped owing you for March.
+     * Dated from the oldest charge a customer has still not paid, rather than
+     * from their last movement — somebody who part-paid last week has not
+     * stopped owing you for March — or from their first entry ever: a
+     * customer since 2024 who paid everything and owes for last week's file
+     * has owed for a week. The Collection List's rule, so the tile and the
+     * list it sits beside name the same customer and the same day.
      *
      * Returns null when nobody is in debit, which is when the tile should not
      * appear at all — see the note on the Awaiting Price tile.
      *
-     * @return array{name: string, amount: float, since: string, days: int}|null
+     * @return array{id: int, name: string, amount: float, since: string, days: int}|null
      */
-    public static function oldestUnpaid(string $partyType = 'customer'): ?array
+    public static function oldestUnpaid(): ?array
     {
-        $owing = DB::table('party')
-            ->leftJoin('party_ledger', 'party_ledger.party_id', '=', 'party.id')
-            ->where('party.party_type', $partyType)
-            ->select('party.id', 'party.name', DB::raw(PartyLedgerModel::BALANCE_SQL.' as balance'))
-            ->selectRaw('MIN(party_ledger.txn_date) as first_entry')
-            ->groupBy('party.id', 'party.name')
-            ->havingRaw(PartyLedgerModel::BALANCE_SQL.' > 0')
-            ->get();
+        $owing = self::withBalance('customer')
+            ->filter(fn ($party) => (float) $party->current_balance > 0.005)
+            ->keyBy('id');
 
-        if ($owing->isEmpty()) {
-            return null;
-        }
+        $dues = self::dues($owing->keys()->map(fn ($id) => (int) $id)->all());
 
-        // The earliest first entry among those still in debit.
-        $oldest = $owing->filter(fn ($row) => $row->first_entry !== null)
-            ->sortBy('first_entry')
+        // The list's order: the oldest day, then the most owed, then the name.
+        $oldest = $owing->filter(fn ($party) => isset($dues[(int) $party->id]))
+            ->sort(fn ($a, $b) => [$dues[(int) $a->id][0]['since'], -(float) $a->current_balance, $a->name]
+                <=> [$dues[(int) $b->id][0]['since'], -(float) $b->current_balance, $b->name])
             ->first();
 
         if (! $oldest) {
             return null;
         }
 
+        $since = $dues[(int) $oldest->id][0]['since'];
+
         return [
             'id' => (int) $oldest->id,
             'name' => $oldest->name,
-            'amount' => round((float) $oldest->balance, 2),
-            'since' => date('d-m-Y', strtotime($oldest->first_entry)),
-            'days' => (int) Carbon::parse($oldest->first_entry)->startOfDay()->diffInDays(now()->startOfDay()),
+            'amount' => round((float) $oldest->current_balance, 2),
+            'since' => date('d-m-Y', strtotime($since)),
+            // Never negative: a charge dated ahead is not owed for minus days.
+            'days' => max(0, (int) Carbon::parse($since)->startOfDay()->diffInDays(now()->startOfDay())),
         ];
+    }
+
+    /**
+     * What each customer still owes, bill by bill, the longest-owed first —
+     * PartyLedgerModel::dueBills(), with one correction.
+     *
+     * A balance carried from the old Client Ledger is dated the day it was
+     * carried, so statements already sent stay as they were; left at that it
+     * would read as a debt from today. It is dated instead from the old book's
+     * own charges (ClientLedgerModel::owedSince), found through the client the
+     * carrying line names, and marked old_book so a screen can say where it
+     * came from. A line that names no client keeps the day it was carried.
+     *
+     * @param  array<int, int>  $customerIds
+     * @return array<int, list<array{file_id: int|null, entry_id: int|null, seq: int, since: string, due: float, old_book: bool}>>
+     */
+    public static function dues(array $customerIds): array
+    {
+        $dues = PartyLedgerModel::dueBills($customerIds);
+
+        $looseIds = [];
+
+        foreach ($dues as $bills) {
+            foreach ($bills as $bill) {
+                if ($bill['entry_id'] !== null) {
+                    $looseIds[] = $bill['entry_id'];
+                }
+            }
+        }
+
+        $brought = $looseIds
+            ? DB::table('party_ledger')
+                ->whereIn('id', $looseIds)
+                ->where('particular', CloseClientLedgerController::BROUGHT)
+                ->get(PartyLedgerModel::reversible() ? ['id', 'note'] : ['id'])
+                ->keyBy('id')
+            : collect();
+
+        // Which client each came from, and how much of it is still unpaid.
+        $clientOf = [];
+        $owed = [];
+
+        foreach ($dues as $bills) {
+            foreach ($bills as $bill) {
+                $line = $bill['entry_id'] !== null ? ($brought[$bill['entry_id']] ?? null) : null;
+
+                if ($line && preg_match('/client #(\d+)/', (string) ($line->note ?? ''), $match)) {
+                    $clientOf[$bill['entry_id']] = (int) $match[1];
+                    $owed[(int) $match[1]] = ($owed[(int) $match[1]] ?? 0) + $bill['due'];
+                }
+            }
+        }
+
+        $since = ClientLedgerModel::owedSince($owed);
+
+        foreach ($dues as $partyId => $bills) {
+            foreach ($bills as $i => $bill) {
+                $entry = $bill['entry_id'];
+                $client = $entry !== null ? ($clientOf[$entry] ?? null) : null;
+
+                $dues[$partyId][$i]['old_book'] = $entry !== null && isset($brought[$entry]);
+
+                if ($client !== null && isset($since[$client]) && $since[$client] < $bill['since']) {
+                    $dues[$partyId][$i]['since'] = $since[$client];
+                }
+            }
+
+            usort($dues[$partyId], fn ($a, $b) => [$a['since'], $a['seq']] <=> [$b['since'], $b['seq']]);
+        }
+
+        return $dues;
     }
 
     /**

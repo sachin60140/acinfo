@@ -21,6 +21,8 @@ const props = defineProps({
     perPage: { type: Number, default: 50 },
     emptyText: { type: String, default: 'Nothing to show.' },
     todayLabel: { type: String, default: '' },
+    // The order the rows arrive in, so the first click turns it round.
+    sortedBy: { type: String, default: '' },
 });
 
 const gridProps = computed(() => ({
@@ -30,6 +32,7 @@ const gridProps = computed(() => ({
     totals: props.totals,
     perPage: props.perPage,
     emptyText: props.emptyText,
+    sortedBy: props.sortedBy,
 }));
 
 function onAction(row, column) {

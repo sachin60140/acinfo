@@ -51,7 +51,7 @@
                     </div>
                 </div>
 
-                <div class="owed-summary">
+                <div class="statement-summary owed-summary">
                     <div class="stat closing">
                         <span class="label">To Collect</span>
                         <span class="value dr">{{ number_format($totals['owes'], 2, '.', ',') }}</span>
@@ -82,11 +82,12 @@
                     is the day of the oldest charge still not paid — a file is charged the day its papers came in,
                     so work still being done counts too; <strong>On Finished Work</strong> is the part for work that
                     is approved or handed back. A payment adjusted against files settles those files; money that
-                    was not adjusted settles the oldest charge first. <strong>Remind</strong> opens WhatsApp with the
-                    balance reminder filled in — nothing is sent until you press Send.
+                    was not adjusted settles the oldest charge first. A balance carried from the old Client Ledger
+                    is dated from the old book's own charges, not the day it was carried. <strong>Remind</strong>
+                    opens WhatsApp with the balance reminder filled in — nothing is sent until you press Send.
                 </div>
 
-                {{-- Owed, and on no list yet. --}}
+                {{-- What this list cannot count yet. --}}
                 @if ($oldBook || $unbilled)
                     <div class="alert alert-warning small mb-3 no-print">
                         @if ($oldBook)
@@ -99,8 +100,8 @@
                         @if ($unbilled)
                             <div>
                                 <i class="bi bi-tag"></i>
-                                {{ $unbilled }} {{ Str::plural('file', $unbilled) }} not billed to the customer yet —
-                                not counted here until priced.
+                                {{ $unbilled }} {{ Str::plural('file', $unbilled) }} {{ $unbilled === 1 ? 'has' : 'have' }}
+                                work not yet priced for the customer — that work is not counted here until it is.
                                 <a href="{{ $unbilledUrl }}">See {{ $unbilled === 1 ? 'it' : 'them' }}</a>.
                             </div>
                         @endif

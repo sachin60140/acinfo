@@ -1423,7 +1423,7 @@
                     "days": "number",
                     "days_text": "string",
                     "files": "number",
-                    "files_url": "null",
+                    "files_url": "string",
                     "finished": "number",
                     "id": "number",
                     "inactive_note": "string",
@@ -1431,6 +1431,8 @@
                     "mobile": "string",
                     "owes": "number",
                     "remind": "string",
+                    "remind_note": "string",
+                    "remind_title": "string",
                     "setoff_note": "string",
                     "since": "string",
                     "since_raw": "string",
@@ -1438,6 +1440,7 @@
                     "whatsapp": "string"
                 }
             },
+            "sortedBy": "string",
             "title": "string",
             "todayLabel": "string",
             "totals": {
