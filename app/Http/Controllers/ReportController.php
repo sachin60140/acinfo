@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ClientLedgerModel;
 use App\Models\ExpenseTypeModel;
 use App\Models\PartyLedgerModel;
 use App\Models\PartyModel;
 use App\Models\WorkFileExpenseModel;
 use App\Models\WorkFileModel;
 use App\Support\Screen;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -1112,6 +1114,149 @@ class ReportController extends Controller
                 'finished' => route('report.uncollected', array_filter(['party_id' => $partyId])),
                 'all' => route('report.uncollected', array_filter(['party_id' => $partyId, 'show' => 'all'])),
             ],
+        ])->toResponse($req);
+    }
+
+    /**
+     * Every customer who owes, the longest-owed first, each with a reminder.
+     *
+     * Not Yet Collected is file by file and finished work only, for the
+     * conversation about particular jobs. This is the list to ring or message
+     * down: one row a customer, what their statement says they owe — opening
+     * balances, charges typed by hand and work still in progress included —
+     * and since when. "Since" is the oldest charge still unpaid once their
+     * payments have settled what they were adjusted against and then the
+     * oldest charges first.
+     *
+     * The message is the statement's balance reminder, the same words from
+     * either place, with no file, no vendor and no office note in it.
+     */
+    public function collection(Request $req)
+    {
+        $customers = PartyModel::withBalance('customer');
+        $owing = $customers->filter(fn ($party) => (float) $party->current_balance > 0.005)->keyBy('id');
+
+        $ids = $owing->keys()->map(fn ($id) => (int) $id)->all();
+        $bills = PartyLedgerModel::dueBills($ids);
+
+        $fileIds = collect($bills)->flatten(1)->pluck('file_id')->filter()->unique()->values()->all();
+        $finishedFiles = $fileIds
+            ? DB::table('work_file')->whereIn('id', $fileIds)
+                ->whereIn('status', [WorkFileModel::APPROVED, WorkFileModel::RETURNED])
+                ->pluck('id')->flip()->all()
+            : [];
+
+        // Balances carried from the old Client Ledger are dated the day they
+        // were carried, so a row says so rather than look like a new debt.
+        $looseIds = collect($bills)->flatten(1)->pluck('entry_id')->filter()->values()->all();
+        $brought = $looseIds
+            ? DB::table('party_ledger')->whereIn('id', $looseIds)
+                ->where('particular', CloseClientLedgerController::BROUGHT)
+                ->pluck('id')->flip()->all()
+            : [];
+
+        // What the office owes the same person as a vendor, where the two
+        // accounts are linked — worth knowing before asking them for money.
+        $vendorSide = collect(PartyModel::counterparts('customer'))->keyBy('own_id');
+
+        $today = now()->startOfDay();
+
+        $rows = $owing->map(function ($party) use ($bills, $finishedFiles, $brought, $vendorSide, $today) {
+            $mine = $bills[(int) $party->id] ?? [];
+            $owes = round((float) $party->current_balance, 2);
+            $since = $mine ? $mine[0]['since'] : $today->toDateString();
+            $days = max(0, (int) Carbon::parse($since)->startOfDay()->diffInDays($today));
+
+            $files = array_filter($mine, fn ($bill) => $bill['file_id'] !== null);
+            $loose = array_filter($mine, fn ($bill) => $bill['file_id'] === null);
+            $old = round(array_sum(array_map(fn ($bill) => isset($brought[$bill['entry_id']]) ? $bill['due'] : 0, $loose)), 2);
+            $typed = round(array_sum(array_column($loose, 'due')) - $old, 2);
+
+            /*
+             * A write-off whose bill has since gone takes nothing from any file
+             * but still comes off the balance, so what the files say is due can
+             * be more than the customer owes. What can be asked for is never
+             * more than that.
+             */
+            $finished = min($owes, round(array_sum(array_map(
+                fn ($bill) => isset($finishedFiles[$bill['file_id']]) ? $bill['due'] : 0,
+                $files
+            )), 2));
+
+            $vendor = $vendorSide[(int) $party->id] ?? null;
+
+            return [
+                'id' => (int) $party->id,
+                'customer' => (string) $party->name,
+                'statement_url' => route('party.statement', $party->id),
+                'inactive_note' => $party->is_active ? '' : 'Inactive',
+                'setoff_note' => $vendor && $vendor['balance'] < -0.005
+                    ? 'You owe them '.number_format(-$vendor['balance'], 2, '.', ',').' as a vendor'
+                    : '',
+                'mobile' => (string) $party->mobile,
+                'whatsapp' => (string) ($party->whatsapp ?: $party->mobile),
+                'owes' => $owes,
+                'since' => date('d-m-Y', strtotime($since)),
+                'since_raw' => $since,
+                'days_text' => match (true) {
+                    $days === 0 => 'today',
+                    $days === 1 => '1 day',
+                    default => $days.' days',
+                },
+                'days' => $days,
+                'files' => count($files),
+                // File by file, on Not Yet Collected — where there are files.
+                'files_url' => $files ? route('report.uncollected', ['party_id' => $party->id, 'show' => 'all']) : null,
+                'loose_note' => implode(' · ', array_filter([
+                    $old > 0.005 ? number_format($old, 2, '.', ',').' from the old Client Ledger' : null,
+                    $typed > 0.005 ? number_format($typed, 2, '.', ',').' not on a file' : null,
+                ])),
+                'finished' => $finished,
+                'remind' => 'Remind',
+            ];
+        })
+            // Longest owed first; of the same day, the most owed.
+            ->sort(fn ($a, $b) => [$a['since_raw'], -$a['owes'], $a['customer']] <=> [$b['since_raw'], -$b['owes'], $b['customer']])
+            ->values();
+
+        $props = [
+            'title' => 'Collection List',
+            'perPage' => 100,
+            'emptyText' => 'Nobody owes anything. Every customer is settled or has paid in advance.',
+            'totals' => ['owes' => 'sum', 'finished' => 'sum'],
+            'todayLabel' => now()->format('d-m-Y'),
+            'columns' => [
+                ['key' => 'customer', 'label' => 'Customer', 'type' => 'link', 'linkTo' => 'statement_url',
+                    'note' => 'setoff_note', 'sub' => 'inactive_note'],
+                ['key' => 'mobile', 'label' => 'Mobile'],
+                ['key' => 'owes', 'label' => 'Owes', 'type' => 'money', 'class' => 'dr fw-bold'],
+                ['key' => 'since', 'label' => 'Oldest Unpaid', 'sortBy' => 'since_raw', 'sub' => 'days_text'],
+                ['key' => 'files', 'label' => 'Files', 'type' => 'link', 'linkTo' => 'files_url', 'sub' => 'loose_note'],
+                ['key' => 'finished', 'label' => 'On Finished Work', 'type' => 'money'],
+                ['key' => 'remind', 'label' => 'Remind', 'type' => 'action', 'icon' => 'bi-whatsapp', 'class' => 'cl-remind',
+                    'sortable' => false, 'searchable' => false, 'exportable' => false],
+                // Found by searching, as on the customer list.
+                ['key' => 'inactive_note', 'label' => 'Status', 'hidden' => true],
+            ],
+            'rows' => $rows,
+        ];
+
+        $unbilled = WorkFileModel::pendingCounts()['customer'];
+
+        return Screen::make('admin.reports.collection', 'vue-collection-list', $props, [
+            'totals' => [
+                'owes' => round((float) $rows->sum('owes'), 2),
+                'customers' => $rows->count(),
+                'oldest' => (int) $rows->max('days'),
+                'finished' => round((float) $rows->sum('finished'), 2),
+            ],
+            // Money in the other direction, so it is not forgotten either.
+            'inAdvance' => $customers->filter(fn ($party) => (float) $party->current_balance < -0.005)->count(),
+            // Owed and on no list yet.
+            'unbilled' => (int) $unbilled,
+            'unbilledUrl' => route('workfile.index', ['pending' => 'customer']),
+            'oldBook' => ClientLedgerModel::hasOpenBalances(),
+            'oldBookUrl' => route('client.closebook'),
         ])->toResponse($req);
     }
 }

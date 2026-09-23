@@ -90,6 +90,7 @@ class SidebarTest extends TestCase
             'paper types' => ['admin/paper-types', 'Paper Types'],
             'profit report' => ['admin/reports/profit', 'Profit Report'],
             'work report' => ['admin/reports/files', 'Work Report'],
+            'collection list' => ['admin/reports/collection', 'Collection List'],
         ];
     }
 

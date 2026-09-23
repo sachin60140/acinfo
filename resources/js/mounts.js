@@ -29,6 +29,7 @@ import PasswordToggle from './components/PasswordToggle.vue';
 import PartyStatement from './components/PartyStatement.vue';
 import ReceiveFileRows from './components/ReceiveFileRows.vue';
 import StatusBoard from './components/StatusBoard.vue';
+import CollectionList from './components/CollectionList.vue';
 import UncollectedReport from './components/UncollectedReport.vue';
 import UserDashboard from './components/UserDashboard.vue';
 import VendorReturn from './components/VendorReturn.vue';
@@ -94,6 +95,7 @@ export const components = {
     'vue-inhouse-work': InHouseWork,
     // Banded by customer, with a message for each band.
     'vue-uncollected-report': UncollectedReport,
+    'vue-collection-list': CollectionList,
     'vue-balance-reminder': BalanceReminder,
     // Work just approved, offered to each customer on WhatsApp.
     'vue-approval-share': ApprovalShare,

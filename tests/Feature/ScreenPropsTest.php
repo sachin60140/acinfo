@@ -99,6 +99,29 @@ class ScreenPropsTest extends TestCase
         }
 
         /*
+         * A customer who owes, from long ago, for the Collection List: the
+         * files below post nothing to the ledger, so on an empty database it
+         * would record no row's shape at all — and being the oldest debt, it
+         * is the row recorded here and on every other database alike.
+         */
+        $owing = new \App\Models\PartyModel;
+        $owing->party_type = 'customer';
+        $owing->name = 'Props Owing Customer';
+        $owing->mobile = '92400'.random_int(10000, 99999);
+        $owing->is_active = 1;
+        $owing->save();
+
+        \Illuminate\Support\Facades\DB::table('party_ledger')->insert([
+            'party_id' => $owing->id,
+            'txn_date' => '2000-01-01',
+            'entry_type' => 'debit',
+            'amount' => 500,
+            'particular' => 'Opening Balance',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        /*
          * A client too. The client ledger's own screens are in the list below,
          * and a screen with no rows hands its component an empty array rather
          * than a row's worth of shape — which reads as the shape having changed.
@@ -267,6 +290,7 @@ class ScreenPropsTest extends TestCase
             'paper-types' => 'admin/paper-types',
             'report-customer' => 'admin/reports/files?party_type=customer',
             'report-vendor' => 'admin/reports/files?party_type=vendor',
+            'report-collection' => 'admin/reports/collection',
             // The old book: Add, Receipt and Payment are closed and mount
             // nothing now (see CloseClientLedgerController); its list,
             // statements and logins stay.

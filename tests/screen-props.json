@@ -1403,6 +1403,49 @@
             }
         }
     },
+    "report-collection": {
+        "vue-collection-list": {
+            "columns": [
+                "customer:link",
+                "mobile:text",
+                "owes:money",
+                "since:text",
+                "files:link",
+                "finished:money",
+                "remind:action:no-export:no-sort",
+                "inactive_note:text:hidden"
+            ],
+            "emptyText": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "customer": "string",
+                    "days": "number",
+                    "days_text": "string",
+                    "files": "number",
+                    "files_url": "null",
+                    "finished": "number",
+                    "id": "number",
+                    "inactive_note": "string",
+                    "loose_note": "string",
+                    "mobile": "string",
+                    "owes": "number",
+                    "remind": "string",
+                    "setoff_note": "string",
+                    "since": "string",
+                    "since_raw": "string",
+                    "statement_url": "string",
+                    "whatsapp": "string"
+                }
+            },
+            "title": "string",
+            "todayLabel": "string",
+            "totals": {
+                "finished": "string",
+                "owes": "string"
+            }
+        }
+    },
     "report-customer": {
         "vue-work-report": {
             "action": "string",
