@@ -910,8 +910,17 @@ class WorkFileController extends Controller
                 return back()->with('error', 'Those files are no longer available to give out — they may have been assigned or cancelled already.');
             }
 
+            /*
+             * And the sheet for what just went out, offered where the office
+             * already is: the papers are in somebody's hand now, and the
+             * signature is worth asking for before they leave the counter.
+             */
             return redirect()->route('workfile.index')
-                ->with('success', $assigned->count().' '.Str::plural('file', $assigned->count()).' given to the vendor: '.$assigned->pluck('file_no')->implode(', '));
+                ->with('success', $assigned->count().' '.Str::plural('file', $assigned->count()).' given to the vendor: '.$assigned->pluck('file_no')->implode(', '))
+                ->with('sheet', [
+                    'url' => route('workfile.dispatchsheet', ['vendor' => $req->vendor_id, 'date' => $req->vendor_date]),
+                    'label' => 'Print the hand-over sheet for '.PartyModel::whereKey($req->vendor_id)->value('name'),
+                ]);
         }
 
         $files = WorkFileModel::unassigned();
