@@ -1588,8 +1588,15 @@ class WorkFileController extends Controller
             ->get(['i.work_file_id', 't.name'])
             ->groupBy('work_file_id');
 
-        // Every vendor, read once, for the notes the customer is sent below.
+        /*
+         * Every vendor, read once, for the notes the customer is sent below —
+         * less, for each customer, the vendor account that is them.
+         */
         $shareMarks = WorkFileModel::vendorMarks();
+        $marksOf = [];
+        $marksFor = function (int $customerId) use ($shareMarks, &$marksOf) {
+            return $marksOf[$customerId] ??= WorkFileModel::vendorMarksFor($customerId, $shareMarks);
+        };
 
         $props = [
             'action' => route('workfile.paperaudit'),
@@ -1640,7 +1647,7 @@ class WorkFileController extends Controller
                 'works' => $holding->get($line->id, collect())->pluck('name')->filter()->unique()->values()->all(),
                 'note' => $line->note,
                 // The same note as the customer is sent it: no vendor in it.
-                'share_note' => WorkFileModel::redactVendors($line->note, $shareMarks),
+                'share_note' => WorkFileModel::redactVendors($line->note, $marksFor((int) $line->customer_id)),
                 'office_note' => $line->office_note,
                 'since' => date('d-m-Y', strtotime($line->updated_at)),
                 'papers_url' => route('workfile.papers', ['id' => $line->work_file_id, 'return_to' => $back]),

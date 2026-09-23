@@ -588,6 +588,38 @@ class FileDocumentTest extends TestCase
     }
 
     /**
+     * A customer who is also a vendor — linked by the office for set-off —
+     * downloads a paper named for themselves under their own name, not with
+     * it cut out as though it were a vendor's.
+     */
+    public function test_a_linked_person_downloads_a_paper_under_their_own_name(): void
+    {
+        $customer = $this->customer();
+
+        $works = new PartyModel;
+        $works->party_type = 'vendor';
+        $works->name = $customer->name;
+        $works->mobile = $customer->mobile;
+        $works->is_active = 1;
+        $works->save();
+
+        $customer->linked_vendor_id = $works->id;
+        $customer->save();
+
+        $file = $this->file($customer);
+        $this->upload($file, [['file' => $this->pdf('scan_1.pdf'), 'title' => $customer->name.' RC']]);
+
+        $doc = WorkFileDocumentModel::where('work_file_id', $file->id)->firstOrFail();
+
+        $disposition = (string) $this->withSession(['customer_id' => $customer->id])
+            ->get(route('customer.file.document', ['id' => $file->id, 'doc' => $doc->id]))
+            ->assertOk()
+            ->headers->get('content-disposition');
+
+        $this->assertStringContainsString(explode(' ', $customer->name)[0], $disposition);
+    }
+
+    /**
      * The document id is looked up inside the file named beside it, and that
      * file inside the signed-in customer's own. Either one belonging elsewhere
      * is not found.

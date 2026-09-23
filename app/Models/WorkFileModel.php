@@ -628,9 +628,10 @@ class WorkFileModel extends Model
      * The office note is not selected at all, so it cannot reach a customer's
      * page by any route through this.
      *
+     * @param  array<int, array{0: string, 1: string, 2?: int}>|null  $marks  vendorMarksFor() the file's customer
      * @return array{needed: array<int, array{name: string, works: array<int, string>, note: ?string}>, received: array<int, string>}
      */
-    public static function customerPapers(int $fileId): array
+    public static function customerPapers(int $fileId, ?array $marks = null): array
     {
         $live = fn ($q) => $q->select(DB::raw(1))
             ->from('work_file_paper_item as cpi')
@@ -3651,6 +3652,48 @@ class WorkFileModel extends Model
     }
 
     /**
+     * A run of digits that may be a phone number, however it was typed:
+     * spaced, dashed, dotted, slashed or bracketed, with +91 or without.
+     * Found after the vendor-side sweep: "98765.12345" and "(98765) 12345"
+     * went past both filters as typed.
+     */
+    private const NUMBER_RUN = '/\+?\(?\d[\d\s\-.\/()]{8,}\d/u';
+
+    /**
+     * vendorMarks() for what one customer reads: less what is theirs.
+     *
+     * The vendor account that is this same customer — linked by the office
+     * for set-off — carries their own name and number, and so does the
+     * customer's own row. Neither is a vendor to them. Found after the
+     * vendor-side sweep: a person who is both read their own name cut from
+     * their own statement and portal ("Received from … ji"), the mirror of
+     * what was put right on the vendor's side. A vendor who only shares a
+     * first name with them is still cut: it may be the vendor who is meant.
+     *
+     * @param  array<int, array{0: string, 1: string, 2?: int}>|null  $marks  vendorMarks(), when already read
+     * @return array<int, array{0: string, 1: string, 2?: int}>
+     */
+    public static function vendorMarksFor(?int $customerId, ?array $marks = null): array
+    {
+        $marks ??= self::vendorMarks();
+        $customer = $customerId ? DB::table('party')->where('id', $customerId)->where('party_type', 'customer')->first() : null;
+
+        if (! $customer) {
+            return $marks;
+        }
+
+        $linked = PartyLedgerModel::canSetOff() && ($customer->linked_vendor_id ?? null) ? (int) $customer->linked_vendor_id : null;
+
+        $own = array_values(array_filter(
+            array_map(fn ($number) => substr(preg_replace('/\D/', '', (string) $number), -10), [$customer->mobile, $customer->whatsapp]),
+            fn ($digits) => strlen($digits) === 10
+        ));
+
+        return array_values(array_filter($marks, fn ($mark) => ! ($linked !== null && ($mark[2] ?? null) === $linked)
+            && ! ($mark[0] === 'digits' && in_array($mark[1], $own, true))));
+    }
+
+    /**
      * Every party of one type's names, first names and numbers, as
      * vendorMarks() describes them.
      *
@@ -3665,13 +3708,15 @@ class WorkFileModel extends Model
 
         $parties = DB::table('party')->where('party_type', $type)
             ->when($except, fn ($q) => $q->whereNotIn('id', $except))
-            ->get(['name', 'mobile', 'whatsapp']);
+            ->get(['id', 'name', 'mobile', 'whatsapp']);
 
         foreach ($parties as $party) {
+            // Whose each mark is, third, so one party's can be left out later.
+            $id = (int) $party->id;
             $name = trim((string) preg_replace('/\s+/u', ' ', mb_strtolower((string) $party->name)));
 
             if (mb_strlen($name) >= 3) {
-                $marks[] = ['text', $name];
+                $marks[] = ['text', $name, $id];
             }
 
             /*
@@ -3690,20 +3735,20 @@ class WorkFileModel extends Model
             $bare = implode(' ', $words);
 
             if ($bare !== $name && mb_strlen($bare) >= 3) {
-                $marks[] = ['text', $bare];
+                $marks[] = ['text', $bare, $id];
             }
 
             $first = rtrim($words[0] ?? '', '.,');
 
             if (mb_strlen($first) >= 4 && ! in_array($first, $common, true) && $first !== $bare) {
-                $marks[] = ['text', $first];
+                $marks[] = ['text', $first, $id];
             }
 
             foreach ([$party->mobile, $party->whatsapp] as $number) {
                 $digits = substr(preg_replace('/\D/', '', (string) $number), -10);
 
                 if (strlen($digits) === 10) {
-                    $marks[] = ['digits', $digits];
+                    $marks[] = ['digits', $digits, $id];
                 }
             }
         }
@@ -3778,22 +3823,41 @@ class WorkFileModel extends Model
         };
 
         $names = $longestFirst(array_map(fn ($mark) => $mark[1], array_filter($marks, fn ($mark) => $mark[0] === 'text')));
+        $keptNames = $longestFirst(array_map(fn ($name) => trim((string) preg_replace('/\s+/u', ' ', mb_strtolower($name))), $keep));
 
-        $patterns = array_map(
+        $batches = fn (array $names) => array_map(
             fn ($batch) => '/(?<![\p{L}\p{N}])(?:'.implode('|', array_map($phrase, $batch)).')(?![\p{L}\p{N}])/iu',
             array_chunk($names, 100)
         );
 
-        $kept = array_map(
-            fn ($name) => '/(?<![\p{L}\p{N}])'.$phrase($name).'(?![\p{L}\p{N}])/iu',
-            $longestFirst(array_map(fn ($name) => trim((string) preg_replace('/\s+/u', ' ', mb_strtolower($name))), $keep))
-        );
+        /*
+         * A name with a kept one inside it goes before anything is set aside —
+         * a customer "Rakesh Kumar Singh" beside a vendor "Rakesh Kumar" —
+         * or setting the vendor's own name aside would keep the start of the
+         * customer's, and the rest would match nothing. Found in making the
+         * customer-side mirror of this.
+         */
+        $holds = fn (string $name) => (bool) array_filter($keptNames, fn ($kept) => $kept !== $name
+            && preg_match('/(?<![\p{L}\p{N}])'.$phrase($kept).'(?![\p{L}\p{N}])/iu', $name));
+
+        $first = $batches(array_values(array_filter($names, $holds)));
+        $patterns = $batches(array_values(array_filter($names, fn ($name) => ! $holds($name))));
+
+        $kept = array_map(fn ($name) => '/(?<![\p{L}\p{N}])'.$phrase($name).'(?![\p{L}\p{N}])/iu', $keptNames);
 
         $numbers = array_flip(array_map(fn ($mark) => $mark[1], array_filter($marks, fn ($mark) => $mark[0] === 'digits')));
 
-        return function (?string $text) use ($patterns, $kept, $numbers, $with): ?string {
+        return function (?string $text) use ($first, $patterns, $kept, $numbers, $with): ?string {
             if ($text === null || trim($text) === '') {
                 return $text;
+            }
+
+            foreach ($first as $pattern) {
+                $text = preg_replace($pattern, $with, $text);
+
+                if ($text === null) {
+                    return $with;
+                }
             }
 
             // Set aside under characters no name or number is made of.
@@ -3820,7 +3884,7 @@ class WorkFileModel extends Model
             }
 
             if ($numbers) {
-                $text = preg_replace_callback('/\+?\d[\d\s\-]{8,}\d/u', function ($found) use ($numbers, $with) {
+                $text = preg_replace_callback(self::NUMBER_RUN, function ($found) use ($numbers, $with) {
                     $digits = preg_replace('/\D/', '', $found[0]);
 
                     // Any ten in a row that are a customer's, with or without 91.
@@ -3881,7 +3945,7 @@ class WorkFileModel extends Model
         $numbers = array_map(fn ($mark) => $mark[1], array_filter($marks, fn ($mark) => $mark[0] === 'digits'));
 
         if ($numbers) {
-            $text = (string) preg_replace_callback('/\+?\d[\d\s\-]{8,}\d/u', function ($found) use ($numbers, $with) {
+            $text = (string) preg_replace_callback(self::NUMBER_RUN, function ($found) use ($numbers, $with) {
                 $digits = preg_replace('/\D/', '', $found[0]);
 
                 foreach ($numbers as $number) {
@@ -3936,7 +4000,7 @@ class WorkFileModel extends Model
      * is filtered is not the entry but the wording: the status is said in the
      * customer's vocabulary and the remark goes through customerRemark above.
      */
-    public static function customerTimeline(int $fileId): array
+    public static function customerTimeline(int $fileId, ?array $marks = null): array
     {
         $rows = DB::table('work_file_status_log')
             ->leftJoin('work_file_item', 'work_file_item.id', '=', 'work_file_status_log.work_file_item_id')
@@ -3960,7 +4024,8 @@ class WorkFileModel extends Model
             ->get();
 
         $out = [];
-        $marks = self::vendorMarks();
+        // The file's customer's own, when the caller read them.
+        $marks ??= self::vendorMarks();
 
         foreach (self::withoutUndoneHandovers($rows) as $row) {
             $handover = $row->event === self::HANDED_OVER;
@@ -4013,7 +4078,7 @@ class WorkFileModel extends Model
      * @param  array<int, int>  $fileIds
      * @return array<int, array{remark: ?string, remark_on: ?string, updated_on: ?string}>
      */
-    public static function latestCustomerUpdates(array $fileIds): array
+    public static function latestCustomerUpdates(array $fileIds, ?array $marks = null): array
     {
         if (! $fileIds) {
             return [];

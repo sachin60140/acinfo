@@ -230,8 +230,11 @@ class CustomerPortalController extends Controller
         // Every folder's works, for the whole page, in one query.
         $breakdown = WorkFileModel::workBreakdown($files->pluck('id')->all());
 
+        // Every vendor but the one that is this customer themself, read once.
+        $marks = WorkFileModel::vendorMarksFor((int) $customer->id);
+
         // And the last thing said about each, in one more.
-        $updates = WorkFileModel::latestCustomerUpdates($files->pluck('id')->all());
+        $updates = WorkFileModel::latestCustomerUpdates($files->pluck('id')->all(), $marks);
 
         $rows = [];
         $counts = ['open' => 0, 'approved' => 0, 'returned' => 0, 'cancelled' => 0];
@@ -284,7 +287,7 @@ class CustomerPortalController extends Controller
                 'work_type' => $names ? implode(', ', $names) : ($file->work_type ?? '—'),
                 // Typed by hand, so read for vendors: the details keep their
                 // line with any vendor taken out, a remark naming one goes.
-                'description' => WorkFileModel::redactVendors($file->description, $marks ??= WorkFileModel::vendorMarks()),
+                'description' => WorkFileModel::redactVendors($file->description, $marks),
                 'remarks' => WorkFileModel::withoutVendors($file->remarks ?: null, $marks),
 
                 /*
@@ -471,8 +474,9 @@ class CustomerPortalController extends Controller
             ? route('customer.file.approval', ['id' => $file->id])
             : null;
 
-        // Every vendor, read once for the typed text on this page.
-        $marks = WorkFileModel::vendorMarks();
+        // Every vendor but the one that is this customer themself, read once
+        // for the typed text on this page.
+        $marks = WorkFileModel::vendorMarksFor((int) $customer->id);
 
         return Screen::make('customer.file', 'vue-customer-file', $props, [
             'customerName' => $customer->name,
@@ -496,7 +500,7 @@ class CustomerPortalController extends Controller
             // office's note and is not selected for this page at all.
             'handedOverOn' => $file->handed_over_on ? date('d-m-Y', strtotime($file->handed_over_on)) : null,
             // What they still have to bring in, and what has come in.
-            'papers' => WorkFileModel::customerPapers($file->id),
+            'papers' => WorkFileModel::customerPapers($file->id, $marks),
             'fileScreenshot' => $fileScreenshot,
 
             /*
@@ -524,7 +528,7 @@ class CustomerPortalController extends Controller
                 ->all(),
             'workCount' => count($rows),
             // Everything that has happened to this file, oldest first.
-            'timeline' => WorkFileModel::customerTimeline($file->id),
+            'timeline' => WorkFileModel::customerTimeline($file->id, $marks),
             'filesUrl' => route('customer.files'),
         ])->toResponse($req);
     }
@@ -561,7 +565,7 @@ class CustomerPortalController extends Controller
          * tell them apart in their Downloads folder.
          */
         // Named without any vendor in it: set here only, never saved.
-        $doc->title = WorkFileModel::redactVendors($doc->displayName(), null, '-');
+        $doc->title = WorkFileModel::redactVendors($doc->displayName(), WorkFileModel::vendorMarksFor((int) $this->customer()->id), '-');
 
         return response()->download(public_path($doc->path), $doc->downloadName(), [
             'Cache-Control' => 'private, no-store',
@@ -710,8 +714,9 @@ class CustomerPortalController extends Controller
          */
         $remarks = PartyLedgerModel::fileRemarks($data['getRecords']);
 
-        // Typed by hand, every one of the three below; read for vendors.
-        $marks = WorkFileModel::vendorMarks();
+        // Typed by hand, every one of the three below; read for vendors — every
+        // vendor but the one that is this customer themself.
+        $marks = WorkFileModel::vendorMarksFor((int) $customer->id);
 
         // Which of their files each payment was for, when the office said.
         $against = PartyLedgerModel::againstFor($data['getRecords']->pluck('id')->all());
