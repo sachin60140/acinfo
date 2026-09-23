@@ -1910,8 +1910,35 @@ class PartyController extends Controller
          * own name stays: the statement is theirs.
          */
         $forCustomer = $party->party_type === 'customer';
-        $marks = $forCustomer ? WorkFileModel::vendorMarks() : WorkFileModel::customerMarks();
-        $said = fn (?string $text) => $forCustomer ? WorkFileModel::redactVendors($text, $marks) : WorkFileModel::redactCustomers($text, $marks);
+
+        if ($forCustomer) {
+            $marks = WorkFileModel::vendorMarks();
+            $said = fn (?string $text) => WorkFileModel::redactVendors($text, $marks);
+        } else {
+            /*
+             * Not the vendor themself, though: their own numbers, their own
+             * name, and the customer account that is the same person (linked
+             * for set-off). Found in review cut from their own statement —
+             * whenever any customer shared a first name, and always for a
+             * linked person. A first name typed on its own is still cut when
+             * a customer has it: it may be the customer who is meant.
+             */
+            $self = $party->counterpartId();
+            $own = collect([$party->mobile, $party->whatsapp])
+                ->map(fn ($number) => substr(preg_replace('/\D/', '', (string) $number), -10))
+                ->filter(fn ($digits) => strlen($digits) === 10)
+                ->all();
+
+            $marks = array_values(array_filter(
+                WorkFileModel::customerMarks(array_filter([$self])),
+                fn ($mark) => ! ($mark[0] === 'digits' && in_array($mark[1], $own, true))
+            ));
+
+            $said = WorkFileModel::customerRedactor($marks, array_filter([
+                $party->name,
+                $self ? PartyModel::whereKey($self)->value('name') : null,
+            ]));
+        }
 
         foreach ($data['getRecords'] as $entry) {
             $running += $entry->signedAmount();

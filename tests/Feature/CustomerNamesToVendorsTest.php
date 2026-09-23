@@ -285,6 +285,172 @@ class CustomerNamesToVendorsTest extends TestCase
         $this->assertSame('Received from '.$this->name, $row['particular']);
     }
 
+    // ------------------------------------------------ found in review (#34)
+
+    private function vendorEntry(string $particular, ?string $ref = null, ?PartyModel $vendor = null): PartyLedgerModel
+    {
+        $entry = new PartyLedgerModel;
+        $entry->party_id = ($vendor ?? $this->vendor)->id;
+        $entry->txn_date = '2026-09-18';
+        $entry->entry_type = 'debit';
+        $entry->amount = 500;
+        $entry->ref_no = $ref;
+        $entry->particular = $particular;
+        $entry->save();
+
+        return $entry;
+    }
+
+    private function row(PartyLedgerModel $entry): array
+    {
+        return collect($this->statement(PartyModel::find($entry->party_id))->json('props.rows'))->keyBy('id')[$entry->id];
+    }
+
+    /**
+     * A customer sharing the vendor's first name does not split the vendor's
+     * own name on their own statement. The first name typed alone is still
+     * cut: it may be the customer who is meant.
+     */
+    public function test_a_vendors_own_name_is_not_split_by_a_customer_sharing_its_first_word(): void
+    {
+        $vendor = $this->party('vendor', 'Kalpqesh Motors Motihari', '93810'.random_int(10000, 99999));
+        $this->party('customer', 'Kalpqesh Kumarq', '93820'.random_int(10000, 99999));
+
+        $this->assertSame('Advance to Kalpqesh Motors Motihari', $this->row($this->vendorEntry('Advance to Kalpqesh Motors Motihari', null, $vendor))['particular']);
+        $this->assertSame('Paid for … TR', $this->row($this->vendorEntry('Paid for Kalpqesh Kumarq TR', null, $vendor))['particular']);
+        $this->assertSame('Paid to … ji', $this->row($this->vendorEntry('Paid to Kalpqesh ji', null, $vendor))['particular']);
+    }
+
+    /**
+     * A person who is both — linked for set-off — keeps their own name and
+     * numbers on their vendor statement, whether typed as the vendor account
+     * has them or as the customer account does. And the vendor's own number
+     * stays even where a relative's customer account shares it.
+     */
+    public function test_a_linked_person_keeps_their_own_name_and_number(): void
+    {
+        $works = '93830'.random_int(10000, 99999);
+        $home = '93831'.random_int(10000, 99999);
+
+        $vendor = $this->party('vendor', 'Pqvendor Works', $works);
+        $self = $this->party('customer', 'Pqvendor Selfname', $home);
+        $self->linked_vendor_id = $vendor->id;
+        $self->save();
+
+        // A relative's customer account, on the vendor's own phone.
+        $this->party('customer', 'Relativeq Qwerty', $works);
+
+        $row = $this->row($this->vendorEntry('Paid to Pqvendor Selfname for his TR work, Pqvendor ji', 'UPI '.$home, $vendor));
+        $this->assertSame('Paid to Pqvendor Selfname for his TR work, Pqvendor ji', $row['particular']);
+        $this->assertSame('UPI '.$home, $row['ref_no']);
+
+        $this->assertSame('UPI '.$works, $this->row($this->vendorEntry('Advance', 'UPI '.$works, $vendor))['ref_no']);
+
+        // Anybody else is still cut.
+        $this->assertSame('And … too', $this->row($this->vendorEntry('And '.$this->name.' too', null, $vendor))['particular']);
+    }
+
+    /** Saved with a courtesy — Shri, Md., Smt. — a name is found without it, and the courtesy is never a mark. */
+    public function test_a_name_saved_with_a_title_is_found_without_it(): void
+    {
+        $this->party('customer', 'Shri Zorawarx Qwertyan', '93840'.random_int(10000, 99999));
+        $this->party('customer', 'Md. Salimx Ansarix', '93850'.random_int(10000, 99999));
+        $this->party('customer', 'Smt. Sunitax Devix', '93860'.random_int(10000, 99999));
+
+        $this->assertSame('Paid for … TR, … ji', $this->row($this->vendorEntry('Paid for Zorawarx Qwertyan TR, Zorawarx ji'))['particular']);
+        $this->assertSame('Md … HPA', $this->row($this->vendorEntry('Md Salimx Ansarix HPA'))['particular']);
+        $this->assertSame('… ji HPA', $this->row($this->vendorEntry('Sunitax ji HPA'))['particular']);
+        $this->assertSame('Smt. Qiranx for TR', $this->row($this->vendorEntry('Smt. Qiranx for TR'))['particular']);
+    }
+
+    /** The same for a vendor saved "M/s …", on a customer's statement: the rule the other way round. */
+    public function test_a_vendor_saved_with_ms_is_found_without_it_on_a_customers_statement(): void
+    {
+        $this->party('vendor', 'M/s Parwezx Enterprises', '93870'.random_int(10000, 99999));
+
+        $entry = new PartyLedgerModel;
+        $entry->party_id = $this->customer->id;
+        $entry->txn_date = '2026-09-18';
+        $entry->entry_type = 'debit';
+        $entry->amount = 500;
+        $entry->particular = 'Given to Parwezx Enterprises for TR';
+        $entry->save();
+
+        $this->assertSame('Given to … for TR', $this->row($entry)['particular']);
+    }
+
+    /** Lines written before the rule are put right when the update is run, not left for a command run by hand. */
+    public function test_the_update_takes_the_details_off_old_vendor_lines(): void
+    {
+        $file = $this->file([[$this->tr, $this->vendor, 1500]], $this->name.' bal 5000');
+
+        DB::table('party_ledger')->where('work_file_id', $file->id)->where('file_role', 'vendor')
+            ->update(['particular' => $file->ledgerParticular()]);
+
+        $migration = require database_path('migrations/2026_09_23_000300_take_the_files_details_off_vendor_lines.php');
+        $migration->up();
+
+        $this->assertSame($this->tr->name.' - '.$file->registration_no, $this->vendorLine($file, $this->vendor)->particular);
+
+        $customerLine = PartyLedgerModel::where('work_file_id', $file->id)->where('file_role', 'customer')->first();
+        $this->assertStringContainsString($this->name.' bal 5000', $customerLine->particular);
+    }
+
+    /** And files:audit says so of any it finds. */
+    public function test_the_audit_names_a_vendor_line_that_carries_the_details(): void
+    {
+        $file = $this->file([[$this->tr, $this->vendor, 1500]], $this->name.' bal 5000');
+
+        Artisan::call('files:audit');
+        $this->assertStringNotContainsString("on vendor {$this->vendor->id}'s statement", Artisan::output());
+
+        DB::table('party_ledger')->where('work_file_id', $file->id)->where('file_role', 'vendor')
+            ->update(['particular' => $file->ledgerParticular()]);
+
+        Artisan::call('files:audit');
+        $this->assertStringContainsString("on vendor {$this->vendor->id}'s statement", Artisan::output());
+    }
+
+    /**
+     * A long vendor statement with many customers opens quickly. Found in
+     * review: the names were prepared again for every cell, and a vendor of
+     * long standing ran past the time a page is allowed.
+     */
+    public function test_a_long_statement_with_many_customers_opens_quickly(): void
+    {
+        $now = now();
+        $base = random_int(10000000, 89999999);
+
+        foreach (array_chunk(range(1, 2000), 500) as $batch) {
+            DB::table('party')->insert(array_map(fn ($i) => [
+                'party_type' => 'customer',
+                'name' => 'Qwcust'.$i.' Fillerq '.$base,
+                'mobile' => '9'.($base + $i),
+                'is_active' => 1,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ], $batch));
+        }
+
+        DB::table('party_ledger')->insert(array_map(fn ($i) => [
+            'party_id' => $this->vendor->id,
+            'txn_date' => '2026-09-18',
+            'entry_type' => 'debit',
+            'amount' => 100,
+            'ref_no' => 'UPI '.$i,
+            'particular' => 'Paid for Qwcust'.$i.' Fillerq '.$base.' TR',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ], range(1, 400)));
+
+        $started = microtime(true);
+        $rows = collect($this->statement($this->vendor)->json('props.rows'));
+        $took = microtime(true) - $started;
+
+        $this->assertSame('Paid for … TR', $rows->last()['particular']);
+        $this->assertLessThan(1.5, $took, 'the statement took '.round($took, 2).'s');
+    }
+
     /**
      * Every customer is looked for, and there are far more of them than
      * vendors: the names go in batches, and one past the first batch is
