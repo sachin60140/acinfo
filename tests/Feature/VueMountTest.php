@@ -178,6 +178,7 @@ class VueMountTest extends TestCase
             'admin/work-types',
             'admin/reports/files',
             'admin/reports/collection',
+            'admin/reports/vendor-payments',
             'admin/view-clients',
         ];
     }

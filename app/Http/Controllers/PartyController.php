@@ -530,6 +530,21 @@ class PartyController extends Controller
         // the commoner of the two on each screen.
         $defaultEntryType = $type === 'customer' ? 'debit' : 'credit';
 
+        /*
+         * Opened for one party — Record payment on Vendor Payments — with them
+         * already picked, and with ?pay the payment side, so their bills and
+         * Fill oldest first are there on arrival. Only a party of this type;
+         * inactive too, since one still owed must still be payable. What a
+         * refused save or a Correct brings back wins over it, as always.
+         */
+        $prefill = $req->filled('party_id')
+            ? PartyModel::where('party_type', $type)->whereKey($req->integer('party_id'))->value('id')
+            : null;
+
+        if ($prefill && $req->boolean('pay')) {
+            $defaultEntryType = self::paymentSide($type);
+        }
+
         $props = [
             'action' => route('party.entry', $type),
             'csrf' => csrf_token(),
@@ -544,7 +559,7 @@ class PartyController extends Controller
             'paymentModes' => PartyLedgerModel::PAYMENT_MODES,
             // The party a refused save or a Correct brings back stays offered,
             // inactive or not — or the entry could not be typed again for them.
-            'parties' => PartyModel::selectList($type, old('party_id') ?: null)->map(fn ($p) => [
+            'parties' => PartyModel::selectList($type, old('party_id') ?: $prefill)->map(fn ($p) => [
                 'id' => $p->id,
                 'name' => $p->name,
                 'mobile' => $p->mobile,
@@ -561,7 +576,7 @@ class PartyController extends Controller
             // What Reset puts back, which is what the page loaded with —
             // including a rejected submission's own values.
             'initial' => [
-                'party_id' => (string) old('party_id'),
+                'party_id' => (string) old('party_id', $prefill),
                 'entry_type' => old('entry_type', $defaultEntryType),
                 'amount' => (string) old('amount'),
                 'payment_mode' => (string) old('payment_mode'),

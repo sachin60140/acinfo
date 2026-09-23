@@ -31,6 +31,7 @@ import ReceiveFileRows from './components/ReceiveFileRows.vue';
 import StatusBoard from './components/StatusBoard.vue';
 import CollectionList from './components/CollectionList.vue';
 import UncollectedReport from './components/UncollectedReport.vue';
+import VendorPayments from './components/VendorPayments.vue';
 import UserDashboard from './components/UserDashboard.vue';
 import VendorReturn from './components/VendorReturn.vue';
 import WorkReport from './components/WorkReport.vue';
@@ -96,6 +97,7 @@ export const components = {
     // Banded by customer, with a message for each band.
     'vue-uncollected-report': UncollectedReport,
     'vue-collection-list': CollectionList,
+    'vue-vendor-payments': VendorPayments,
     'vue-balance-reminder': BalanceReminder,
     // Work just approved, offered to each customer on WhatsApp.
     'vue-approval-share': ApprovalShare,

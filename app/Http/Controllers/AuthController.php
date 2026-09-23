@@ -100,8 +100,9 @@ class AuthController extends Controller
                 'value' => (float) $outstanding['payable'],
                 'type' => 'money',
                 'tone' => 'cr',
-                'note' => $outstanding['vendors'].' '.Str::plural('vendor', $outstanding['vendors']),
-                'href' => route('party.index', 'vendor'),
+                'note' => 'owed to '.$outstanding['owed'].' '.Str::plural('vendor', $outstanding['owed']),
+                // The vendors it is owed to and their bills, the oldest first.
+                'href' => route('report.payable'),
             ],
             [
                 'group' => 'Work',

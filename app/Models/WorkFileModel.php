@@ -4965,19 +4965,29 @@ class WorkFileModel extends Model
      */
     public function worksFor(?int $vendorId = null): string
     {
+        return $this->itemsFor($vendorId)->map(fn ($item) => $item->workType?->name)->filter()->implode(', ');
+    }
+
+    /**
+     * The works on this file that are not cancelled — for a vendor, only the
+     * ones they were given. A file from before works carried their own vendor
+     * is the folder's vendor's, all of it.
+     */
+    public function itemsFor(?int $vendorId = null)
+    {
         $live = $this->items->reject(fn ($item) => $item->status === self::CANCELLED);
 
-        if ($vendorId !== null) {
-            $theirs = $live->where('vendor_id', $vendorId);
-
-            if ($theirs->isEmpty() && $live->every(fn ($item) => ! $item->vendor_id) && (int) $this->vendor_id === $vendorId) {
-                $theirs = $live;
-            }
-
-            $live = $theirs;
+        if ($vendorId === null) {
+            return $live;
         }
 
-        return $live->map(fn ($item) => $item->workType?->name)->filter()->implode(', ');
+        $theirs = $live->where('vendor_id', $vendorId);
+
+        if ($theirs->isEmpty() && $live->every(fn ($item) => ! $item->vendor_id) && (int) $this->vendor_id === $vendorId) {
+            return $live;
+        }
+
+        return $theirs;
     }
 
     public function workLabel(): string
