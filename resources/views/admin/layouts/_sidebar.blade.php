@@ -36,18 +36,27 @@
    * silently reopens that section for everybody. They are not labels; leave them
    * alone even when the heading above them changes.
    */
+  /*
+   * The old Client Ledger, closed by the owner on 2026-09-23: nothing new goes
+   * into it, so Add, Receipt and Payment are gone from the menu — their pages
+   * say where to go instead, and belong to View Client. While any client still
+   * holds a balance in it, the screen that carries those balances to Customers.
+   */
+  $oldBookOpen = \App\Models\ClientLedgerModel::hasOpenBalances();
+
   $groups = [
       'client-ledger' => [
           'label' => 'Client Ledger',
-          'items' => [
-              ['label' => 'Add Client Ledger', 'icon' => 'bi-person-plus', 'href' => route('addclients'), 'active' => $req->routeIs('addclients')],
+          'items' => array_values(array_filter([
               // A client's statement and password screens belong to this item;
               // neither has a menu entry of its own, so without them the menu
-              // goes blank on those pages.
-              ['label' => 'View Client', 'icon' => 'bi-people', 'href' => route('viewclient'), 'active' => $req->routeIs('viewclient', 'clientstatement', 'clientpassword')],
-              ['label' => 'Receipt', 'icon' => 'bi-receipt', 'href' => route('receipt'), 'active' => $req->routeIs('receipt')],
-              ['label' => 'Payment', 'icon' => 'bi-cash-coin', 'href' => route('payment'), 'active' => $req->routeIs('payment')],
-          ],
+              // goes blank on those pages. So do the closed ones.
+              ['label' => 'View Client', 'icon' => 'bi-people', 'href' => route('viewclient'), 'active' => $req->routeIs('viewclient', 'clientstatement', 'clientpassword', 'addclients', 'receipt', 'payment')
+                  || (! $oldBookOpen && $req->routeIs('client.closebook'))],
+              $oldBookOpen
+                  ? ['label' => 'Close Old Book', 'icon' => 'bi-journal-check', 'href' => route('client.closebook'), 'active' => $req->routeIs('client.closebook')]
+                  : null,
+          ])),
       ],
       'vendor-customer' => [
           'label' => 'Vendor & Customer',

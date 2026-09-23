@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\WorkFileApiController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\CloseClientLedgerController;
 use App\Http\Controllers\CustomerPortalController;
 use App\Http\Controllers\DispatchSheetController;
 use App\Http\Controllers\ExpenseTypeController;
@@ -52,6 +53,10 @@ Route::group(['middleware' => 'admin'], function () {
     Route::match(['get', 'post'], 'admin/payment', [AuthController::class, 'payment'])->name('payment');
 
     Route::get('admin/client/statement/{id}', [AuthController::class, 'clientstatement'])->name('clientstatement');
+
+    // The old book, closed: what each client still holds, carried to Customers.
+    Route::get('admin/client/close-book', [CloseClientLedgerController::class, 'index'])->name('client.closebook');
+    Route::post('admin/client/close-book/{id}', [CloseClientLedgerController::class, 'carry'])->whereNumber('id')->name('client.carry');
 
 });
 

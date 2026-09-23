@@ -267,12 +267,12 @@ class ScreenPropsTest extends TestCase
             'paper-types' => 'admin/paper-types',
             'report-customer' => 'admin/reports/files?party_type=customer',
             'report-vendor' => 'admin/reports/files?party_type=vendor',
+            // The old book: Add, Receipt and Payment are closed and mount
+            // nothing now (see CloseClientLedgerController); its list,
+            // statements and logins stay.
             'client-list' => 'admin/view-clients',
-            'client-add' => 'admin/add-clients',
             'client-password' => $client ? 'admin/client/password/'.$client->id : null,
             'client-statement' => $client ? 'admin/client/statement/'.$client->id : null,
-            'payment' => 'admin/payment',
-            'receipt' => 'admin/receipt',
         ]);
     }
 

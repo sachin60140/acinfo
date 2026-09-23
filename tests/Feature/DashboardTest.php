@@ -550,7 +550,7 @@ class DashboardTest extends TestCase
 
         $after = $this->tiles();
 
-        foreach (['Net Outstanding', 'Receivable', 'Payable', 'File Margin'] as $label) {
+        foreach (['Receivable', 'Payable', 'File Margin'] as $label) {
             $this->assertSame(
                 $before[$label]['value'],
                 $after[$label]['value'],

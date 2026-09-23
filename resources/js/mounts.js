@@ -10,7 +10,6 @@ import { createApp } from 'vue';
 
 import ApprovalShare from './components/ApprovalShare.vue';
 import BalanceReminder from './components/BalanceReminder.vue';
-import ClientForm from './components/ClientForm.vue';
 import ClientPassword from './components/ClientPassword.vue';
 import CustomerReceipt from './components/CustomerReceipt.vue';
 import CustomerReturn from './components/CustomerReturn.vue';
@@ -27,9 +26,7 @@ import PartyAdjust from './components/PartyAdjust.vue';
 import PartyEntry from './components/PartyEntry.vue';
 import PartyForm from './components/PartyForm.vue';
 import PasswordToggle from './components/PasswordToggle.vue';
-import PaymentForm from './components/PaymentForm.vue';
 import PartyStatement from './components/PartyStatement.vue';
-import PaymentReceipt from './components/PaymentReceipt.vue';
 import ReceiveFileRows from './components/ReceiveFileRows.vue';
 import StatusBoard from './components/StatusBoard.vue';
 import UncollectedReport from './components/UncollectedReport.vue';
@@ -68,8 +65,7 @@ export const components = {
     'vue-work-types': WorkTypes,
     'vue-file-form': FileForm,
 
-    // Clients: the record, the login it can be given, and money received.
-    'vue-client-form': ClientForm,
+    // Clients (the old book, closed to new entries): the login a client can be given.
     'vue-client-password': ClientPassword,
 
     /*
@@ -78,8 +74,6 @@ export const components = {
      */
     'vue-admin-password': ClientPassword,
     'vue-customer-password': ClientPassword,
-    'vue-payment-form': PaymentForm,
-    'vue-payment-receipt': PaymentReceipt,
 
     /*
      * Every listing, statement and report is the same grid with a different
