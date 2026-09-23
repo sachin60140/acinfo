@@ -64,10 +64,12 @@ class SidebarTest extends TestCase
     {
         return [
             'dashboard' => ['admin/dashboard', 'Dashboard'],
-            'add client' => ['admin/add-clients', 'Add Client Ledger'],
+            // Closed with the old book: each says where to go instead, and
+            // belongs to View Client.
+            'add client' => ['admin/add-clients', 'View Client'],
             'view clients' => ['admin/view-clients', 'View Client'],
-            'receipt' => ['admin/receipt', 'Receipt'],
-            'payment' => ['admin/payment', 'Payment'],
+            'receipt' => ['admin/receipt', 'View Client'],
+            'payment' => ['admin/payment', 'View Client'],
             'customers' => ['admin/parties/customer', 'Customer Ledger'],
             'add customer' => ['admin/party/add/customer', 'Customer Ledger'],
             'customer entry' => ['admin/party/entry/customer', 'Customer Ledger'],
@@ -410,8 +412,10 @@ class SidebarTest extends TestCase
     {
         $body = $this->actingAs($this->admin())->get('/admin/dashboard')->assertOk()->getContent();
 
+        // The old Client Ledger's Add, Receipt and Payment are closed, and off
+        // the menu; see test_the_closed_client_ledger_screens_are_off_the_menu.
         foreach ([
-            'Dashboard', 'Add Client Ledger', 'View Client', 'Receipt', 'Payment',
+            'Dashboard', 'View Client',
             'Vendor Ledger', 'Customer Ledger',
             'Receive Files', 'Paper Audit', 'Give to Vendor', 'In-house Work', 'Return from Vendor', 'Return to Customer', 'Hand Over Papers',
             'Update Status', 'Approved Files', 'All Work Files', 'Work Types', 'Expense Types', 'Paper Types',
@@ -419,5 +423,45 @@ class SidebarTest extends TestCase
         ] as $item) {
             $this->assertStringContainsString('<span>'.$item.'</span>', $body, "$item is not on the menu");
         }
+    }
+
+    /**
+     * The old Client Ledger is closed: nothing new goes into it, so its Add,
+     * Receipt and Payment are off the menu. The screen that carries its
+     * balances to Customers is on it while there is any balance to carry, and
+     * not once there is none.
+     */
+    public function test_the_closed_client_ledger_screens_are_off_the_menu(): void
+    {
+        \Illuminate\Support\Facades\DB::table('client_ledger')->delete();
+
+        $body = $this->actingAs($this->admin())->get('/admin/dashboard')->assertOk()->getContent();
+
+        foreach (['Add Client Ledger', 'Receipt', 'Payment', 'Close Old Book'] as $item) {
+            $this->assertStringNotContainsString('<span>'.$item.'</span>', $body, "$item is still on the menu");
+        }
+
+        $client = new \App\Models\ClientModel;
+        $client->name = 'Menu Client '.uniqid();
+        $client->mobile = '92500'.random_int(10000, 99999);
+        $client->password = \Illuminate\Support\Facades\Hash::make('password-for-tests');
+        $client->address = 'Nowhere in particular';
+        $client->save();
+
+        \Illuminate\Support\Facades\DB::table('client_ledger')->insert([
+            'client_id' => $client->id,
+            'payment_by' => '1',
+            'amount' => -1500,
+            'particular' => 'Old dues',
+            'txn_date' => '2026-05-01',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $menu = $this->menu($this->get('/admin/client/close-book')->assertOk()->getContent());
+        $active = array_values(array_filter($menu, fn ($item) => $item['active']));
+
+        $this->assertCount(1, $active);
+        $this->assertSame('Close Old Book', $active[0]['label']);
     }
 }

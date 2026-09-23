@@ -57,12 +57,9 @@ class AuthController extends Controller
 
     public function dashboard(Request $req)
     {
-        $data['totaldues'] = DB::table('client_ledger')->sum('amount');
-        $data['clientcount'] = DB::table('client')->count();
-        $data['monthnet'] = DB::table('client_ledger')
-            ->whereYear('txn_date', now()->year)
-            ->whereMonth('txn_date', now()->month)
-            ->sum('amount');
+        // The old Client Ledger, closed: only how many clients it still holds
+        // a balance for, until those are carried to Customers.
+        $oldBook = count(ClientLedgerModel::openBalances());
 
         // Vendor & customer ledgers and work files. Read-only, and kept in their
         // own models so this method stays a list of figures rather than queries.
@@ -71,9 +68,6 @@ class AuthController extends Controller
 
         // Named locally so the tile descriptions below read as they did in the
         // view they came from.
-        $totaldues = $data['totaldues'];
-        $monthnet = $data['monthnet'];
-        $clientcount = $data['clientcount'];
         $outstanding = $data['outstanding'];
         $work = $data['work'];
 
@@ -88,34 +82,6 @@ class AuthController extends Controller
          * is a different and much calmer statement than the truth.
          */
         $tiles = [
-            /*
-             * Both are sums over client_ledger, which stores a receipt positive —
-             * so they are negated and written as balances, exactly as the client
-             * list and each client's own statement write the same figures. Left
-             * raw they printed "-446,722.91" here while the list one click away
-             * printed the same money as "446,722.91 Dr".
-             */
-            [
-                'group' => 'Client ledger',
-                'label' => 'Net Outstanding',
-                'value' => round(-(float) $totaldues, 2),
-                'type' => 'balance',
-                'note' => 'Across every client',
-            ],
-            [
-                'group' => 'Client ledger',
-                'label' => 'Net Movement',
-                'value' => round(-(float) $monthnet, 2),
-                'type' => 'balance',
-                'note' => now()->format('F Y'),
-            ],
-            [
-                'group' => 'Client ledger',
-                'label' => 'Clients',
-                'value' => (int) $clientcount,
-                'type' => 'count',
-                'note' => 'On the books',
-            ],
             [
                 'group' => 'Parties',
                 'label' => 'Receivable',
@@ -442,51 +408,41 @@ class AuthController extends Controller
             ];
         }
 
+        /*
+         * The old Client Ledger, closed by the owner on 2026-09-23. Its own
+         * figures — what it held, how it moved this month — would read the
+         * carrying-over as movement, so they are gone. What is left to carry
+         * is said instead, only while there is any, and last: it is a job to
+         * finish, not a figure to watch — and the first tile's shape is what
+         * the page is checked against, which must not hang on this.
+         */
+        if ($oldBook) {
+            $tiles[] = [
+                'group' => 'Client ledger',
+                'label' => 'Left in Old Book',
+                'value' => $oldBook,
+                'type' => 'count',
+                'note' => Str::plural('client', $oldBook).' to carry to Customers',
+                'href' => route('client.closebook'),
+            ];
+        }
+
         return Screen::make('admin.dashboard', 'vue-dashboard', [
             'tiles' => $tiles,
             'charts' => $charts,
         ])->toResponse($req);
     }
 
+    /*
+     * Adding a client to the old book, closed with it on 2026-09-23: a client
+     * now is a customer. Existing clients, their statements and their portal
+     * logins stay.
+     */
     public function client(Request $req)
     {
-        if ($req->isMethod('POST')) {
-            $req->validate([
-
-                'name' => 'required',
-                'mobile_number' => 'required|digits:10|unique:client,mobile',
-                'password' => 'required|min:8|max:255|confirmed',
-                'address' => 'required',
-            ]);
-
-            $ClientModel = new ClientModel;
-            $ClientModel->name = $req->name;
-            $ClientModel->mobile = $req->mobile_number;
-            $ClientModel->password = Hash::make($req->password);
-            $ClientModel->address = $req->address;
-
-            $ClientModel->save();
-            $lastid = $ClientModel->id;
-
-            return back()->with('success', 'Client created successfully. Client ID: '.$lastid);
-        }
-
-        $props = [
-            'action' => route('addclients'),
-            'csrf' => csrf_token(),
-            'indexUrl' => route('viewclient'),
-            'values' => [
-                'name' => old('name', ''),
-                'mobile_number' => old('mobile_number', ''),
-                'address' => old('address', ''),
-            ],
-            // The summary list stays as it is; this puts the same message
-            // against the field it came from. Cast so an empty bag still
-            // arrives as an object rather than as an array.
-            'errors' => (object) array_map(fn ($messages) => $messages[0], session('errors') ? session('errors')->messages() : []),
-        ];
-
-        return Screen::make('admin.client', 'vue-client-form', $props)->toResponse($req);
+        return $this->bookClosed($req, 'Add Client',
+            'Add them as a customer instead, on the Customer Ledger.',
+            ['Add Customer' => route('party.create', 'customer')]);
     }
 
     public function viewclient(Request $req)
@@ -679,139 +635,46 @@ class AuthController extends Controller
         ])->toResponse($req);
     }
 
+    /*
+     * The old Client Ledger's Receipt and Payment, closed by the owner on
+     * 2026-09-23: money is recorded on the Customer/Vendor Ledger's Entry
+     * screen only, and two books for the same money meant it could be in
+     * either. Each now says where to go instead, and a post — a page left
+     * open, or a bookmark — saves nothing. What the old book still holds is
+     * carried to Customers by CloseClientLedgerController.
+     */
     public function paymentreceipt(Request $req)
     {
-        // A receipt credits the client: amount is stored positive.
-        return $this->ledgerEntry($req, 1, 'admin.payment-reciept', 'Receipt', false);
+        return $this->bookClosed($req, 'Receipt',
+            "Record money received from a customer on the Customer Ledger's Entry screen, as a Credit.",
+            ['Customer Entry' => route('party.entry', 'customer')]);
     }
 
     public function payment(Request $req)
     {
-        // A payment debits the client: amount is stored negative.
-        return $this->ledgerEntry($req, -1, 'admin.payment', 'Payment', true);
+        return $this->bookClosed($req, 'Payment',
+            "Record money paid out on the Entry screen: to a customer as a Debit on the Customer Ledger, to a vendor as a Debit on the Vendor Ledger.",
+            ['Customer Entry' => route('party.entry', 'customer'), 'Vendor Entry' => route('party.entry', 'vendor')]);
     }
 
     /**
-     * Shared handler for the receipt and payment screens. They differ only in the
-     * sign applied to the amount, so keeping one implementation stops the two
-     * halves of the ledger drifting apart when validation or the form changes.
+     * What a closed screen of the old book says, and what a post to one does:
+     * nothing, but come back here and say so.
      *
-     * @param  int  $sign  1 to credit the client, -1 to debit
+     * @param  array<string, string>  $links  label => where to go instead
      */
-    private function ledgerEntry(Request $req, int $sign, string $view, string $label, bool $isPayment)
+    private function bookClosed(Request $req, string $what, string $instead, array $links)
     {
         if ($req->isMethod('POST')) {
-            $req->validate([
-                'client_name' => 'required|integer|exists:client,id',
-                'paymentMode' => 'required|integer|exists:payment_type,id',
-                'txn_date' => 'required|date_format:Y-m-d',
-                'amount' => 'required|numeric|gt:0|max:500000',
-                'remarks' => 'required|string|max:255',
-            ]);
-
-            $ClientLedgerModel = new ClientLedgerModel;
-            $ClientLedgerModel->client_id = $req->client_name;
-            $ClientLedgerModel->payment_by = $req->paymentMode;
-            $ClientLedgerModel->txn_date = $req->txn_date;
-            $ClientLedgerModel->amount = $sign * (float) $req->amount;
-            $ClientLedgerModel->particular = $req->remarks;
-
-            $ClientLedgerModel->save();
-
-            return back()->with('success', $label.' saved successfully. Transaction ID: '.$ClientLedgerModel->id);
+            return redirect()->to($req->url())->with('error', 'Nothing was saved: the old Client Ledger is closed. '.$instead);
         }
 
-        $data['clientlist'] = DB::table('client')
-            ->leftJoin('client_ledger', 'client_ledger.client_id', '=', 'client.id')
-            ->select('client.id', 'client.name', DB::raw('COALESCE(SUM(client_ledger.amount), 0) as current_balance'))
-            ->groupBy('client.id', 'client.name')
-            ->orderBy('client.name', 'asc')
-            ->get();
-
-        $payModes = DB::table('payment_type')
-            ->select('id', 'payment_mode')
-            ->orderBy('payment_mode', 'asc')
-            ->get();
-
-        /*
-         * The balance is the one summed above, sent as a plain number so the
-         * component can work out where the entry lands. client_ledger stores a
-         * receipt positive — the opposite of the party tables — and the component
-         * negates it before printing a side, the same way the client statement
-         * does.
-         */
-        $clients = $data['clientlist']->map(fn ($client) => [
-            'id' => $client->id,
-            'name' => $client->name,
-            'current_balance' => (float) $client->current_balance,
-        ])->values();
-
-        /*
-         * The date box stays the shared partial rather than being rebuilt in
-         * Vue: assets/js/datepicker.js owns that markup, and dd-mm-yyyy for
-         * everyone is the whole reason it exists.
-         */
-        $dateField = view('partials._datefield', [
-            'name' => 'txn_date',
-            'value' => old('txn_date', date('Y-m-d')),
-            'required' => true,
-        ])->render();
-
-        // What Reset puts back, which is what the page loaded with — including a
-        // rejected submission's own values.
-        $initial = [
-            'client_name' => (string) old('client_name'),
-            'paymentMode' => (string) old('paymentMode'),
-            'amount' => (string) old('amount'),
-            'remarks' => (string) old('remarks'),
-        ];
-
-        /*
-         * The two screens post to the same method but are drawn by different
-         * components, and their prop contracts differ — the payment form names a
-         * mode 'payment_mode' and takes per-field errors, the receipt names it
-         * 'name' and does not. Each is built as its own component expects rather
-         * than normalised into one shape, because changing a component's contract
-         * is a separate decision from moving where its props are built.
-         */
-        $props = $isPayment
-            ? [
-                'action' => route('payment'),
-                'csrf' => csrf_token(),
-                'clientsUrl' => route('viewclient'),
-                'clients' => $clients,
-                'paymentModes' => $payModes->map(fn ($mode) => [
-                    'id' => $mode->id,
-                    'payment_mode' => $mode->payment_mode,
-                ])->values(),
-                'dateField' => $dateField,
-                'initial' => $initial,
-                // The summary list stays as it is; this puts the same message
-                // against the field it came from. Cast so an empty bag still
-                // arrives as an object rather than as an array.
-                'errors' => (object) array_map(
-                    fn ($messages) => $messages[0],
-                    session('errors') ? session('errors')->messages() : []
-                ),
-            ]
-            : [
-                'action' => route('receipt'),
-                'csrf' => csrf_token(),
-                'clientsUrl' => route('viewclient'),
-                'clients' => $clients,
-                'paymentModes' => $payModes->map(fn ($mode) => [
-                    'id' => $mode->id,
-                    'name' => $mode->payment_mode,
-                ])->values(),
-                'dateField' => $dateField,
-                'initial' => $initial,
-            ];
-
-        return Screen::make(
-            $view,
-            $isPayment ? 'vue-payment-form' : 'vue-payment-receipt',
-            $props
-        )->toResponse($req);
+        return response()->view('admin.client-book-closed', [
+            'what' => $what,
+            'instead' => $instead,
+            'links' => $links,
+            'openCount' => count(ClientLedgerModel::openBalances()),
+        ]);
     }
 
     public function clientstatement(Request $req, $id)

@@ -1,17 +1,4 @@
 {
-    "client-add": {
-        "vue-client-form": {
-            "action": "string",
-            "csrf": "string",
-            "errors": "[]",
-            "indexUrl": "string",
-            "values": {
-                "address": "string",
-                "mobile_number": "string",
-                "name": "string"
-            }
-        }
-    },
     "client-list": {
         "vue-client-list": {
             "columns": [
@@ -118,8 +105,10 @@
             "tiles": {
                 "list_of": {
                     "group": "string",
+                    "href": "string",
                     "label": "string",
                     "note": "string",
+                    "tone": "string",
                     "type": "string",
                     "value": "number"
                 }
@@ -1407,61 +1396,6 @@
             "totals": {
                 "credit": "string",
                 "debit": "string"
-            }
-        }
-    },
-    "payment": {
-        "vue-payment-form": {
-            "action": "string",
-            "clients": {
-                "list_of": {
-                    "current_balance": "number",
-                    "id": "number",
-                    "name": "string"
-                }
-            },
-            "clientsUrl": "string",
-            "csrf": "string",
-            "dateField": "string",
-            "errors": "[]",
-            "initial": {
-                "amount": "string",
-                "client_name": "string",
-                "paymentMode": "string",
-                "remarks": "string"
-            },
-            "paymentModes": {
-                "list_of": {
-                    "id": "number",
-                    "payment_mode": "string"
-                }
-            }
-        }
-    },
-    "receipt": {
-        "vue-payment-receipt": {
-            "action": "string",
-            "clients": {
-                "list_of": {
-                    "current_balance": "number",
-                    "id": "number",
-                    "name": "string"
-                }
-            },
-            "clientsUrl": "string",
-            "csrf": "string",
-            "dateField": "string",
-            "initial": {
-                "amount": "string",
-                "client_name": "string",
-                "paymentMode": "string",
-                "remarks": "string"
-            },
-            "paymentModes": {
-                "list_of": {
-                    "id": "number",
-                    "name": "string"
-                }
             }
         }
     },

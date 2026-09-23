@@ -59,6 +59,38 @@ class ClientLedgerModel extends Model
     }
 
     /**
+     * What the old book still holds for or against each client, where it holds
+     * anything: client id => sum, as the book keeps it — positive is money held
+     * for the client, negative money they owe.
+     *
+     * The old book was closed by the owner on 2026-09-23; this is what is left
+     * to carry to Customers (see CloseClientLedgerController).
+     *
+     * @return array<int, float>
+     */
+    public static function openBalances(): array
+    {
+        return DB::table('client_ledger')
+            ->groupBy('client_id')
+            ->havingRaw('ABS(SUM(amount)) >= 0.005')
+            ->selectRaw('client_id, SUM(amount) as balance')
+            ->pluck('balance', 'client_id')
+            ->map(fn ($balance) => round((float) $balance, 2))
+            ->all();
+    }
+
+    /** Whether anything at all is left in the old book to carry over. */
+    public static function hasOpenBalances(): bool
+    {
+        return DB::table('client_ledger')
+            ->groupBy('client_id')
+            ->havingRaw('ABS(SUM(amount)) >= 0.005')
+            ->select('client_id')
+            ->limit(1)
+            ->exists();
+    }
+
+    /**
      * Everything a statement page needs: the rows, the balance brought forward,
      * period totals and the closing balance.
      */
