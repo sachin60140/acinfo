@@ -593,7 +593,7 @@ class SetOffTest extends TestCase
         // And the screen it lands on offers it again, ticked.
         $props = $this->actingAs($this->admin)->getJson(route('party.entry', 'vendor'))->json('props');
         $this->assertSame('setoff', $props['initial']['entry_kind']);
-        $this->assertSame(['id' => (int) $this->customer->id], array_intersect_key($props['counterparts'][$this->vendor->id], ['id' => 1]));
+        $this->assertSame((int) $this->customer->id, collect($props['counterparts'])->firstWhere('own_id', $this->vendor->id)['id']);
         $this->assertSame([$mine->id => '2000'], $props['initialCounterAlloc']);
     }
 
@@ -742,18 +742,66 @@ class SetOffTest extends TestCase
         $this->owed(3000);
 
         $props = $this->actingAs($this->admin)->getJson(route('party.entry', 'customer'))->json('props');
+        $linked = collect($props['counterparts'])->keyBy('own_id');
 
         $this->assertTrue($props['settable']);
+        $this->assertTrue(array_is_list($props['counterparts']), 'keyed by party, the recorded shape names one party');
         $this->assertSame([
+            'own_id' => (int) $this->customer->id,
             'id' => (int) $this->vendor->id,
             'name' => $this->vendor->name,
             'balance' => -3000,
             'active' => true,
-        ], $props['counterparts'][$this->customer->id]);
-        $this->assertArrayNotHasKey($this->other->id, $props['counterparts']);
+        ], $linked[$this->customer->id]);
+        $this->assertFalse($linked->has($this->other->id));
 
-        $props = $this->actingAs($this->admin)->getJson(route('party.entry', 'vendor'))->json('props');
-        $this->assertSame((int) $this->customer->id, $props['counterparts'][$this->vendor->id]['id']);
+        $linked = collect($this->actingAs($this->admin)->getJson(route('party.entry', 'vendor'))->json('props.counterparts'))->keyBy('own_id');
+        $this->assertSame((int) $this->customer->id, $linked[$this->vendor->id]['id']);
+    }
+
+    /**
+     * Locked before anything is read, in the transaction that reverses. Found
+     * in review: a plain read first fixed what every read after it saw, before
+     * the locks were waited for — a reversal a colleague had just committed
+     * went unseen, and the second was a 500 rather than "already reversed".
+     * The race needs two connections; what is pinned here is the order.
+     */
+    public function test_a_reversal_locks_before_it_reads(): void
+    {
+        $this->owing(5000);
+        $this->owed(3000);
+        $this->setOff(1000);
+
+        [$customerHalf] = $this->halves();
+
+        $ordinary = new PartyLedgerModel;
+        $ordinary->party_id = $this->customer->id;
+        $ordinary->txn_date = '2026-09-21';
+        $ordinary->entry_type = 'credit';
+        $ordinary->amount = 100;
+        $ordinary->payment_mode = 'UPI';
+        $ordinary->particular = 'Payment';
+        $ordinary->save();
+
+        foreach ([$customerHalf, $ordinary] as $entry) {
+            $inside = false;
+            $first = null;
+
+            DB::listen(function ($query) use (&$inside, &$first) {
+                if ($inside && $first === null) {
+                    $first = $query->sql;
+                }
+            });
+
+            \Illuminate\Support\Facades\Event::listen(\Illuminate\Database\Events\TransactionBeginning::class, function () use (&$inside) {
+                $inside = true;
+            });
+
+            $this->reverse($entry)->assertSessionHasNoErrors();
+
+            $this->assertNotNull($first, 'nothing was read in the transaction');
+            $this->assertStringContainsString('for update', strtolower($first), 'entry #'.$entry->id.': the first read in the transaction is not a lock');
+        }
     }
 
     /** Rolling the migration back is refused while a set-off stands on it. */
@@ -762,6 +810,14 @@ class SetOffTest extends TestCase
         $this->owing(5000);
         $this->owed(3000);
         $this->setOff(1000);
+
+        /*
+         * Its schema changes are not rolled back with the test, so it is run
+         * only once the set-off it must refuse over is known to be there.
+         * Found in review: had the set-off been refused, down() would have
+         * dropped the columns from the database the tests share.
+         */
+        $this->assertTrue(DB::table('party_ledger')->whereNotNull('setoff_with_id')->exists(), 'the premise: a set-off stands');
 
         $migration = require database_path('migrations/2026_09_23_000200_let_a_customer_be_set_off_against_their_vendor_account.php');
 

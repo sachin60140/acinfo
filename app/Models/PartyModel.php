@@ -209,10 +209,14 @@ class PartyModel extends Model
 
     /**
      * Every party of one type that is linked to an account of the other, with
-     * that account as the Entry screen needs it: own id => its id, name,
-     * balance and whether it is active. For the office's screen only.
+     * that account as the Entry screen needs it: whose it is (own_id), its id,
+     * name, balance and whether it is active. For the office's screen only.
      *
-     * @return array<int, array{id: int, name: string, balance: float, active: bool}>
+     * A list rather than keyed by party. Found in review: keyed by id, the
+     * screen's recorded shape named one party's id, and the check on it failed
+     * for good the day the office linked anybody.
+     *
+     * @return list<array{own_id: int, id: int, name: string, balance: float, active: bool}>
      */
     public static function counterparts(string $type): array
     {
@@ -237,7 +241,8 @@ class PartyModel extends Model
 
         foreach ($pairs as $own => $other) {
             if ($one = $others[$other] ?? null) {
-                $out[(int) $own] = [
+                $out[] = [
+                    'own_id' => (int) $own,
                     'id' => (int) $other,
                     'name' => (string) $one->name,
                     'balance' => round((float) ($balances[$other] ?? 0), 2),

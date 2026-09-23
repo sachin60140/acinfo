@@ -18,7 +18,7 @@ const DEALER = { id: 7, name: 'Arman Qadri', mobile: '9835230001', current_balan
 const OTHER = { id: 8, name: 'Nobody Linked', mobile: '9835230002', current_balance: 900 };
 
 // The dealer's vendor account: the office owes it 3,000 (Cr).
-const LINKED = { 7: { id: 9, name: 'Arman Works', balance: -3000, active: true } };
+const LINKED = [{ own_id: 7, id: 9, name: 'Arman Works', balance: -3000, active: true }];
 
 const BILLS = {
     7: [{ id: 50, fileNo: 'F-00050', vehicle: 'BR01JB8140', works: 'TR', received: '01-08-2026', charged: 5000, returned: 0, adjusted: 0, open: 5000, due: 5000, ahead: 0, editUrl: '#' }],
@@ -137,7 +137,7 @@ describe('where it is offered', () => {
     });
 
     it('not while the linked account is inactive', async () => {
-        const host = mount({ counterparts: { 7: { ...LINKED[7], active: false } } });
+        const host = mount({ counterparts: [{ ...LINKED[0], active: false }] });
 
         await pick(host);
 
@@ -274,6 +274,43 @@ describe('what it will not send', () => {
     });
 });
 
+describe('a set-off that can no longer be had', () => {
+    /*
+     * Found in review: refused because the link had gone, the page came back
+     * with the kind hidden under a tick that was no longer drawn — and the
+     * next linked customer picked on it showed up already set off.
+     */
+    const refused = {
+        parties: [{ ...OTHER }, { id: 10, name: 'Chandan Dealer', mobile: '9835230003', current_balance: 800 }],
+        counterparts: [{ own_id: 10, id: 11, name: 'Chandan Works', balance: -600, active: true }],
+        initial: { party_id: '8', entry_type: 'credit', amount: '500', payment_mode: '', ref_no: '', particular: '', entry_kind: 'setoff', reason: '' },
+    };
+
+    it('is not carried to the next linked customer', async () => {
+        const host = mount(refused);
+        await settle();
+
+        expect(posted(host).some(([name]) => name === 'entry_kind')).toBe(false);
+        expect(host.querySelector('textarea[name="particular"]')).not.toBe(null);
+
+        await pick(host, '10');
+
+        expect(setOffTick(host).checked).toBe(false);
+        expect(posted(host).some(([name]) => name === 'entry_kind')).toBe(false);
+    });
+
+    it('nor brought back by Reset', async () => {
+        const host = mount(refused);
+        await settle();
+
+        host.querySelector('form').dispatchEvent(new window.Event('reset'));
+        await settle();
+        await pick(host, '10');
+
+        expect(setOffTick(host).checked).toBe(false);
+    });
+});
+
 describe('from the vendor account', () => {
     it('the same limit, read the other way round', async () => {
         const host = mount({
@@ -282,7 +319,7 @@ describe('from the vendor account', () => {
             paymentSide: 'debit',
             writeOffCap: 0,
             parties: [{ id: 9, name: 'Arman Works', mobile: '9835230001', current_balance: -3000 }],
-            counterparts: { 9: { id: 7, name: 'Arman Qadri', balance: 1200, active: true } },
+            counterparts: [{ own_id: 9, id: 7, name: 'Arman Qadri', balance: 1200, active: true }],
             initial: { party_id: '', entry_type: 'credit', amount: '', payment_mode: '', ref_no: '', particular: '', entry_kind: '', reason: '' },
         });
 

@@ -77,6 +77,28 @@ class ScreenPropsTest extends TestCase
         $type = $this->anyWorkType();
 
         /*
+         * A customer who is also a vendor, linked, so the Entry screen draws a
+         * set-off's other account rather than an empty list — which would
+         * record no shape, and pass whatever the rows turned into.
+         */
+        if (\App\Models\PartyLedgerModel::canSetOff()) {
+            $works = new \App\Models\PartyModel;
+            $works->party_type = 'vendor';
+            $works->name = 'Props Linked Works';
+            $works->mobile = '92200'.random_int(10000, 99999);
+            $works->is_active = 1;
+            $works->save();
+
+            $dealer = new \App\Models\PartyModel;
+            $dealer->party_type = 'customer';
+            $dealer->name = 'Props Linked Dealer';
+            $dealer->mobile = '92300'.random_int(10000, 99999);
+            $dealer->is_active = 1;
+            $dealer->linked_vendor_id = $works->id;
+            $dealer->save();
+        }
+
+        /*
          * A client too. The client ledger's own screens are in the list below,
          * and a screen with no rows hands its component an empty array rather
          * than a row's worth of shape — which reads as the shape having changed.

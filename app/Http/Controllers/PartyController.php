@@ -610,7 +610,7 @@ class PartyController extends Controller
              * its balance. The office's own screen, so it is named here.
              */
             'settable' => PartyLedgerModel::canSetOff(),
-            'counterparts' => (object) PartyModel::counterparts($type),
+            'counterparts' => PartyModel::counterparts($type),
             'initialCounterAlloc' => self::oldAlloc('counter_alloc'),
         ];
 
@@ -1562,20 +1562,28 @@ class PartyController extends Controller
             'reason.required' => 'Say why this entry is being taken back — it is kept for the office.',
         ]);
 
-        [$entry, $lines, $partner, $partnerLines] = DB::transaction(function () use ($req, $id) {
-            /*
-             * A set-off is two halves on two accounts, and goes back as two or
-             * not at all: one alone would leave the customer owing again while
-             * the office still owed the vendor nothing, or the other way round.
-             * Its partner is fixed when it is made, so it is read first and
-             * both are locked — halves, then accounts, each the lower id first,
-             * the order adjust() and a set-off take theirs in.
-             */
-            $first = PartyLedgerModel::findOrFail($id);
-            $partnerId = PartyLedgerModel::canSetOff() && $first->entry_kind === PartyLedgerModel::SETOFF
-                ? (int) $first->setoff_with_id
-                : 0;
+        /*
+         * A set-off is two halves on two accounts, and goes back as two or not
+         * at all: one alone would leave the customer owing again while the
+         * office still owed the vendor nothing, or the other way round. Its
+         * partner is fixed when it is made, so it is read here, before the
+         * transaction — and inside it both are locked, halves then accounts,
+         * each the lower id first, the order adjust() and a set-off take
+         * theirs in.
+         *
+         * Not read inside it. Found in review: a plain read first in the
+         * transaction fixes what every later read sees at that moment, before
+         * the locks were waited for — so a reversal a colleague had just
+         * committed went unseen, and the second one was a 500 on the unique
+         * index rather than "already reversed"; Correct refilled the files as
+         * they were before a colleague's change, and saving undid it.
+         */
+        $first = PartyLedgerModel::findOrFail($id);
+        $partnerId = PartyLedgerModel::canSetOff() && $first->entry_kind === PartyLedgerModel::SETOFF
+            ? (int) $first->setoff_with_id
+            : 0;
 
+        [$entry, $lines, $partner, $partnerLines] = DB::transaction(function () use ($req, $first, $partnerId) {
             $ids = array_values(array_filter([(int) $first->id, $partnerId]));
             sort($ids);
             $locked = [];

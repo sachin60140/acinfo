@@ -1195,7 +1195,15 @@
             "action": "string",
             "adjustable": "bool",
             "billsUrl": "string",
-            "counterparts": "[]",
+            "counterparts": {
+                "list_of": {
+                    "active": "bool",
+                    "balance": "number",
+                    "id": "number",
+                    "name": "string",
+                    "own_id": "number"
+                }
+            },
             "csrf": "string",
             "dateField": "string",
             "indexUrl": "string",

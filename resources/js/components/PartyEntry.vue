@@ -53,11 +53,11 @@ const props = defineProps({
      * Setting a customer off against the vendor account that is the same
      * person: what they owe on one cleared against what they are owed on the
      * other, with no money moving. Offered only where the office has linked
-     * the two (counterparts: party id => { id, name, balance, active }), and
+     * the two (counterparts: [{ own_id, id, name, balance, active }]), and
      * only once the database has what it needs (settable).
      */
     settable: { type: Boolean, default: false },
-    counterparts: { type: Object, default: () => ({}) },
+    counterparts: { type: Array, default: () => [] },
     // A refused save's amounts on the other account's files, to be put back.
     initialCounterAlloc: { type: Object, default: () => ({}) },
 });
@@ -157,7 +157,7 @@ const writeOffProblem = computed(() => {
 const onCustomers = computed(() => props.paymentSide === 'credit');
 
 const counterpart = computed(() =>
-    (selected.value ? props.counterparts[String(selected.value.id)] ?? null : null)
+    (selected.value ? props.counterparts.find((one) => String(one.own_id) === String(selected.value.id)) ?? null : null)
 );
 
 const canSetOff = computed(() =>
@@ -266,22 +266,26 @@ watch(() => [counterpart.value?.id ?? null, isSetOff.value], (now, before) => {
 }, { immediate: true });
 
 /*
- * A charge is not written off or set off, so each tick goes with the side.
- * Each has its own watch: with no write-off limit set, canWriteOff never
- * changes, and a set-off ticked on a payment would come back still ticked
- * after a switch to a charge and back.
+ * A kind that cannot be had here is not kept out of sight: a charge is not
+ * written off or set off, and a set-off needs a linked account. Watched as
+ * "ticked but not offered" rather than as the offer changing, and from the
+ * first draw. With no write-off limit set, canWriteOff never changes, so a
+ * set-off ticked on a payment came back ticked after a switch to a charge
+ * and back. And found in review: a refused set-off whose link had gone came
+ * back with the kind hidden, and the next linked customer picked on that
+ * page showed up already ticked — as did the page after Reset.
  */
-watch(canWriteOff, (can) => {
-    if (! can && entry.entry_kind === 'writeoff') {
+watch(() => entry.entry_kind === 'writeoff' && ! canWriteOff.value, (stale) => {
+    if (stale) {
         entry.entry_kind = '';
     }
-});
+}, { immediate: true });
 
-watch(canSetOff, (can) => {
-    if (! can && entry.entry_kind === 'setoff') {
+watch(() => entry.entry_kind === 'setoff' && ! canSetOff.value, (stale) => {
+    if (stale) {
         entry.entry_kind = '';
     }
-});
+}, { immediate: true });
 
 const adjustProblem = computed(() =>
     writeOffProblem.value || setOffProblem.value || adjust.problem.value || counterAdjust.problem.value
