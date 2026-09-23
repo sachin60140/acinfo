@@ -250,4 +250,36 @@ class VendorNamesInTypedTextTest extends TestCase
 
         $this->assertStringNotContainsString('Shailendra', $page);
     }
+
+    /**
+     * And the office's copy of it, which is the one printed and exported for
+     * the client. Found in the vendor-side sweep printing the vendor's name
+     * and number exactly as typed.
+     */
+    public function test_the_office_client_statement_names_no_vendor(): void
+    {
+        $client = new \App\Models\ClientModel;
+        $client->name = 'Props Client '.uniqid();
+        $client->mobile = '92400'.random_int(10000, 99999);
+        $client->address = 'Nowhere in particular';
+        $client->save();
+
+        $id = DB::table('client_ledger')->insertGetId([
+            'client_id' => $client->id,
+            'txn_date' => now()->toDateString(),
+            'amount' => -500,
+            'particular' => 'Paid via Shailendra Pandey Motihari, 94310 12345',
+            'payment_by' => (string) (DB::table('payment_type')->value('id') ?? 'Cash'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $json = $this->actingAs($this->admin)->getJson(route('clientstatement', $client->id))->assertOk();
+
+        $this->assertSame('Paid via …, …', collect($json->json('props.rows'))->keyBy('id')[$id]['particular']);
+
+        $page = $this->actingAs($this->admin)->get(route('clientstatement', $client->id))->assertOk()->getContent();
+        $this->assertStringNotContainsString('Shailendra', $page);
+        $this->assertStringNotContainsString('94310', $page);
+    }
 }

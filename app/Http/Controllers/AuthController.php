@@ -845,6 +845,15 @@ class AuthController extends Controller
         $bal = (float) $data['opening'];
         $rows = [];
 
+        /*
+         * What was typed, read for vendors as the client's own portal reads it
+         * (UserController::userstatement). This page is the one printed and
+         * exported for the client, and a vendor's name never reaches a
+         * customer. Found in the vendor-side sweep: the office's copy printed
+         * "given to Shailendra" exactly as it was typed.
+         */
+        $marks = WorkFileModel::vendorMarks();
+
         foreach ($data['getRecords'] as $item) {
             $amount = (float) $item->amount;
             $bal += $amount;
@@ -852,7 +861,7 @@ class AuthController extends Controller
             $rows[] = [
                 'id' => (int) $item->id,
                 'txn_date' => date('d-m-Y', strtotime($item->txn_date)),
-                'particular' => $item->particular,
+                'particular' => WorkFileModel::redactVendors($item->particular, $marks),
                 'payment_type' => $item->payment_type,
                 // Null rather than zero on the side an entry does not fall on, so
                 // the export leaves the cell empty the way the old one did.
