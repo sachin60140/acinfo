@@ -1331,9 +1331,16 @@ class ReportController extends Controller
             foreach ($bills[$vendorId] ?? [] as $bill) {
                 $file = $bill['file_id'] !== null ? ($files[$bill['file_id']] ?? null) : null;
                 $theirs = $file ? $file->itemsFor($vendorId) : collect();
-                // Finished when every work they were given on it is.
+                /*
+                 * Finished, for them, when every work they were given on it
+                 * is — approved or handed back to the customer, or given back
+                 * by them, when what they keep of the rate is final. Found in
+                 * review: a work given back read as In Office, as if never
+                 * started, and its closed amount was not counted here.
+                 */
+                $approved = fn ($item) => in_array($item->status, $finishedStates, true);
                 $finished = $file !== null && $theirs->isNotEmpty()
-                    && $theirs->every(fn ($item) => in_array($item->status, $finishedStates, true));
+                    && $theirs->every(fn ($item) => $approved($item) || $item->vendor_returned_on !== null);
                 $days = (int) Carbon::parse($bill['since'])->startOfDay()->diffInDays($today);
 
                 $rows->push($band + [
@@ -1355,8 +1362,12 @@ class ReportController extends Controller
                         default => $days.' days',
                     },
                     'days' => max(0, $days),
-                    'state' => $file === null ? '' : ($finished ? 'Finished' : $theirs
-                        ->map(fn ($item) => WorkFileModel::STATUSES[$item->status] ?? $item->status)
+                    'state' => $file === null ? '' : ($theirs->every($approved) ? 'Finished' : $theirs
+                        ->map(fn ($item) => match (true) {
+                            $approved($item) => WorkFileModel::STATUSES[$item->status],
+                            $item->vendor_returned_on !== null => 'Given back',
+                            default => WorkFileModel::STATUSES[$item->status] ?? $item->status,
+                        })
                         ->unique()->implode(', ')),
                     'finished' => $finished ? $bill['due'] : 0.0,
                     'due' => $bill['due'],
@@ -1366,7 +1377,12 @@ class ReportController extends Controller
 
         $props = [
             'title' => 'Vendor Payments',
-            'perPage' => 100,
+            /*
+             * One page, for the reason the expense and party reports give: a
+             * vendor split across two would be banded twice, each band's
+             * total half their bills under a heading saying all they are owed.
+             */
+            'perPage' => max($rows->count(), 1),
             'emptyText' => 'The office owes no vendor anything. Every vendor bill is paid.',
             'totals' => ['due' => 'sum', 'finished' => 'sum'],
             'groupBy' => 'vendor_id',

@@ -146,13 +146,14 @@ class VendorPaymentsTest extends TestCase
 
     public function test_the_oldest_bill_comes_first_and_the_longest_waiting_vendor_on_top(): void
     {
+        // Owed more, for less long — and made first, so neither the order they
+        // were made in nor their names put the other on top.
+        $recent = $this->party('vendor');
+        $this->file([[$recent, 5000]], 5);
+
         $patient = $this->party('vendor');
         $new = $this->file([[$patient, 300]], 10);
         $old = $this->file([[$patient, 200]], 60);
-
-        // Owed more, for less long.
-        $recent = $this->party('vendor');
-        $this->file([[$recent, 5000]], 5);
 
         $rows = $this->rows();
         $bands = $rows->pluck('vendor_id')->unique()->values();
@@ -231,13 +232,75 @@ class VendorPaymentsTest extends TestCase
 
     public function test_a_vendor_paid_ahead_is_not_listed_but_is_counted(): void
     {
+        $before = $this->page()->json('page.inAdvance');
+
         $ahead = $this->party('vendor');
         $this->entry($ahead, 'debit', 900, 3);
+
+        // Settled: neither owed nor ahead.
+        $settled = $this->party('vendor');
+        $this->file([[$settled, 400]], 6);
+        $this->entry($settled, 'debit', 400, 1);
 
         $page = $this->page();
 
         $this->assertNull(collect($page->json('props.rows'))->firstWhere('vendor_id', $ahead->id));
-        $this->assertGreaterThanOrEqual(1, $page->json('page.inAdvance'));
+        $this->assertNull(collect($page->json('props.rows'))->firstWhere('vendor_id', $settled->id));
+        $this->assertSame($before + 1, $page->json('page.inAdvance'), 'the one paid ahead, not the one settled');
+    }
+
+    public function test_of_the_same_day_the_vendor_owed_more_comes_first(): void
+    {
+        $less = $this->party('vendor');
+        $this->file([[$less, 200]], 40);
+
+        $more = $this->party('vendor');
+        $this->file([[$more, 900]], 40);
+
+        $bands = $this->rows()->pluck('vendor_id')->unique()->values();
+
+        $this->assertLessThan($bands->search($less->id), $bands->search($more->id));
+    }
+
+    /**
+     * Given back with part of the rate kept: what they keep is final, so it is
+     * finished work — not In Office, as if they never started.
+     */
+    public function test_work_given_back_with_part_kept_is_finished_for_them(): void
+    {
+        $vendor = $this->party('vendor');
+        $file = $this->file([[$vendor, 600, WorkFileModel::APPROVED], [$vendor, 400, WorkFileModel::DISPATCHED, $this->hp]], 12);
+
+        $this->actingAs($this->admin)->post(route('workfile.vendorreturn'), [
+            'files' => [$file->id],
+            'amounts' => [$file->id => 400],
+            'returned_on' => now()->toDateString(),
+            'remark' => 'HP could not be done',
+        ])->assertSessionHasNoErrors();
+
+        $row = $this->rows($vendor)->first();
+
+        $this->assertSame(600.0, (float) $row['due']);
+        $this->assertSame(600.0, (float) $row['finished']);
+        $this->assertSame('Approval Done, Given back', $row['state']);
+    }
+
+    /**
+     * On one page: a vendor split across two would be banded twice, each
+     * band's total half their bills under a heading saying all they owe.
+     */
+    public function test_every_bill_is_on_one_page(): void
+    {
+        $vendor = $this->party('vendor');
+
+        foreach ([3, 4, 5] as $daysAgo) {
+            $this->file([[$vendor, 100]], $daysAgo);
+        }
+
+        $page = $this->page();
+
+        $this->assertGreaterThanOrEqual(3, count($page->json('props.rows')));
+        $this->assertGreaterThanOrEqual(count($page->json('props.rows')), $page->json('props.perPage'));
     }
 
     public function test_the_screen_is_the_payable_figure_and_the_tile_opens_it(): void
@@ -245,15 +308,17 @@ class VendorPaymentsTest extends TestCase
         $vendor = $this->party('vendor');
         $this->file([[$vendor, 1200]], 8);
 
+        // One owed nothing, so every vendor and the vendors owed differ on
+        // any database.
+        $this->party('vendor');
+
         $page = $this->page();
         $rows = collect($page->json('props.rows'));
-
-        $this->assertEqualsWithDelta($rows->sum('due'), $page->json('page.totals.owed'), 0.01);
 
         $tile = collect($this->actingAs($this->admin)->getJson('admin/dashboard')->json('props.tiles'))
             ->firstWhere('label', 'Payable');
 
-        $this->assertEqualsWithDelta($page->json('page.totals.owed'), $tile['value'], 0.01, 'the bills add up to what is owed');
+        $this->assertEqualsWithDelta($rows->sum('due'), $tile['value'], 0.01, 'the bills add up to what is owed');
         $this->assertSame(route('report.payable'), $tile['href']);
 
         $vendors = $page->json('page.totals.vendors');

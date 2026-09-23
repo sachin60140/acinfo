@@ -129,9 +129,21 @@ class ScreenPropsTest extends TestCase
         $owedItem->customer_amount = 500;
         $owedItem->status = \App\Models\WorkFileModel::APPROVED;
         $owedItem->approved_on = '2000-01-10';
-        // And given to a vendor that day, for Vendor Payments' first row,
-        // by the same reasoning: the oldest bill, on a file.
-        $owedItem->vendor_id = $vendor->id;
+        /*
+         * And given to a vendor that day, for Vendor Payments' first row, by
+         * the same reasoning: the oldest bill, on a file. A vendor of its
+         * own, with nothing else on their ledger — found in review: given to
+         * a real one, their own payments settled it as their oldest bill and
+         * the row recorded was whatever the database happened to hold.
+         */
+        $owedWorks = new \App\Models\PartyModel;
+        $owedWorks->party_type = 'vendor';
+        $owedWorks->name = 'Props Owed Works';
+        $owedWorks->mobile = '92500'.random_int(10000, 99999);
+        $owedWorks->is_active = 1;
+        $owedWorks->save();
+
+        $owedItem->vendor_id = $owedWorks->id;
         $owedItem->vendor_amount = 300;
         $owedItem->vendor_date = '2000-01-01';
         $owedItem->save();
