@@ -261,6 +261,8 @@ class VendorNamesInTypedTextTest extends TestCase
         $client = new \App\Models\ClientModel;
         $client->name = 'Props Client '.uniqid();
         $client->mobile = '92400'.random_int(10000, 99999);
+        // Required on some databases, where the column has no default.
+        $client->password = \Illuminate\Support\Facades\Hash::make('password-for-tests');
         $client->address = 'Nowhere in particular';
         $client->save();
 
