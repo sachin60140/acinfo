@@ -46,6 +46,18 @@
                     </div>
 
                     <div class="col-sm-auto">
+                        <label for="vehicle" class="form-label">Vehicle</label>
+                        <input
+                            type="text"
+                            class="form-control"
+                            id="vehicle"
+                            name="vehicle"
+                            value="{{ $vehicle }}"
+                            maxlength="20"
+                            placeholder="BR05AS6323">
+                    </div>
+
+                    <div class="col-sm-auto">
                         <label for="from_display" class="form-label">From</label>
                         @include('partials._datefield', ['name' => 'from', 'value' => $from, 'max' => $maxDate])
                     </div>
@@ -63,11 +75,22 @@
 
         <div class="card">
             <div class="card-body pt-4">
-                <h5 class="card-title p-0 m-0">Expenses</h5>
-                <div class="statement-period">
-                    {{ $periodText }} &middot; {{ $count }} {{ Str::plural('expense', $count) }}
-                    on {{ $fileCount }} {{ Str::plural('file', $fileCount) }}
-                </div>
+                @if ($vehicle !== '')
+                    {{-- Asked about one vehicle: what its work cost altogether,
+                         the vendor's charge with every expense on the file. --}}
+                    <h5 class="card-title p-0 m-0">Costs on {{ $vehicle }}</h5>
+                    <div class="statement-period">
+                        {{ $periodText }} &middot; {{ $count }} {{ Str::plural('line', $count) }}
+                        on {{ $fileCount }} {{ Str::plural('file', $fileCount) }}
+                        &middot; the vendor's charge and every expense, file by file
+                    </div>
+                @else
+                    <h5 class="card-title p-0 m-0">Expenses</h5>
+                    <div class="statement-period">
+                        {{ $periodText }} &middot; {{ $count }} {{ Str::plural('expense', $count) }}
+                        on {{ $fileCount }} {{ Str::plural('file', $fileCount) }}
+                    </div>
+                @endif
 
                 {{--
                     What each kind came to. The question behind this report is
@@ -76,7 +99,7 @@
                 --}}
                 <div class="statement-summary my-3">
                     <div class="stat closing">
-                        <span class="label">Paid Out</span>
+                        <span class="label">{{ $vehicle !== '' ? 'Total Cost' : 'Paid Out' }}</span>
                         <span class="value cr">{{ number_format((float) $total, 2, '.', ',') }}</span>
                     </div>
                     @foreach ($byType->take(4) as $name => $one)

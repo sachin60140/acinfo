@@ -9,6 +9,7 @@ use App\Models\WorkFileExpenseModel;
 use App\Models\WorkFileModel;
 use App\Support\Screen;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 /**
@@ -149,6 +150,7 @@ class ReportController extends Controller
         $req->validate([
             'expense_type_id' => 'nullable|integer|exists:expense_type,id',
             'party_id' => 'nullable|integer|exists:party,id',
+            'vehicle' => 'nullable|string|max:20',
             'from' => 'nullable|date_format:Y-m-d',
             'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
         ]);
@@ -157,6 +159,16 @@ class ReportController extends Controller
         $partyId = $req->query('party_id');
         $from = $req->query('from');
         $to = $req->query('to');
+
+        /*
+         * One vehicle, and everything its work cost.
+         *
+         * Asked for by registration number because that is what anybody asking
+         * has in front of them — a file number is in the office, a number plate
+         * is on the vehicle. Stored without spaces or dashes, so it is matched
+         * that way and "br 05 as 6323" finds BR05AS6323.
+         */
+        $vehicle = WorkFileModel::normaliseRegistration($req->query('vehicle'));
 
         $query = WorkFileExpenseModel::query()
             ->join('work_file', 'work_file.id', '=', 'work_file_expense.work_file_id')
@@ -184,6 +196,10 @@ class ReportController extends Controller
             $query->where('work_file.customer_id', $partyId);
         }
 
+        if ($vehicle !== '') {
+            $query->where('work_file.registration_no', 'like', '%'.$vehicle.'%');
+        }
+
         // On the day the money left, not the day somebody entered it.
         if ($from) {
             $query->whereDate('work_file_expense.spent_on', '>=', $from);
@@ -199,25 +215,39 @@ class ReportController extends Controller
             ->orderBy('work_file_expense.id')
             ->get();
 
+        /*
+         * Asked about one vehicle, the report answers with what the work cost
+         * altogether: what was agreed with the vendor as well as what was paid
+         * out on the file. Money the office is owed is no part of a cost, and
+         * is not here — the margin is the Profit report's question.
+         */
+        $vendorCosts = $vehicle === '' ? collect() : self::vendorCosts($vehicle, $partyId, $typeId);
+        $rows = $rows->concat($vendorCosts);
+
         $fromText = $from ? date('d-m-Y', strtotime($from)) : 'Beginning';
         $toText = $to ? date('d-m-Y', strtotime($to)) : 'Till date';
         $periodText = $from || $to ? $fromText.' to '.$toText : 'All dates';
 
         $total = (float) $rows->sum('amount');
 
+        // One vehicle: banded by file, so each band subtotals what that file
+        // cost. Otherwise by kind, which is what the report is read for.
+        $byFile = $vehicle !== '';
+
         $props = [
-            'title' => 'Expenses — '.$periodText,
-            // Banded by kind, so each band subtotals what that kind costs.
-            'groupBy' => 'type_id',
-            'groupLabel' => 'type_band',
+            'title' => ($byFile ? 'Costs — '.$vehicle.' — ' : 'Expenses — ').$periodText,
+            'groupBy' => $byFile ? 'file_id' : 'type_id',
+            'groupLabel' => $byFile ? 'file_band' : 'type_band',
             'totals' => ['amount' => 'sum'],
             // A kind split across two pages would be banded and subtotalled
             // twice, each time on half its expenses.
             'perPage' => max($rows->count(), 1),
             'sortable' => false,
-            'emptyText' => ($typeId || $partyId || $from || $to)
-                ? 'No expenses match this report. Try widening the dates, or clearing the kind.'
-                : 'Nothing recorded yet. Expenses are entered on a file, under the works.',
+            'emptyText' => match (true) {
+                $vehicle !== '' => 'Nothing has been paid out on '.$vehicle.', and no vendor rate is agreed on its work.',
+                (bool) ($typeId || $partyId || $from || $to) => 'No expenses match this report. Try widening the dates, or clearing the kind.',
+                default => 'Nothing recorded yet. Expenses are entered on a file, under the works.',
+            },
             'columns' => [
                 ['key' => 'type_id', 'label' => 'Kind Id', 'hidden' => true],
                 ['key' => 'spent_on', 'label' => 'Paid On', 'sortBy' => 'spent_sort'],
@@ -232,6 +262,9 @@ class ReportController extends Controller
                 'id' => (int) $one->id,
                 'type_id' => (int) $one->type_id,
                 'type_band' => $one->type_name,
+                // Which file it was spent on, for the band a vehicle is read in.
+                'file_id' => (int) $one->file_id,
+                'file_band' => trim($one->file_no.' · '.($one->registration_no ?: 'no vehicle')),
                 'type_name' => $one->type_name,
                 'spent_on' => date('d-m-Y', strtotime($one->spent_on)),
                 // Sorted on separately: dd-mm-yyyy compared as text orders by
@@ -261,6 +294,9 @@ class ReportController extends Controller
             'maxDate' => now()->toDateString(),
             'typeId' => $typeId ? (int) $typeId : null,
             'partyId' => $partyId ? (int) $partyId : null,
+            'vehicle' => $vehicle,
+            // What the office is asking when it asks by vehicle.
+            'vehicleFiles' => $vehicle === '' ? 0 : $rows->pluck('file_id')->unique()->count(),
             'total' => $total,
             'count' => $rows->count(),
             'fileCount' => $rows->pluck('file_id')->unique()->count(),
@@ -270,6 +306,70 @@ class ReportController extends Controller
             'customers' => PartyModel::selectList('customer', $partyId),
             'byType' => $byType,
         ])->toResponse($req);
+    }
+
+    /**
+     * What was agreed with the vendors on one vehicle's work, as expense rows.
+     *
+     * A vendor's rate is a cost of the file exactly as a challan is, and the
+     * question "what did this vehicle cost us" is not answered without it. It
+     * is not in work_file_expense, so it is read from the works and shaped like
+     * the rows beside it rather than given a table of its own on the page.
+     *
+     * By the work, because that is how a rate is agreed: a folder split between
+     * two vendors has two of them. Cancelled work charges nobody. A kind filter
+     * is a filter on kinds of expense, so these are left out under one.
+     *
+     * @return \Illuminate\Support\Collection<int, object>
+     */
+    private static function vendorCosts(string $vehicle, $partyId, $typeId)
+    {
+        if ($typeId) {
+            return collect();
+        }
+
+        return DB::table('work_file_item as i')
+            ->join('work_file as f', 'f.id', '=', 'i.work_file_id')
+            ->leftJoin('work_type as t', 't.id', '=', 'i.work_type_id')
+            ->leftJoin('party as v', 'v.id', '=', 'i.vendor_id')
+            ->leftJoin('party as customer', 'customer.id', '=', 'f.customer_id')
+            ->where('f.registration_no', 'like', '%'.$vehicle.'%')
+            ->where('i.status', '<>', WorkFileModel::CANCELLED)
+            ->whereNotNull('i.vendor_amount')
+            ->where('i.vendor_amount', '>', 0)
+            ->when($partyId, fn ($q) => $q->where('f.customer_id', $partyId))
+            ->orderBy('f.file_no')
+            ->orderBy('i.id')
+            ->get([
+                'i.id',
+                'i.vendor_amount as amount',
+                'i.vendor_date',
+                'f.received_date',
+                'f.id as file_id',
+                'f.file_no',
+                'f.registration_no',
+                'f.status',
+                't.name as work',
+                'v.name as vendor_name',
+                'customer.name as customer_name',
+            ])
+            ->map(fn ($row) => (object) [
+                // Apart from an expense id: the two are different rows in one
+                // list, and the grid keys on this.
+                'id' => -1 * (int) $row->id,
+                'amount' => (float) $row->amount,
+                // The day it went out, or the day the papers came in if it has
+                // not gone yet: a rate agreed is a cost from then.
+                'spent_on' => $row->vendor_date ?: $row->received_date,
+                'remark' => trim(($row->work ?: 'Work').($row->vendor_name ? ' · '.$row->vendor_name : ' · not given out yet')),
+                'file_id' => (int) $row->file_id,
+                'file_no' => $row->file_no,
+                'registration_no' => $row->registration_no,
+                'status' => $row->status,
+                'type_id' => 0,
+                'type_name' => 'Vendor charge',
+                'customer_name' => $row->customer_name,
+            ]);
     }
 
     public function files(Request $req)
