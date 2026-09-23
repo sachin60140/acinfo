@@ -14,6 +14,10 @@ use Illuminate\Console\Command;
  * were for one — an entry covering a transfer, a hypothecation termination and
  * a hypothecation addition saying only "HPA".
  *
+ * And takes the file's typed details off every vendor's line, which carried
+ * them before the vendor-side sweep: a vendor's statement is sent to the
+ * vendor, and the details can name the customer.
+ *
  * Only the description is touched. Amounts, dates, parties and roles are left
  * exactly as they stand: this corrects what an entry is called, never what it
  * says was charged. Nothing is written without --write, so the change can be
@@ -46,7 +50,19 @@ class RelabelLedgerParticulars extends Command
                 ];
 
                 foreach (PartyLedgerModel::where('work_file_id', $file->id)->get() as $entry) {
-                    $should = $wanted.($suffixes[$entry->file_role] ?? '');
+                    /*
+                     * A vendor's line as syncVendors() writes it: never the
+                     * file's typed details, which can name the customer, and
+                     * only their own works on a split folder. Found in the
+                     * vendor-side sweep: every vendor line got the customer's
+                     * wording, details and all — and a vendor with part of a
+                     * folder was relabelled as having the whole of it.
+                     */
+                    $base = in_array($entry->file_role, ['vendor', 'vendor_return'], true)
+                        ? $file->vendorParticularFor((int) $entry->party_id)
+                        : $wanted;
+
+                    $should = $base.($suffixes[$entry->file_role] ?? '');
 
                     if ($entry->particular === $should) {
                         continue;

@@ -1901,11 +1901,17 @@ class PartyController extends Controller
         /*
          * A customer's statement is the page most often printed, exported and
          * sent to them, so what was typed on it is read for vendors here too.
-         * A vendor's own statement is theirs and is left as it is.
+         *
+         * And a vendor's for customers, the other way round: it is printed and
+         * sent to the vendor, and a vendor is never told a customer's name.
+         * Found in the vendor-side sweep: it was "left as typed", and what the
+         * office types on a vendor's payment — "paid for Rakesh ji's TR" — and
+         * the file details on older lines went out word for word. A vendor's
+         * own name stays: the statement is theirs.
          */
         $forCustomer = $party->party_type === 'customer';
-        $marks = $forCustomer ? WorkFileModel::vendorMarks() : [];
-        $said = fn (?string $text) => $forCustomer ? WorkFileModel::redactVendors($text, $marks) : $text;
+        $marks = $forCustomer ? WorkFileModel::vendorMarks() : WorkFileModel::customerMarks();
+        $said = fn (?string $text) => $forCustomer ? WorkFileModel::redactVendors($text, $marks) : WorkFileModel::redactCustomers($text, $marks);
 
         foreach ($data['getRecords'] as $entry) {
             $running += $entry->signedAmount();
@@ -1925,9 +1931,16 @@ class PartyController extends Controller
                 'debit' => $isDebit ? (float) $entry->amount : null,
                 'credit' => $isDebit ? null : (float) $entry->amount,
                 'balance' => round($running, 2),
+                /*
+                 * The note on the file, for a customer — never for a vendor.
+                 * It is the counter's note on the customer's file: an advance,
+                 * a balance, a name. Found in the vendor-side sweep printed
+                 * on the vendor's statement as typed; money cannot be told
+                 * apart from anything else in free text, so it is not shown.
+                 */
                 'remarks' => $forCustomer
                     ? WorkFileModel::withoutVendors($remarks[$entry->work_file_id] ?? null, $marks)
-                    : ($remarks[$entry->work_file_id] ?? null),
+                    : null,
                 // The files a payment was adjusted against, when it was.
                 'against' => PartyLedgerModel::againstText($against[$entry->id] ?? []),
             ] + self::changeFields($entry, $reversedBy, $reversible, self::paymentSide($party->party_type), $history, $period);
@@ -1982,7 +1995,7 @@ class PartyController extends Controller
 
         // Only when there is one to show. A column of empty cells is clutter on
         // screen and a column of commas in the spreadsheet.
-        $hasRemarks = (bool) $remarks;
+        $hasRemarks = $forCustomer && (bool) $remarks;
         $hasAgainst = (bool) $against;
 
         $props = [
