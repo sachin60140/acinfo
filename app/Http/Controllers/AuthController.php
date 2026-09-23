@@ -7,6 +7,7 @@ use App\Models\ClientModel;
 use App\Models\PartyModel;
 use App\Models\WorkFileModel;
 use Illuminate\Http\RedirectResponse;
+use App\Support\Backups;
 use App\Support\Screen;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -296,6 +297,40 @@ class AuthController extends Controller
         $order = ['Client ledger' => 0, 'Parties' => 1, 'Work' => 2];
 
         usort($tiles, fn ($a, $b) => ($order[$a['group']] ?? 99) <=> ($order[$b['group']] ?? 99));
+
+        /*
+         * When the ledger was last backed up (asked for by the owner,
+         * 2026-09-23). Everything above exists in one database and nowhere
+         * else, and a backup nobody knows has stopped running is found out on
+         * the day it is needed.
+         *
+         * Always shown, fresh or not — the owner asked to see when, not only
+         * to be told when it is late. After the sort, so it is never the first
+         * tile: its value differs between machines, and the first tile's shape
+         * is what the page is checked against. No link: there is no screen of
+         * backups, and none should offer the files.
+         */
+        $backup = Backups::latest();
+
+        $tiles[] = [
+            'group' => 'Safety',
+            'label' => 'Last Backup',
+            'value' => match (true) {
+                $backup['days'] === null => 'Never',
+                $backup['days'] === 0 => 'Today',
+                $backup['days'] === 1 => 'Yesterday',
+                default => $backup['days'].' days ago',
+            },
+            'type' => 'text',
+            'tone' => $backup['tone'],
+            'note' => implode(' · ', array_filter([
+                $backup['at']
+                    ? $backup['at']->format('d-m-Y H:i').' · '.Backups::readable((int) $backup['bytes'])
+                    : 'None in storage/app/backups',
+                $backup['tone'] === 'ok' ? null : 'run php artisan db:backup on the server',
+                $backup['unfinished'] ? 'a backup was left half-written' : null,
+            ])),
+        ];
 
         /*
          * And the same figures over time.

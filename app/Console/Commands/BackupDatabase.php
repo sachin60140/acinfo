@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Support\Backups;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -46,7 +47,8 @@ class BackupDatabase extends Command
         $connection = DB::connection($this->option('connection') ?: null);
         $database = $connection->getDatabaseName();
 
-        $directory = $this->option('path') ?: storage_path('app/backups');
+        // Where the dashboard's Last Backup tile looks, unless told otherwise.
+        $directory = $this->option('path') ?: Backups::directory();
 
         if (! is_dir($directory) && ! mkdir($directory, 0755, true) && ! is_dir($directory)) {
             $this->error('Cannot create '.$directory);
@@ -117,7 +119,7 @@ class BackupDatabase extends Command
             $name,
             count($tables),
             number_format($rows),
-            $this->readable((int) filesize($final))
+            Backups::readable((int) filesize($final))
         ));
 
         $this->prune($directory, $database);
@@ -238,33 +240,23 @@ class BackupDatabase extends Command
      * backup folder is exactly where somebody keeps the one good copy they took
      * by hand before a risky release, and deleting that would be worse than
      * keeping too many.
+     *
+     * By the whole name, not the prefix. A copy named by hand —
+     * "<database>-before-the-release.sql.gz" — matched the prefix, sorted
+     * above every dated one because letters come after digits, and was kept
+     * as the newest while a real night's backup was deleted in its place.
      */
     private function prune(string $directory, string $database): void
     {
         $keep = max(1, (int) $this->option('keep'));
 
-        $files = glob(rtrim($directory, '/\\').DIRECTORY_SEPARATOR.$database.'-*.sql.gz') ?: [];
-
-        if (count($files) <= $keep) {
-            return;
-        }
-
         // Newest first: the names carry the date, so they sort by age.
-        rsort($files);
+        $files = array_reverse(Backups::written($directory, $database));
 
         foreach (array_slice($files, $keep) as $old) {
             if (@unlink($old)) {
                 $this->line('  removed '.basename($old));
             }
         }
-    }
-
-    private function readable(int $bytes): string
-    {
-        return match (true) {
-            $bytes >= 1048576 => round($bytes / 1048576, 1).' MB',
-            $bytes >= 1024 => round($bytes / 1024).' KB',
-            default => $bytes.' B',
-        };
     }
 }

@@ -375,6 +375,11 @@
 .ui-money--cr { color: var(--cr-700); }
 .ui-money--nil { color: var(--n-400); }
 
+/* A state, not a side of the ledger: how something is going. */
+.ui-money--ok { color: var(--dr-700); }
+.ui-money--warn { color: var(--warn-600); }
+.ui-money--bad { color: var(--cr-700); }
+
 /*
  * The two sides, as bare classes.
  *
@@ -579,6 +584,17 @@
 .ui-stat--accent {
     background: var(--brand-050);
     border-color: var(--brand-500);
+}
+
+/* A tile saying something needs doing: the whole tile, not only its figure. */
+.ui-stat--warn {
+    background: var(--warn-050);
+    border-color: var(--warn-500);
+}
+
+.ui-stat--bad {
+    background: var(--cr-050);
+    border-color: var(--cr-600);
 }
 
 .ui-stat__label {
