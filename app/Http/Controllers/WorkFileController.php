@@ -910,8 +910,17 @@ class WorkFileController extends Controller
                 return back()->with('error', 'Those files are no longer available to give out — they may have been assigned or cancelled already.');
             }
 
+            /*
+             * And the sheet for what just went out, offered where the office
+             * already is: the papers are in somebody's hand now, and the
+             * signature is worth asking for before they leave the counter.
+             */
             return redirect()->route('workfile.index')
-                ->with('success', $assigned->count().' '.Str::plural('file', $assigned->count()).' given to the vendor: '.$assigned->pluck('file_no')->implode(', '));
+                ->with('success', $assigned->count().' '.Str::plural('file', $assigned->count()).' given to the vendor: '.$assigned->pluck('file_no')->implode(', '))
+                ->with('sheet', [
+                    'url' => route('workfile.dispatchsheet', ['vendor' => $req->vendor_id, 'date' => $req->vendor_date]),
+                    'label' => 'Print the hand-over sheet for '.PartyModel::whereKey($req->vendor_id)->value('name'),
+                ]);
         }
 
         $files = WorkFileModel::unassigned();
@@ -2887,6 +2896,10 @@ class WorkFileController extends Controller
                 $file->customer_id = $req->customer_id;
                 $file->customer_amount = (float) $req->customer_amount;
                 $vendorWas = $file->vendor_id;
+                // Read before the save: afterwards the model's own "original"
+                // is the new one, and the day each work went out is decided by
+                // whether this changed at all.
+                $dateWas = $file->vendor_date;
 
                 $file->vendor_id = $req->filled('vendor_id') ? $req->vendor_id : null;
                 $file->vendor_amount = $req->filled('vendor_amount') ? (float) $req->vendor_amount : null;
@@ -2987,11 +3000,23 @@ class WorkFileController extends Controller
                             'vendor_returned_on' => $file->vendor_id ? $file->vendor_returned_on : null,
                         ]);
                 } elseif ($file->vendor_id) {
-                    // Same vendor, possibly a corrected date: that is the
-                    // folder's date and every work of theirs takes it.
+                    /*
+                     * The same vendor, with the day corrected: the works that
+                     * carried the old day take the new one, and a work with no
+                     * day yet takes it too.
+                     *
+                     * Not every work of theirs. Found in review: a folder can
+                     * go out over two days — half on Monday, the rest on
+                     * Tuesday — and flattening them to the folder's day made
+                     * Monday's hand-over sheet list papers the vendor took on
+                     * Tuesday, and Tuesday's sheet say nothing went at all.
+                     * Any save of the file did it, not only one that touched
+                     * the date.
+                     */
                     $file->items()
                         ->where('status', '<>', WorkFileModel::CANCELLED)
                         ->where('vendor_id', $file->vendor_id)
+                        ->where(fn ($q) => $q->where('vendor_date', $dateWas)->orWhereNull('vendor_date'))
                         ->update(['vendor_date' => $file->vendor_date]);
                 }
 

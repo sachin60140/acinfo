@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\WorkFileApiController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CustomerPortalController;
+use App\Http\Controllers\DispatchSheetController;
 use App\Http\Controllers\ExpenseTypeController;
 use App\Http\Controllers\OfficeSettingController;
 use App\Http\Controllers\PaperTypeController;
@@ -136,6 +137,8 @@ Route::group(['middleware' => 'admin'], function () {
         ->whereNumber('id')->name('workfile.papers');
 
     Route::match(['get', 'post'], 'admin/file/assign', [WorkFileController::class, 'assign'])->name('workfile.assign');
+    // The paper a vendor signs for what they were handed that day.
+    Route::get('admin/file/dispatch-sheet', [DispatchSheetController::class, 'index'])->name('workfile.dispatchsheet');
     // The other thing that can happen to work on that screen: the office keeps it.
     Route::post('admin/file/keep-in-house', [WorkFileController::class, 'keepInHouse'])->name('workfile.keepinhouse');
     // And the list of what it kept, until each of it is done.
