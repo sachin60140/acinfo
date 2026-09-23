@@ -40,12 +40,24 @@ class CloseClientLedgerController extends Controller
         $open = ClientLedgerModel::openBalances();
 
         $clients = ClientModel::whereIn('id', array_keys($open))->orderBy('name')->get(['id', 'name', 'mobile']);
-        $customers = PartyModel::selectList('customer');
 
-        // Offered first where a customer has the client's own mobile; any
-        // customer with it — inactive too — means one is not made again.
-        $byMobile = $customers->keyBy('mobile');
-        $taken = PartyModel::where('party_type', 'customer')->whereIn('mobile', $clients->pluck('mobile'))->pluck('mobile')->flip();
+        /*
+         * Offered first where a customer has the client's own mobile — and one
+         * is then not made again. Inactive too: found in checking it, such a
+         * customer was not on the list to pick, and a new one could not be
+         * made with their mobile, so that client could never be carried over.
+         */
+        $matched = PartyModel::where('party_type', 'customer')->whereIn('mobile', $clients->pluck('mobile'))->get(['id', 'name', 'mobile', 'is_active']);
+        $byMobile = $matched->keyBy('mobile');
+
+        $customers = PartyModel::selectList('customer')
+            ->concat($matched->where('is_active', false)->map(fn ($party) => (object) [
+                'id' => (int) $party->id,
+                'name' => $party->name.' (inactive)',
+                'mobile' => $party->mobile,
+            ]))
+            ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)
+            ->values();
 
         $rows = $clients->map(fn ($client) => [
             'id' => (int) $client->id,
@@ -54,7 +66,7 @@ class CloseClientLedgerController extends Controller
             // In the customer's book's words: Dr is owed to the office.
             'balance' => PartyLedgerModel::formatBalance(-$open[$client->id]),
             'suggested' => isset($byMobile[$client->mobile]) ? (int) $byMobile[$client->mobile]->id : null,
-            'canCreate' => ! isset($taken[$client->mobile]),
+            'canCreate' => ! isset($byMobile[$client->mobile]),
         ])->values()->all();
 
         return view('admin.client-close-book', [

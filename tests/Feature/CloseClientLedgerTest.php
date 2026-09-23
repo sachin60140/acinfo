@@ -174,6 +174,27 @@ class CloseClientLedgerTest extends TestCase
         $this->assertStringNotContainsString('New customer: '.$client->name, $page);
     }
 
+    /**
+     * An inactive customer with the client's mobile is offered too. Found in
+     * checking it: they were not on the list, and a new customer could not be
+     * made with their mobile, so the client could never be carried over.
+     */
+    public function test_an_inactive_customer_with_the_clients_mobile_is_offered(): void
+    {
+        $client = $this->client('Inactive Match', -1000);
+        $asleep = $this->customer('Inactive Customer', $client->mobile);
+        $asleep->is_active = 0;
+        $asleep->save();
+
+        $page = $this->actingAs($this->admin)->get(route('client.closebook'))->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('#<option value="'.$asleep->id.'"\s+selected#', $page);
+        $this->assertStringContainsString($asleep->name.' (inactive)', $page);
+
+        $this->carry($client, (string) $asleep->id)->assertSessionHasNoErrors();
+        $this->assertSame(0.0, $this->oldBalance($client));
+    }
+
     /** What a client owes carries to their customer as a debit, and the old book comes to nothing. */
     public function test_what_a_client_owes_carries_as_a_debit(): void
     {
