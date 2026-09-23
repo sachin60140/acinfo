@@ -47,6 +47,15 @@ touch indexes are the ones worth having a way back from.
 php artisan db:backup
 ```
 
+The dashboard's **Last Backup** tile reads `storage/app/backups` and turns
+amber after two days without a backup and red after four. A backup only before
+each deploy will leave it red most weeks — set one up nightly from the hosting
+panel's cron jobs instead (keep the default folder, or the tile cannot see it):
+
+```bash
+cd /home/<user>/domains/<site> && php artisan db:backup --keep=14
+```
+
 **2. Pull the code.**
 
 ```bash

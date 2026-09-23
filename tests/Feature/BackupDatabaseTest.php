@@ -298,6 +298,57 @@ class BackupDatabaseTest extends TestCase
         $this->assertNotContains($source.'-2026-09-10-0200.sql.gz', $names, 'the oldest was kept');
     }
 
+    /**
+     * A copy named by hand after the database — "<db>-before-the-release" —
+     * starts like a backup of it. Matched by that prefix it sorted above every
+     * dated one, letters coming after digits, so it was kept as the newest and
+     * a real night's backup was deleted in its place.
+     */
+    public function test_a_copy_named_after_the_database_does_not_push_out_a_real_backup(): void
+    {
+        $source = $this->scratch('byname');
+        $this->on($source)->unprepared('CREATE TABLE `t` (`id` int NOT NULL)');
+
+        foreach (['2026-09-11-0200', '2026-09-12-0200', '2026-09-13-0200'] as $when) {
+            file_put_contents($this->folder.DIRECTORY_SEPARATOR.$source.'-'.$when.'.sql.gz', 'older');
+        }
+
+        $byHand = $this->folder.DIRECTORY_SEPARATOR.$source.'-before-the-release.sql.gz';
+        file_put_contents($byHand, 'kept');
+
+        $this->backup($source, ['--keep' => 2]);
+
+        $names = array_map('basename', $this->written());
+
+        $this->assertContains(basename($byHand), $names, 'a copy this command did not write was deleted');
+        $this->assertContains($source.'-2026-09-13-0200.sql.gz', $names, 'a real backup went and the copy was counted in its place');
+        $this->assertNotContains($source.'-2026-09-12-0200.sql.gz', $names);
+        $this->assertCount(3, $names, 'tonight\'s, the newest of the old ones, and the copy');
+    }
+
+    /**
+     * A run killed part way leaves its half-written file, which nothing else
+     * removes. A run that finishes clears those an hour old or more — and not
+     * one that may still be being written alongside it.
+     */
+    public function test_a_finished_run_clears_what_a_killed_one_left_behind(): void
+    {
+        $source = $this->scratch('partial');
+        $this->on($source)->unprepared('CREATE TABLE `t` (`id` int NOT NULL)');
+
+        $killed = $this->folder.DIRECTORY_SEPARATOR.$source.'-2026-09-20-0130.sql.gz.writing';
+        file_put_contents($killed, 'half');
+        touch($killed, time() - 7200);
+
+        $running = $this->folder.DIRECTORY_SEPARATOR.$source.'-2026-09-20-0131.sql.gz.writing';
+        file_put_contents($running, 'still going');
+
+        $this->assertSame(0, $this->backup($source));
+
+        $this->assertFileDoesNotExist($killed);
+        $this->assertFileExists($running);
+    }
+
     public function test_a_database_that_cannot_be_read_leaves_nothing_behind(): void
     {
         config(['database.connections.nowhere' => array_merge(

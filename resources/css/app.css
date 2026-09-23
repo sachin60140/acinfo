@@ -581,6 +581,17 @@
     border-color: var(--brand-500);
 }
 
+/* A tile saying something needs doing: the whole tile, not only its figure. */
+.ui-stat--warn {
+    background: var(--warn-050);
+    border-color: var(--warn-500);
+}
+
+.ui-stat--bad {
+    background: var(--cr-050);
+    border-color: var(--cr-600);
+}
+
 .ui-stat__label {
     color: var(--n-500);
     font-size: var(--t-xs);
@@ -596,6 +607,14 @@
     font-variant-numeric: tabular-nums;
     font-weight: 700;
 }
+
+/*
+ * And its words in the same colour as the tile. Scoped to the tile and after
+ * the rule above, which would otherwise win: found in review, a colour class
+ * on the value alone drew "Never" in near-black on the red tile.
+ */
+.ui-stat--warn .ui-stat__value { color: var(--warn-600); }
+.ui-stat--bad .ui-stat__value { color: var(--cr-700); }
 
 .ui-stat__note {
     color: var(--n-400);
