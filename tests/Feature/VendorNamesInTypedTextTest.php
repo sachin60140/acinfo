@@ -65,7 +65,7 @@ class VendorNamesInTypedTextTest extends TestCase
     }
 
     /** A file whose details and remarks the office typed with the vendor in them. */
-    private function file(): WorkFileModel
+    private function file(?PartyModel $for = null): WorkFileModel
     {
         $type = new WorkTypeModel;
         $type->name = 'HPA '.uniqid();
@@ -77,7 +77,7 @@ class VendorNamesInTypedTextTest extends TestCase
         $file->received_date = '2026-09-15';
         $file->registration_no = 'BR05TT'.random_int(1000, 9999);
         $file->work_type_id = $type->id;
-        $file->customer_id = $this->customer->id;
+        $file->customer_id = ($for ?? $this->customer)->id;
         $file->customer_amount = 2500;
         $file->description = 'HPA via Shailendra ji';
         $file->remarks = 'Sent with Shailendra Pandey Motihari';
@@ -224,6 +224,116 @@ class VendorNamesInTypedTextTest extends TestCase
 
         $this->assertSame('Ask … ji, …', $pending['share_note']);
         $this->assertSame('Ask Shailendra ji, 94310 12345', $pending['note'], 'the office still sees what it typed');
+    }
+
+    // ------------------------------------------------------ their own name
+
+    private function entryFor(PartyModel $customer, string $particular, ?string $ref = null): PartyLedgerModel
+    {
+        $entry = new PartyLedgerModel;
+        $entry->party_id = $customer->id;
+        $entry->txn_date = '2026-09-16';
+        $entry->entry_type = 'credit';
+        $entry->amount = 300;
+        $entry->payment_mode = 'UPI';
+        $entry->ref_no = $ref;
+        $entry->particular = $particular;
+        $entry->save();
+
+        return $entry;
+    }
+
+    private function officeRow(PartyLedgerModel $entry): array
+    {
+        return collect($this->actingAs($this->admin)->getJson(route('party.statement', $entry->party_id))->assertOk()->json('props.rows'))
+            ->keyBy('id')[$entry->id];
+    }
+
+    /**
+     * A person who is both — linked by the office for set-off — reads their
+     * own name and number wherever they are shown their own things: the
+     * statement, the portal's statement, file page, timeline and files list,
+     * and the papers message. Every other vendor is still cut. Found after
+     * the vendor-side sweep: their vendor account carried their own name,
+     * and it was cut from their own pages.
+     */
+    public function test_a_linked_person_reads_their_own_name_and_number(): void
+    {
+        $mobile = '93510'.random_int(10000, 99999);
+        $works = $this->party('vendor', 'Dualq Selfname', $mobile);
+        $self = $this->party('customer', 'Dualq Selfname', $mobile);
+        $self->linked_vendor_id = $works->id;
+        $self->save();
+
+        $entry = $this->entryFor($self, 'Received from Dualq Selfname, sent via Shailendra Pandey Motihari', 'UPI '.$mobile);
+
+        $row = $this->officeRow($entry);
+        $this->assertSame('Received from Dualq Selfname, sent via …', $row['particular']);
+        $this->assertSame('UPI '.$mobile, $row['ref_no']);
+
+        $portal = $this->withSession(['customer_id' => $self->id])->getJson(route('customer.statement'))->assertOk()->getContent();
+        $this->assertStringContainsString('Received from Dualq Selfname', $portal);
+        $this->assertStringNotContainsString('Shailendra', $portal);
+
+        // Their file: its details, a remark in its history, and a paper's note.
+        $file = $this->file($self);
+        $file->description = 'Dualq Selfname ji, via Shailendra ji';
+        $file->save();
+
+        $paper = new PaperTypeModel;
+        $paper->name = 'NOC '.uniqid();
+        $paper->sort = 1;
+        $paper->save();
+        $paper->setNeeds([$file->work_type_id => 'required']);
+        $file->savePaperChecklist([$paper->id => ['state' => 'pending', 'note' => 'Dualq Selfname ji to bring it']]);
+
+        // Last, so it is also the latest thing the files list says.
+        $file->logStatus($file->status, 'Dualq Selfname ji came in to sign');
+
+        $page = $this->withSession(['customer_id' => $self->id])->getJson(route('customer.file', $file->id))->assertOk();
+        $this->assertSame('Dualq Selfname ji, via … ji', $page->json('page.description'));
+        $this->assertSame('Dualq Selfname ji to bring it', $page->json('page.papers.needed.0.note'));
+        $this->assertStringContainsString('Dualq Selfname ji came in to sign', json_encode($page->json('page.timeline')));
+
+        $list = $this->withSession(['customer_id' => $self->id])->getJson(route('customer.files'))->assertOk()->getContent();
+        $this->assertStringContainsString('Dualq Selfname ji came in to sign', $list);
+
+        $pending = collect($this->actingAs($this->admin)->getJson(route('workfile.paperaudit'))->assertOk()->json('props.pending'))
+            ->firstWhere('file_id', $file->id);
+        $this->assertSame('Dualq Selfname ji to bring it', $pending['share_note']);
+    }
+
+    /** Two rows with one name, not linked, are not guessed to be one person: the vendor's name is still cut. */
+    public function test_an_unlinked_vendor_of_the_same_name_is_still_cut(): void
+    {
+        $this->party('vendor', 'Samenq Personq', '93520'.random_int(10000, 99999));
+        $same = $this->party('customer', 'Samenq Personq', '93521'.random_int(10000, 99999));
+
+        $entry = $this->entryFor($same, 'Received from Samenq Personq');
+
+        $this->assertSame('Received from …', $this->officeRow($entry)['particular']);
+    }
+
+    /** A customer's own number stays on their own statement, even where a vendor — a relative on the same phone — has it too. */
+    public function test_a_customers_own_number_stays_theirs_on_a_shared_phone(): void
+    {
+        $shared = '93530'.random_int(10000, 99999);
+        $this->party('vendor', 'Relativeq Worksq', $shared);
+        $customer = $this->party('customer', 'Sharedq Phoneq', $shared);
+
+        $entry = $this->entryFor($customer, 'Given to Relativeq Worksq', 'UPI '.$shared);
+        $row = $this->officeRow($entry);
+
+        $this->assertSame('UPI '.$shared, $row['ref_no']);
+        $this->assertSame('Given to …', $row['particular']);
+    }
+
+    /** A vendor's number is found however it was typed: dotted, slashed or bracketed as well as spaced. */
+    public function test_a_vendors_number_is_found_however_it_is_punctuated(): void
+    {
+        foreach (['(94310) 12345', '94310.12345', '9431/012345', '+91 (94310)-12345'] as $typed) {
+            $this->assertSame('Call …', WorkFileModel::redactVendors('Call '.$typed), $typed);
+        }
     }
 
     // ------------------------------------------------------- client portal

@@ -1912,7 +1912,8 @@ class PartyController extends Controller
         $forCustomer = $party->party_type === 'customer';
 
         if ($forCustomer) {
-            $marks = WorkFileModel::vendorMarks();
+            // Every vendor but the one that is this customer themself.
+            $marks = WorkFileModel::vendorMarksFor((int) $party->id);
             $said = fn (?string $text) => WorkFileModel::redactVendors($text, $marks);
         } else {
             /*

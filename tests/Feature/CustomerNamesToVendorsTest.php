@@ -412,6 +412,31 @@ class CustomerNamesToVendorsTest extends TestCase
     }
 
     /**
+     * A customer whose name begins with the vendor's own — "Rakesh Kumar
+     * Singh" beside a vendor "Rakesh Kumar" — is still cut whole. Found in
+     * making the customer-side mirror: setting the vendor's own name aside
+     * first kept the start of the customer's, and the rest matched nothing.
+     */
+    public function test_a_customer_whose_name_begins_with_the_vendors_is_still_cut(): void
+    {
+        $vendor = $this->party('vendor', 'Rakeshq Kumarq', '93811'.random_int(10000, 99999));
+        $this->party('customer', 'Rakeshq Kumarq Singhq', '93812'.random_int(10000, 99999));
+
+        $this->assertSame('Paid for … TR', $this->row($this->vendorEntry('Paid for Rakeshq Kumarq Singhq TR', null, $vendor))['particular']);
+        $this->assertSame('Advance to Rakeshq Kumarq', $this->row($this->vendorEntry('Advance to Rakeshq Kumarq', null, $vendor))['particular']);
+    }
+
+    /** A customer's number is found however it was typed: dotted, slashed or bracketed as well as spaced. */
+    public function test_a_customers_number_is_found_however_it_is_punctuated(): void
+    {
+        $dotted = substr($this->mobile, 0, 5).'.'.substr($this->mobile, 5);
+        $bracketed = '('.substr($this->mobile, 0, 5).') '.substr($this->mobile, 5);
+
+        $this->assertSame('…', $this->row($this->vendorEntry('Advance', $dotted))['ref_no']);
+        $this->assertSame('…', $this->row($this->vendorEntry('Advance', $bracketed))['ref_no']);
+    }
+
+    /**
      * A long vendor statement with many customers opens quickly. Found in
      * review: the names were prepared again for every cell, and a vendor of
      * long standing ran past the time a page is allowed.
