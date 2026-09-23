@@ -1269,4 +1269,136 @@ class ReportController extends Controller
             'oldBookUrl' => route('client.closebook'),
         ])->toResponse($req);
     }
+
+    /**
+     * What the office owes each vendor, bill by bill, the longest-waiting
+     * first — to decide whom to pay this week.
+     *
+     * One band a vendor, the one owed longest on top, each with the link to
+     * record a payment to them. Under it every bill not yet paid: a file, from
+     * the day the work went to them (which is when the ledger owes them for
+     * it), or a bill typed straight into the ledger. Money paid and adjusted
+     * against files settles those; the rest settles the oldest bill first —
+     * the Collection List's rule, the other way round.
+     *
+     * The office's own screen: it holds every vendor's dues, so it is not one
+     * to hand to any of them. No WhatsApp on it.
+     */
+    public function payable(Request $req)
+    {
+        $vendors = PartyModel::withBalance('vendor');
+        $owed = $vendors->filter(fn ($party) => (float) $party->current_balance < -0.005)->keyBy('id');
+
+        $bills = PartyLedgerModel::dueBills($owed->keys()->map(fn ($id) => (int) $id)->all(), 'credit');
+
+        $files = WorkFileModel::with('items.workType')
+            ->whereIn('id', collect($bills)->flatten(1)->pluck('file_id')->filter()->unique()->values())
+            ->get()
+            ->keyBy('id');
+
+        $typed = DB::table('party_ledger')
+            ->whereIn('id', collect($bills)->flatten(1)->pluck('entry_id')->filter()->values())
+            ->pluck('particular', 'id');
+
+        // A vendor who is also a customer owing the office: set that off
+        // before paying them. The office's screen, so it can say so.
+        $customerSide = collect(PartyModel::counterparts('vendor'))->keyBy('own_id');
+
+        $today = now()->startOfDay();
+        $finishedStates = [WorkFileModel::APPROVED, WorkFileModel::RETURNED];
+
+        // The longest-waiting vendor first; of the same day, the most owed.
+        $order = $owed->sort(fn ($a, $b) => [$bills[(int) $a->id][0]['since'] ?? '9999', (float) $a->current_balance, $a->name]
+            <=> [$bills[(int) $b->id][0]['since'] ?? '9999', (float) $b->current_balance, $b->name]);
+
+        $rows = collect();
+
+        foreach ($order as $vendor) {
+            $vendorId = (int) $vendor->id;
+            $customer = $customerSide[$vendorId] ?? null;
+
+            $band = [
+                'vendor_id' => $vendorId,
+                'vendor' => (string) $vendor->name.($vendor->is_active ? '' : ' (inactive)'),
+                'vendor_owed' => round(-(float) $vendor->current_balance, 2),
+                'statement_url' => route('party.statement', $vendorId),
+                'pay_url' => route('party.entry', ['type' => 'vendor', 'party_id' => $vendorId, 'pay' => 1]),
+                'setoff_note' => $customer && $customer['balance'] > 0.005
+                    ? 'Their customer account owes you '.number_format($customer['balance'], 2, '.', ',').' — set it off first'
+                    : '',
+            ];
+
+            foreach ($bills[$vendorId] ?? [] as $bill) {
+                $file = $bill['file_id'] !== null ? ($files[$bill['file_id']] ?? null) : null;
+                $theirs = $file ? $file->itemsFor($vendorId) : collect();
+                // Finished when every work they were given on it is.
+                $finished = $file !== null && $theirs->isNotEmpty()
+                    && $theirs->every(fn ($item) => in_array($item->status, $finishedStates, true));
+                $days = (int) Carbon::parse($bill['since'])->startOfDay()->diffInDays($today);
+
+                $rows->push($band + [
+                    'id' => $vendorId.'-'.($bill['file_id'] !== null ? 'f'.$bill['file_id'] : 'e'.$bill['entry_id']),
+                    'bill' => match (true) {
+                        $file !== null => (string) $file->file_no,
+                        $bill['file_id'] !== null => 'File #'.$bill['file_id'],
+                        default => (string) ($typed[$bill['entry_id']] ?? 'Bill on the ledger'),
+                    },
+                    'bill_url' => $file ? route('workfile.edit', $file->id) : null,
+                    'vehicle' => $file ? (string) $file->registration_no : '',
+                    'works' => $file ? $file->worksFor($vendorId) : '',
+                    'given' => date('d-m-Y', strtotime($bill['since'])),
+                    'given_raw' => $bill['since'],
+                    'days_text' => match (true) {
+                        $days < 0 => 'dated ahead',
+                        $days === 0 => 'today',
+                        $days === 1 => '1 day',
+                        default => $days.' days',
+                    },
+                    'days' => max(0, $days),
+                    'state' => $file === null ? '' : ($finished ? 'Finished' : $theirs
+                        ->map(fn ($item) => WorkFileModel::STATUSES[$item->status] ?? $item->status)
+                        ->unique()->implode(', ')),
+                    'finished' => $finished ? $bill['due'] : 0.0,
+                    'due' => $bill['due'],
+                ]);
+            }
+        }
+
+        $props = [
+            'title' => 'Vendor Payments',
+            'perPage' => 100,
+            'emptyText' => 'The office owes no vendor anything. Every vendor bill is paid.',
+            'totals' => ['due' => 'sum', 'finished' => 'sum'],
+            'groupBy' => 'vendor_id',
+            'groupLabel' => 'vendor',
+            'columns' => [
+                ['key' => 'bill', 'label' => 'Bill', 'type' => 'link', 'linkTo' => 'bill_url', 'sub' => 'vehicle'],
+                ['key' => 'works', 'label' => 'Work'],
+                // The day it went to them, which is the day they were owed for it.
+                ['key' => 'given', 'label' => 'Given', 'sortBy' => 'given_raw', 'sub' => 'days_text'],
+                ['key' => 'state', 'label' => 'Their Work'],
+                ['key' => 'finished', 'label' => 'On Finished Work', 'type' => 'money'],
+                ['key' => 'due', 'label' => 'Owed', 'type' => 'money', 'class' => 'cr fw-bold'],
+                // Searched and exported: the band says who on screen, and a
+                // spreadsheet has no bands.
+                ['key' => 'vendor', 'label' => 'Vendor', 'exportOnly' => true],
+            ],
+            'rows' => $rows->values(),
+        ];
+
+        return Screen::make('admin.reports.payable', 'vue-vendor-payments', $props, [
+            'totals' => [
+                'owed' => round((float) $rows->sum('due'), 2),
+                'vendors' => $rows->pluck('vendor_id')->unique()->count(),
+                'bills' => $rows->count(),
+                'oldest' => (int) $rows->max('days'),
+                'finished' => round((float) $rows->sum('finished'), 2),
+            ],
+            // Paid ahead, so a prepayment is not forgotten either.
+            'inAdvance' => $vendors->filter(fn ($party) => (float) $party->current_balance > 0.005)->count(),
+            // Given to a vendor with no rate agreed: owed, and on no list yet.
+            'unpriced' => (int) WorkFileModel::pendingCounts()['vendor'],
+            'unpricedUrl' => route('workfile.index', ['pending' => 'vendor']),
+        ])->toResponse($req);
+    }
 }

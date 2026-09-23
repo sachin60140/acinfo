@@ -81,7 +81,7 @@ class PartyModel extends Model
      * business with nothing outstanding, they are 10,000 to collect and 10,000
      * to refund. Netting them would hide both.
      *
-     * @return array{receivable: float, payable: float, customers: int, vendors: int, owing: int}
+     * @return array{receivable: float, payable: float, customers: int, vendors: int, owing: int, owed: int}
      */
     public static function outstanding(): array
     {
@@ -91,8 +91,9 @@ class PartyModel extends Model
             ->groupBy('party.id', 'party.party_type')
             ->get();
 
-        // owing: the customers the receivable is made of — the Collection List.
-        $totals = ['receivable' => 0.0, 'payable' => 0.0, 'customers' => 0, 'vendors' => 0, 'owing' => 0];
+        // owing: the customers the receivable is made of — the Collection List;
+        // owed: the vendors the payable is, Vendor Payments.
+        $totals = ['receivable' => 0.0, 'payable' => 0.0, 'customers' => 0, 'vendors' => 0, 'owing' => 0, 'owed' => 0];
 
         foreach ($rows as $row) {
             $balance = (float) $row->balance;
@@ -107,8 +108,9 @@ class PartyModel extends Model
                 }
             } else {
                 $totals['vendors']++;
-                if ($balance < 0) {
+                if ($balance < -0.005) {
                     $totals['payable'] += abs($balance);
+                    $totals['owed']++;
                 }
             }
         }

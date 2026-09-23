@@ -95,6 +95,7 @@
               ['label' => 'Work Report', 'icon' => 'bi-file-earmark-bar-graph', 'href' => route('report.files'), 'active' => $req->routeIs('report.files')],
               ['label' => 'Expense Report', 'icon' => 'bi-cash-coin', 'href' => route('report.expenses'), 'active' => $req->routeIs('report.expenses')],
               ['label' => 'Vendor Report', 'icon' => 'bi-truck', 'href' => route('report.vendors'), 'active' => $req->routeIs('report.vendors')],
+              ['label' => 'Vendor Payments', 'icon' => 'bi-wallet2', 'href' => route('report.payable'), 'active' => $req->routeIs('report.payable')],
               ['label' => 'Collection List', 'icon' => 'bi-telephone-outbound', 'href' => route('report.collection'), 'active' => $req->routeIs('report.collection')],
               ['label' => 'Not Yet Collected', 'icon' => 'bi-hourglass-split', 'href' => route('report.uncollected'), 'active' => $req->routeIs('report.uncollected')],
           ],

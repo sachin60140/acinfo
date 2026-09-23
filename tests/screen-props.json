@@ -1661,6 +1661,50 @@
             }
         }
     },
+    "report-vendor-payments": {
+        "vue-vendor-payments": {
+            "columns": [
+                "bill:link",
+                "works:text",
+                "given:text",
+                "state:text",
+                "finished:money",
+                "due:money",
+                "vendor:text"
+            ],
+            "emptyText": "string",
+            "groupBy": "string",
+            "groupLabel": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "bill": "string",
+                    "bill_url": "string",
+                    "days": "number",
+                    "days_text": "string",
+                    "due": "number",
+                    "finished": "number",
+                    "given": "string",
+                    "given_raw": "string",
+                    "id": "string",
+                    "pay_url": "string",
+                    "setoff_note": "string",
+                    "state": "string",
+                    "statement_url": "string",
+                    "vehicle": "string",
+                    "vendor": "string",
+                    "vendor_id": "number",
+                    "vendor_owed": "number",
+                    "works": "string"
+                }
+            },
+            "title": "string",
+            "totals": {
+                "due": "string",
+                "finished": "string"
+            }
+        }
+    },
     "work-types": {
         "vue-work-types": {
             "action": "string",
