@@ -736,6 +736,44 @@ class SetOffTest extends TestCase
         $this->assertNull($this->customer->fresh()->linked_vendor_id);
     }
 
+    /**
+     * A vendor with a customer's mobile may be one person: the vendor's Edit
+     * screen says so, and points to the customer's, where the link is made.
+     * Asked, never assumed: opening it links nothing. Asked for by the owner
+     * (2026-09-23).
+     */
+    public function test_a_vendor_is_told_of_a_customer_with_its_mobile(): void
+    {
+        $vendor = $this->party('vendor', 'Same Phone Works');
+        $customer = $this->party('customer', 'Same Phone Dealer');
+        $customer->mobile = $vendor->mobile;
+        $customer->save();
+
+        $link = $this->actingAs($this->admin)->getJson(route('party.edit', $vendor->id))->assertOk()->json('props.link');
+
+        $this->assertSame($customer->name, $link['suggestName']);
+        $this->assertSame(route('party.edit', $customer->id), $link['suggestUrl']);
+        $this->assertNull($customer->fresh()->linked_vendor_id, 'opening the screen linked them');
+
+        // Not a customer already linked to somebody else.
+        $customer->linked_vendor_id = $this->vendor->id;
+        $this->link($this->customer, null);
+        $customer->save();
+
+        $link = $this->actingAs($this->admin)->getJson(route('party.edit', $vendor->id))->json('props.link');
+        $this->assertSame('', $link['suggestName']);
+
+        // And nothing once the vendor is linked — even beside an unlinked
+        // customer with its mobile: it says who it is linked to instead.
+        $customer->linked_vendor_id = null;
+        $customer->save();
+        $this->link($this->customer, $vendor);
+
+        $link = $this->actingAs($this->admin)->getJson(route('party.edit', $vendor->id))->json('props.link');
+        $this->assertSame('', $link['suggestName']);
+        $this->assertStringContainsString($this->customer->name, $link['linkedName']);
+    }
+
     /** The Entry screen knows each party's other account, with its balance, and no one else's. */
     public function test_the_entry_screen_offers_it_only_for_linked_accounts(): void
     {
