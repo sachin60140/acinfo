@@ -473,6 +473,12 @@ function resetDateField() {
                         maxlength="255"
                         v-model="entry.particular"
                         required></textarea>
+                    <!-- Said where it is typed: a vendor's statement is sent to
+                         them, and a customer named here is cut out of it. -->
+                    <div v-if="! onCustomers" class="ui-hint">
+                        Printed on the vendor's statement. Leave out customers' names and what they paid —
+                        a customer named here is shown as "…".
+                    </div>
                 </div>
 
                 <div v-else-if="isWriteOff" class="ui-field entry-grid__wide">

@@ -1890,7 +1890,7 @@ class WorkFileModel extends Model
      *                                         one file number are the same line
      *                                         twice.
      */
-    public function ledgerParticular(?array $only = null): string
+    public function ledgerParticular(?array $only = null, bool $withDetails = true): string
     {
         $works = $only ? implode(', ', $only) : $this->items()->with('workType')->get()
             ->reject(fn ($item) => $item->status === self::CANCELLED)
@@ -1909,7 +1909,7 @@ class WorkFileModel extends Model
          * was a registration field have the number in the description, and
          * "BR01DD1234 - BR01DD1234" helps nobody.
          */
-        foreach ([$this->registration_no, $this->description] as $detail) {
+        foreach ([$this->registration_no, $withDetails ? $this->description : null] as $detail) {
             $detail = trim((string) $detail);
 
             if ($detail !== '' && ! in_array($detail, $parts, true)) {
@@ -1918,6 +1918,35 @@ class WorkFileModel extends Model
         }
 
         return implode(' - ', $parts);
+    }
+
+    /**
+     * What a vendor's line for this file says: the works and the vehicle, and
+     * nothing typed on the file.
+     *
+     * The owner's rule is that a vendor is never told a customer's name or
+     * money, and a vendor's statement is printed and sent to them. The file's
+     * details are typed at the counter — the form asks for the party's name —
+     * so they stay on the customer's line and never reach the vendor's. Found
+     * in the vendor-side sweep: they did, word for word.
+     *
+     * @param  array<int, string>|null  $only  the works this vendor was given
+     */
+    public function vendorParticular(?array $only = null): string
+    {
+        return $this->ledgerParticular($only, false);
+    }
+
+    /**
+     * What this file's line on one vendor's statement says, as syncVendors()
+     * writes it: the whole folder's works for a vendor with all of it, only
+     * their own for a vendor with part of a split folder.
+     */
+    public function vendorParticularFor(int $vendorId): string
+    {
+        $share = $this->vendorShares()[$vendorId] ?? null;
+
+        return $share && ! $share['all'] ? $this->vendorParticular($share['works']) : $this->vendorParticular();
     }
     /**
      * Bring this file's ledger entries in line with the file as it now stands.
@@ -1956,7 +1985,7 @@ class WorkFileModel extends Model
          * same person. A folder that did go to one vendor writes the one line
          * it always wrote, to the same party, with the same words on it.
          */
-        $this->syncVendors($particular, $cancelled);
+        $this->syncVendors($cancelled);
 
         // Papers returned: give the customer their money back, in full, as a
         // credit that sits beside the original charge. Setting any other status
@@ -2056,9 +2085,12 @@ class WorkFileModel extends Model
      * given to anybody, or one saved by a screen that has not been taught about
      * the works yet — the folder's own vendor is written, exactly as before.
      */
-    private function syncVendors(string $particular, bool $cancelled): void
+    private function syncVendors(bool $cancelled): void
     {
         $shares = $cancelled ? [] : $this->vendorShares();
+
+        // Never the file's typed details; see vendorParticular().
+        $particular = $this->vendorParticular();
 
         if (! $shares) {
             $folder = ($cancelled || ! $this->vendor_id) ? null : (int) $this->vendor_id;
@@ -2108,7 +2140,7 @@ class WorkFileModel extends Model
              * against one file number are indistinguishable. A vendor with all
              * of it reads exactly as it always did.
              */
-            $says = $share['all'] ? $particular : $this->ledgerParticular($share['works']);
+            $says = $share['all'] ? $particular : $this->vendorParticular($share['works']);
 
             $this->syncSide('vendor', 'credit', $vendor, $share['amount'],
                 $share['date'] ?: $this->received_date, $says, true);
@@ -3615,25 +3647,59 @@ class WorkFileModel extends Model
      */
     public static function vendorMarks(): array
     {
-        $common = ['shri', 'shree', 'smt', 'mr', 'mrs', 'm/s', 'ms', 'the', 'new', 'auto', 'autos', 'motor', 'motors', 'rto', 'agency', 'services', 'service', 'bihar', 'patna'];
+        return self::partyMarks('vendor');
+    }
+
+    /**
+     * Every party of one type's names, first names and numbers, as
+     * vendorMarks() describes them.
+     *
+     * @return array<int, array{0: string, 1: string}>
+     */
+    private static function partyMarks(string $type, array $except = []): array
+    {
+        // The courtesies a name is saved with, which say nothing of who it is.
+        $titles = ['shri', 'shree', 'sri', 'sh', 'smt', 'shrimati', 'mr', 'mrs', 'ms', 'miss', 'm/s', 'md', 'mohd', 'dr', 'er', 'km', 'kumari', 'late', 'prof'];
+        $common = ['the', 'new', 'auto', 'autos', 'motor', 'motors', 'rto', 'agency', 'services', 'service', 'bihar', 'patna'];
         $marks = [];
 
-        $vendors = DB::table('party')->where('party_type', 'vendor')->get(['name', 'mobile', 'whatsapp']);
+        $parties = DB::table('party')->where('party_type', $type)
+            ->when($except, fn ($q) => $q->whereNotIn('id', $except))
+            ->get(['name', 'mobile', 'whatsapp']);
 
-        foreach ($vendors as $vendor) {
-            $name = trim((string) preg_replace('/\s+/u', ' ', mb_strtolower((string) $vendor->name)));
+        foreach ($parties as $party) {
+            $name = trim((string) preg_replace('/\s+/u', ' ', mb_strtolower((string) $party->name)));
 
             if (mb_strlen($name) >= 3) {
                 $marks[] = ['text', $name];
             }
 
-            $first = explode(' ', $name)[0] ?? '';
+            /*
+             * And the name without the courtesy it was saved with, and its
+             * first word after that. Found in review: "Shri Rakesh Kumar" was
+             * caught only when typed with its "Shri", and "Smt." — with its
+             * dot, which the list did not have — became a mark of its own, so
+             * "Smt. Kiran" was cut and "Sunita ji" was not.
+             */
+            $words = explode(' ', $name);
 
-            if (mb_strlen($first) >= 4 && ! in_array($first, $common, true) && $first !== $name) {
+            while (count($words) > 1 && in_array(rtrim($words[0], '.'), $titles, true)) {
+                array_shift($words);
+            }
+
+            $bare = implode(' ', $words);
+
+            if ($bare !== $name && mb_strlen($bare) >= 3) {
+                $marks[] = ['text', $bare];
+            }
+
+            $first = rtrim($words[0] ?? '', '.,');
+
+            if (mb_strlen($first) >= 4 && ! in_array($first, $common, true) && $first !== $bare) {
                 $marks[] = ['text', $first];
             }
 
-            foreach ([$vendor->mobile, $vendor->whatsapp] as $number) {
+            foreach ([$party->mobile, $party->whatsapp] as $number) {
                 $digits = substr(preg_replace('/\D/', '', (string) $number), -10);
 
                 if (strlen($digits) === 10) {
@@ -3643,6 +3709,139 @@ class WorkFileModel extends Model
         }
 
         return $marks;
+    }
+
+    /**
+     * What identifies a customer in typed text: the mirror of vendorMarks().
+     *
+     * The owner's other rule: a vendor is never told a customer's name. A
+     * vendor's statement is printed and sent to them, and what the office
+     * types on a vendor's entries — "paid for Rakesh ji's TR" — is typed by
+     * people. The same names, first names and numbers, the same words left
+     * alone; every customer, since typed text can name any of them.
+     *
+     * @param  array<int, int>  $except  customers left out: a vendor's own
+     *                                   linked account is the vendor themself
+     * @return array<int, array{0: string, 1: string}>
+     */
+    public static function customerMarks(array $except = []): array
+    {
+        return self::partyMarks('customer', $except);
+    }
+
+    /**
+     * Text for a vendor with every customer's name and number taken out: the
+     * mirror of redactVendors(), for a vendor's statement.
+     *
+     * For one piece of text. A page of them builds customerRedactor() once.
+     *
+     * @param  array<int, array{0: string, 1: string}>|null  $marks  customerMarks(), when already read
+     */
+    public static function redactCustomers(?string $text, ?array $marks = null, string $with = '…'): ?string
+    {
+        return self::customerRedactor($marks ?? self::customerMarks(), [], $with)($text);
+    }
+
+    /**
+     * What takes customers' names and numbers out of a vendor's text, made
+     * once for a page.
+     *
+     * There are far more customers than vendors, so the names are matched a
+     * batch at a time in one pattern rather than one pattern each — the
+     * longest first within it, so a full name goes whole. And the patterns
+     * are made once, not for every line. Found in review: made for every
+     * cell, a long vendor's statement took seconds with a thousand customers
+     * and ran out of time with a few thousand.
+     *
+     * What is in $keep is set aside before anything is cut and put back
+     * after: the vendor's own name on their own statement, which a customer
+     * sharing its first word would otherwise split — "Advance to … Kumar
+     * Motors". Found in review, as was the vendor's own linked customer
+     * account, which the caller leaves out of $marks.
+     *
+     * Where a pattern cannot be run, the text is not shown at all rather
+     * than shown uncut.
+     *
+     * @param  array<int, array{0: string, 1: string}>  $marks
+     * @param  array<int, string>  $keep  names left as they are
+     * @return \Closure(?string): ?string
+     */
+    public static function customerRedactor(array $marks, array $keep = [], string $with = '…'): \Closure
+    {
+        $phrase = fn (string $name) => implode('\s+', array_map(fn ($word) => preg_quote($word, '/'), explode(' ', $name)));
+
+        $longestFirst = function (array $names): array {
+            $names = array_values(array_unique(array_filter($names, fn ($name) => $name !== '')));
+            usort($names, fn ($a, $b) => mb_strlen($b) <=> mb_strlen($a));
+
+            return $names;
+        };
+
+        $names = $longestFirst(array_map(fn ($mark) => $mark[1], array_filter($marks, fn ($mark) => $mark[0] === 'text')));
+
+        $patterns = array_map(
+            fn ($batch) => '/(?<![\p{L}\p{N}])(?:'.implode('|', array_map($phrase, $batch)).')(?![\p{L}\p{N}])/iu',
+            array_chunk($names, 100)
+        );
+
+        $kept = array_map(
+            fn ($name) => '/(?<![\p{L}\p{N}])'.$phrase($name).'(?![\p{L}\p{N}])/iu',
+            $longestFirst(array_map(fn ($name) => trim((string) preg_replace('/\s+/u', ' ', mb_strtolower($name))), $keep))
+        );
+
+        $numbers = array_flip(array_map(fn ($mark) => $mark[1], array_filter($marks, fn ($mark) => $mark[0] === 'digits')));
+
+        return function (?string $text) use ($patterns, $kept, $numbers, $with): ?string {
+            if ($text === null || trim($text) === '') {
+                return $text;
+            }
+
+            // Set aside under characters no name or number is made of.
+            $aside = [];
+
+            foreach ($kept as $pattern) {
+                $text = preg_replace_callback($pattern, function ($found) use (&$aside) {
+                    $aside[] = $found[0];
+
+                    return "\u{E000}".mb_chr(0xE100 + count($aside) - 1)."\u{E001}";
+                }, $text);
+
+                if ($text === null) {
+                    return $with;
+                }
+            }
+
+            foreach ($patterns as $pattern) {
+                $text = preg_replace($pattern, $with, $text);
+
+                if ($text === null) {
+                    return $with;
+                }
+            }
+
+            if ($numbers) {
+                $text = preg_replace_callback('/\+?\d[\d\s\-]{8,}\d/u', function ($found) use ($numbers, $with) {
+                    $digits = preg_replace('/\D/', '', $found[0]);
+
+                    // Any ten in a row that are a customer's, with or without 91.
+                    for ($at = 0; $at + 10 <= strlen($digits); $at++) {
+                        if (isset($numbers[substr($digits, $at, 10)])) {
+                            return $with;
+                        }
+                    }
+
+                    return $found[0];
+                }, $text);
+
+                if ($text === null) {
+                    return $with;
+                }
+            }
+
+            return $aside
+                ? preg_replace_callback('/\x{E000}(.)\x{E001}/u', fn ($found) => $aside[mb_ord($found[1]) - 0xE100] ?? '', $text) ?? $with
+                : $text;
+        };
     }
 
     /**

@@ -406,6 +406,22 @@ class AuditWorkFiles extends Command
                 .' — files:relabel-ledger puts this right');
         }
 
+        /*
+         * And each vendor's, which never carries the file's typed details: a
+         * vendor's statement is sent to them, and the details can name the
+         * customer. Every vendor's line, not one per role — a split folder has
+         * a line for each. Found in review: lines written before that rule
+         * kept the details, and nothing here said so.
+         */
+        foreach (PartyLedgerModel::where('work_file_id', $file->id)->whereIn('file_role', ['vendor', 'vendor_return'])->get() as $line) {
+            $should = $file->vendorParticularFor((int) $line->party_id).($line->file_role === 'vendor_return' ? ' - returned by vendor' : '');
+
+            if ($line->particular !== $should) {
+                $note($id, "reads \"{$line->particular}\" on vendor {$line->party_id}'s statement and should read \"$should\""
+                    .' — files:relabel-ledger puts this right');
+            }
+        }
+
         // ---- An approval is dated and evidenced ---------------------------
         foreach ($file->items as $item) {
             $work = $item->workType?->name ?? 'a work';

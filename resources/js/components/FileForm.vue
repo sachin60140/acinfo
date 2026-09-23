@@ -905,7 +905,7 @@ onMounted(() => {
                                     maxlength="255"
                                     placeholder="Vehicle no., party name, reference">
                             </div>
-                            <div class="ui-hint">Shown next to the work type on both statements.</div>
+                            <div class="ui-hint">Shown next to the work type on the customer's statement. Never on the vendor's.</div>
                             <div v-if="errors.description" class="ui-hint ui-hint--error">
                                 {{ errors.description }}
                             </div>
