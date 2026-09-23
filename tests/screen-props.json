@@ -1109,6 +1109,14 @@
             "isActive": "bool",
             "isEdit": "bool",
             "label": "string",
+            "link": {
+                "linkedName": "string",
+                "linkedUrl": "string",
+                "options": "[]",
+                "shown": "bool",
+                "side": "string",
+                "value": "string"
+            },
             "values": {
                 "address": "string",
                 "mobile": "string",
@@ -1158,6 +1166,20 @@
             "isActive": "bool",
             "isEdit": "bool",
             "label": "string",
+            "link": {
+                "linkedName": "string",
+                "linkedUrl": "string",
+                "options": {
+                    "list_of": {
+                        "id": "number",
+                        "mobile": "string",
+                        "name": "string"
+                    }
+                },
+                "shown": "bool",
+                "side": "string",
+                "value": "string"
+            },
             "values": {
                 "address": "string",
                 "mobile": "string",
@@ -1173,6 +1195,7 @@
             "action": "string",
             "adjustable": "bool",
             "billsUrl": "string",
+            "counterparts": "[]",
             "csrf": "string",
             "dateField": "string",
             "indexUrl": "string",
@@ -1187,6 +1210,7 @@
                 "ref_no": "string"
             },
             "initialAlloc": "[]",
+            "initialCounterAlloc": "[]",
             "label": "string",
             "limitsUrl": "string",
             "parties": {
@@ -1201,6 +1225,7 @@
                 "list_of": "string"
             },
             "paymentSide": "string",
+            "settable": "bool",
             "sideHint": "string",
             "statementUrl": "string",
             "writeOffCap": "number"
@@ -1323,6 +1348,7 @@
                     "ref_url": "null",
                     "remarks": "null",
                     "row_state": "null",
+                    "setoff_with": "null",
                     "txn_date": "string"
                 }
             },
@@ -1344,6 +1370,7 @@
                     "ref_url": "string",
                     "remarks": "null",
                     "row_state": "null",
+                    "setoff_with": "null",
                     "txn_date": "string"
                 }
             },
@@ -1364,6 +1391,7 @@
                     "ref_url": "null",
                     "remarks": "null",
                     "row_state": "null",
+                    "setoff_with": "null",
                     "txn_date": "string"
                 }
             },

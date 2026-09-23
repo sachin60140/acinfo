@@ -199,6 +199,13 @@ const blocked = computed(() => reason.value.trim() === '');
                             <template v-if="entry.against"> Its adjustment against files is released.</template>
                         </p>
 
+                        <!-- Two halves on two accounts go back together, or the
+                             two accounts would disagree. -->
+                        <p v-if="entry.setoff_with" class="ui-note ui-note--info">
+                            This is one half of a set-off. Its other half, entry #{{ entry.setoff_with }} on the other
+                            account, is reversed with it, on the same day and for the same reason.
+                        </p>
+
                         <div class="ui-field">
                             <label class="ui-label" for="ps-reason">Why <span class="ui-label__req">*</span></label>
                             <textarea

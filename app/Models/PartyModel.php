@@ -188,6 +188,68 @@ class PartyModel extends Model
     }
 
     /**
+     * The other account of the same person — a customer's vendor account, or a
+     * vendor's customer account — as the office linked them by hand, or null.
+     *
+     * Never guessed from a mobile number: two people share a phone, and a typo
+     * would set one person's debt off against a stranger's money.
+     */
+    public function counterpartId(): ?int
+    {
+        if (! PartyLedgerModel::canSetOff()) {
+            return null;
+        }
+
+        $id = $this->party_type === 'customer'
+            ? $this->linked_vendor_id
+            : self::where('party_type', 'customer')->where('linked_vendor_id', $this->id)->value('id');
+
+        return $id ? (int) $id : null;
+    }
+
+    /**
+     * Every party of one type that is linked to an account of the other, with
+     * that account as the Entry screen needs it: own id => its id, name,
+     * balance and whether it is active. For the office's screen only.
+     *
+     * @return array<int, array{id: int, name: string, balance: float, active: bool}>
+     */
+    public static function counterparts(string $type): array
+    {
+        if (! PartyLedgerModel::canSetOff()) {
+            return [];
+        }
+
+        $linked = DB::table('party')->where('party_type', 'customer')->whereNotNull('linked_vendor_id');
+
+        // Own id => the other account's id, whichever side this screen is.
+        $pairs = $type === 'customer'
+            ? $linked->pluck('linked_vendor_id', 'id')
+            : $linked->pluck('id', 'linked_vendor_id');
+
+        if ($pairs->isEmpty()) {
+            return [];
+        }
+
+        $others = DB::table('party')->whereIn('id', $pairs->values())->get(['id', 'name', 'is_active'])->keyBy('id');
+        $balances = PartyLedgerModel::balancesFor($pairs->values()->all());
+        $out = [];
+
+        foreach ($pairs as $own => $other) {
+            if ($one = $others[$other] ?? null) {
+                $out[(int) $own] = [
+                    'id' => (int) $other,
+                    'name' => (string) $one->name,
+                    'balance' => round((float) ($balances[$other] ?? 0), 2),
+                    'active' => (bool) $one->is_active,
+                ];
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * The one party a mobile number may sign in as, or null.
      *
      * Three conditions, all of them here rather than spread across the

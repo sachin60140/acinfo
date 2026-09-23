@@ -48,6 +48,18 @@ const props = defineProps({
      */
     writeOffCap: { type: Number, default: 0 },
     limitsUrl: { type: String, default: '' },
+
+    /*
+     * Setting a customer off against the vendor account that is the same
+     * person: what they owe on one cleared against what they are owed on the
+     * other, with no money moving. Offered only where the office has linked
+     * the two (counterparts: party id => { id, name, balance, active }), and
+     * only once the database has what it needs (settable).
+     */
+    settable: { type: Boolean, default: false },
+    counterparts: { type: Object, default: () => ({}) },
+    // A refused save's amounts on the other account's files, to be put back.
+    initialCounterAlloc: { type: Object, default: () => ({}) },
 });
 
 // The two a write-off adds are named here as well, so a page drawn without
@@ -94,6 +106,11 @@ const hint = computed(() => {
         return 'Enter an amount.';
     }
 
+    if (isSetOff.value) {
+        return `Sets off ${money(entry.amount)} — ${selected.value.name} ends on ${balance(after.value)}, `
+            + `and ${counterpart.value.name} on ${balance(counterpartAfter.value)}.`;
+    }
+
     const verb = isWriteOff.value
         ? 'Writes off'
         : (entry.entry_type === 'credit' ? 'Credits' : 'Debits');
@@ -128,6 +145,67 @@ const writeOffProblem = computed(() => {
 
     return '';
 });
+
+/* ---- Setting off against the other account ----------------------------- */
+
+/*
+ * The same person's other account, where the office has linked one: a
+ * customer's vendor account on this screen's customer side, a vendor's
+ * customer account on the vendor side. Offered on the payment side, as a
+ * payment would be, and only while that account is active.
+ */
+const onCustomers = computed(() => props.paymentSide === 'credit');
+
+const counterpart = computed(() =>
+    (selected.value ? props.counterparts[String(selected.value.id)] ?? null : null)
+);
+
+const canSetOff = computed(() =>
+    props.settable && Boolean(counterpart.value?.active) && entry.entry_type === props.paymentSide
+);
+
+const isSetOff = computed(() => canSetOff.value && entry.entry_kind === 'setoff');
+
+// Dr is what a customer owes, Cr what the office owes a vendor.
+const counterpartBalance = computed(() => Number(counterpart.value?.balance) || 0);
+const customerOwes = computed(() => Math.max(0, onCustomers.value ? currentBalance.value : counterpartBalance.value));
+const vendorOwed = computed(() => Math.max(0, -(onCustomers.value ? counterpartBalance.value : currentBalance.value)));
+const setOffLimit = computed(() => Math.min(customerOwes.value, vendorOwed.value));
+
+const customerName = computed(() => (onCustomers.value ? selected.value?.name : counterpart.value?.name) ?? '');
+const vendorName = computed(() => (onCustomers.value ? counterpart.value?.name : selected.value?.name) ?? '');
+
+// The other account moves the other way: a debit on the vendor, a credit on the customer.
+const counterpartAfter = computed(() =>
+    counterpartBalance.value + (Number(entry.amount) || 0) * (onCustomers.value ? 1 : -1)
+);
+
+// Said before Save is pressed; the server refuses the same, against the ledger.
+const setOffProblem = computed(() => {
+    if (! isSetOff.value) {
+        return '';
+    }
+
+    if (customerOwes.value <= 0.005) {
+        return `${customerName.value} owes nothing as a customer, so there is nothing to set off.`;
+    }
+
+    if (vendorOwed.value <= 0.005) {
+        return `We owe ${vendorName.value} nothing as a vendor, so there is nothing to set off.`;
+    }
+
+    if (Number(entry.amount) > setOffLimit.value + 0.005) {
+        return `At most ${money(setOffLimit.value)} can be set off: ${customerName.value} owes ${money(customerOwes.value)} `
+            + `as a customer and is owed ${money(vendorOwed.value)} as a vendor.`;
+    }
+
+    return '';
+});
+
+// Which bills each side clears, in words that hold on either screen.
+const THEIR_BILLS = 'Their bills it clears, as a customer';
+const OUR_BILLS = 'Our bills to them it clears, as a vendor';
+const SETOFF_LEAD = 'Leave these empty and it settles the oldest bills first, as a payment would.';
 
 /* ---- Adjusting against files ------------------------------------------- */
 
@@ -169,14 +247,45 @@ watch(() => [entry.party_id, entry.entry_type], (now, before) => {
     adjust.loadBills();
 }, { immediate: true });
 
-// A charge is not written off, so the tick goes with the side.
+// The other account's files, for a set-off: the same, one account over.
+const counterAdjust = useAdjust({
+    billsUrl: props.billsUrl,
+    initialAlloc: props.initialCounterAlloc,
+    partyId: () => counterpart.value?.id ?? null,
+    partyName: () => counterpart.value?.name ?? '',
+    amount: () => entry.amount,
+    active: () => props.adjustable && isSetOff.value,
+});
+
+watch(() => [counterpart.value?.id ?? null, isSetOff.value], (now, before) => {
+    if (before && now[0] !== before[0] && ! resetting) {
+        counterAdjust.forget();
+    }
+
+    counterAdjust.loadBills();
+}, { immediate: true });
+
+/*
+ * A charge is not written off or set off, so each tick goes with the side.
+ * Each has its own watch: with no write-off limit set, canWriteOff never
+ * changes, and a set-off ticked on a payment would come back still ticked
+ * after a switch to a charge and back.
+ */
 watch(canWriteOff, (can) => {
-    if (! can) {
+    if (! can && entry.entry_kind === 'writeoff') {
         entry.entry_kind = '';
     }
 });
 
-const adjustProblem = computed(() => writeOffProblem.value || adjust.problem.value);
+watch(canSetOff, (can) => {
+    if (! can && entry.entry_kind === 'setoff') {
+        entry.entry_kind = '';
+    }
+});
+
+const adjustProblem = computed(() =>
+    writeOffProblem.value || setOffProblem.value || adjust.problem.value || counterAdjust.problem.value
+);
 
 const dateBox = ref(null);
 
@@ -192,6 +301,7 @@ function onReset() {
     resetting = true;
     Object.assign(entry, props.initial);
     adjust.restore(props.initialAlloc);
+    counterAdjust.restore(props.initialCounterAlloc);
     resetDateField();
 
     /*
@@ -202,6 +312,7 @@ function onReset() {
     nextTick(() => {
         resetting = false;
         adjust.loadBills();
+        counterAdjust.loadBills();
     });
 }
 
@@ -322,7 +433,7 @@ function resetDateField() {
                     </div>
                 </div>
 
-                <div v-if="! isWriteOff" class="ui-field">
+                <div v-if="! isWriteOff && ! isSetOff" class="ui-field">
                     <label class="ui-label" for="payment_mode">Payment Mode</label>
                     <select id="payment_mode" class="ui-select" name="payment_mode" v-model="entry.payment_mode">
                         <option value="">Not specified</option>
@@ -330,7 +441,9 @@ function resetDateField() {
                     </select>
                 </div>
 
-                <div class="ui-field">
+                <!-- Not on a set-off: nothing was paid to have a reference,
+                     and what is typed here reaches the customer's WhatsApp. -->
+                <div v-if="! isSetOff" class="ui-field">
                     <label class="ui-label" for="ref_no">Bill / Reference No.</label>
                     <input
                         type="text"
@@ -344,7 +457,7 @@ function resetDateField() {
 
                 <!-- Replaced rather than hidden on a write-off: a hidden box
                      would go on posting whatever was last typed in it. -->
-                <div v-if="! isWriteOff" class="ui-field entry-grid__wide">
+                <div v-if="! isWriteOff && ! isSetOff" class="ui-field entry-grid__wide">
                     <label class="ui-label" for="particular">
                         Particulars <span class="ui-label__req">*</span>
                     </label>
@@ -358,7 +471,7 @@ function resetDateField() {
                         required></textarea>
                 </div>
 
-                <div v-else class="ui-field entry-grid__wide">
+                <div v-else-if="isWriteOff" class="ui-field entry-grid__wide">
                     <label class="ui-label" for="reason">
                         Why is it being given up? <span class="ui-label__req">*</span>
                     </label>
@@ -373,6 +486,22 @@ function resetDateField() {
                         required></textarea>
                     <div class="ui-hint">
                         Kept for the office. The customer's statement says only Discount.
+                    </div>
+                </div>
+
+                <div v-else class="ui-field entry-grid__wide">
+                    <label class="ui-label" for="reason">Remark <span class="ui-hint">optional</span></label>
+                    <textarea
+                        id="reason"
+                        class="ui-textarea"
+                        name="reason"
+                        rows="2"
+                        maxlength="255"
+                        v-model="entry.reason"
+                        placeholder="e.g. Agreed with him on the phone"></textarea>
+                    <div class="ui-hint">
+                        Kept for the office. The customer reads "Adjusted against payment due to you",
+                        and the vendor account "Adjusted against amount due from you".
                     </div>
                 </div>
             </div>
@@ -397,6 +526,30 @@ function resetDateField() {
                 </span>
             </label>
 
+            <!-- What they owe cleared against what they are owed, on the other
+                 account that is the same person. No money moves. -->
+            <label v-if="canSetOff" class="entry-writeoff">
+                <input
+                    type="checkbox"
+                    name="entry_kind"
+                    value="setoff"
+                    true-value="setoff"
+                    false-value=""
+                    v-model="entry.entry_kind">
+                <span>
+                    Set off against {{ onCustomers ? 'what we owe them as a vendor' : 'what they owe us as a customer' }}
+                    — {{ counterpart.name }}
+                    <span class="ui-hint">
+                        {{ customerName }} owes {{ money(customerOwes) }} as a customer, and we owe
+                        {{ money(vendorOwed) }} as a vendor — at most {{ money(setOffLimit) }} can be set off.
+                        No money moves.
+                    </span>
+                </span>
+            </label>
+            <!-- Which account the page was drawn for: the server refuses the
+                 save if the link has changed since. -->
+            <input v-if="isSetOff" type="hidden" name="counterpart_id" :value="counterpart.id">
+
             <!-- Which files this payment is for. Optional on a payment: left
                  empty it settles the oldest files first, as it always has. A
                  write-off says which bill it closes, and the whole of it. -->
@@ -404,16 +557,24 @@ function resetDateField() {
                 v-if="showAdjust"
                 :state="adjust"
                 :optional="! isWriteOff"
-                :title="isWriteOff ? 'Which bill is being written off' : 'Adjust against files'"
+                :title="isWriteOff ? 'Which bill is being written off' : (isSetOff ? (onCustomers ? THEIR_BILLS : OUR_BILLS) : 'Adjust against files')"
                 :lead="isWriteOff
                     ? 'Put the whole of it against the bill it closes — left on account it would settle the oldest one instead.'
-                    : 'Leave these empty and the payment settles the oldest files first, as before.'"
+                    : (isSetOff ? SETOFF_LEAD : 'Leave these empty and the payment settles the oldest files first, as before.')"
                 :empty-text="isWriteOff
                     ? `Nothing is owed on any of ${selected?.name}'s bills, so there is nothing to write off.`
                     : ''" />
 
+            <!-- And the other account's, posted under its own name. -->
+            <AdjustFiles
+                v-if="isSetOff && adjustable"
+                :state="counterAdjust"
+                field="counter_alloc"
+                :title="onCustomers ? OUR_BILLS : THEIR_BILLS"
+                :lead="SETOFF_LEAD" />
+
             <div class="ui-card__foot" :class="{ 'ui-card__foot--dirty': touched }">
-                <span class="ui-hint" :class="{ 'entry-writeoff__error': writeOffProblem }">{{ writeOffProblem || hint }}</span>
+                <span class="ui-hint" :class="{ 'entry-writeoff__error': writeOffProblem || setOffProblem }">{{ writeOffProblem || setOffProblem || hint }}</span>
                 <div class="foot-actions">
                     <button type="reset" class="ui-btn">
                         <i class="bi bi-arrow-counterclockwise"></i> Reset
@@ -455,6 +616,26 @@ function resetDateField() {
                             {{ balance(after) }}
                         </span>
                     </div>
+
+                    <!-- A set-off moves the other account too, the other way. -->
+                    <template v-if="isSetOff">
+                        <div class="sum-row">
+                            <span class="sum-row__label">{{ onCustomers ? 'As a vendor' : 'As a customer' }}</span>
+                            <span class="sum-row__value">{{ counterpart.name }}</span>
+                        </div>
+                        <div class="sum-row">
+                            <span class="sum-row__label">Standing at</span>
+                            <span class="sum-row__value ui-money" :class="`ui-money--${side(counterpartBalance)}`">
+                                {{ balance(counterpartBalance) }}
+                            </span>
+                        </div>
+                        <div class="sum-row sum-row--total">
+                            <span class="sum-row__label">After</span>
+                            <span class="sum-row__value ui-money" :class="`ui-money--${side(counterpartAfter)}`">
+                                {{ balance(counterpartAfter) }}
+                            </span>
+                        </div>
+                    </template>
                 </div>
             </div>
 

@@ -224,3 +224,24 @@ describe('the Change dialog', () => {
         expect(dialog()).toBe(null);
     });
 });
+
+describe('a set-off', () => {
+    it('says that its other half goes back with it', async () => {
+        const host = mount([row(21, { particular: 'Adjusted against payment due to you', payment_mode: 'Set-off', setoff_with: 22 }), row(23)]);
+
+        changeButtons(host)[0].click();
+        await nextTick();
+
+        expect(dialog().textContent).toContain('one half of a set-off');
+        expect(dialog().textContent).toContain('entry #22');
+    });
+
+    it('and an ordinary entry says nothing of the kind', async () => {
+        const host = mount([row(23)]);
+
+        changeButtons(host)[0].click();
+        await nextTick();
+
+        expect(dialog().textContent).not.toContain('set-off');
+    });
+});
