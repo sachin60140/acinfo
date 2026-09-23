@@ -7,7 +7,7 @@ import { money } from '../money';
  * Draws the state useAdjust() keeps (resources/js/adjust.js), which belongs to
  * the screen using it — the Entry screen for a payment being typed, the Adjust
  * screen for one already saved. Posts alloc[file][work_file_id] and
- * alloc[file][amount] as part of that screen's form.
+ * alloc[file][amount] as part of that screen's form, or under `field`.
  */
 const props = defineProps({
     state: { type: Object, required: true },
@@ -21,6 +21,12 @@ const props = defineProps({
     failedText: { type: String, default: 'The files could not be loaded. The payment can still be saved, on account.' },
     // And what it means for this screen when the party owes nothing.
     emptyText: { type: String, default: '' },
+    /*
+     * The name its lines post under. A set-off has two of these on one form,
+     * one for each account, and each account's files must reach the server
+     * as that account's — a file can be on both, as this same person's.
+     */
+    field: { type: String, default: 'alloc' },
 });
 
 // Taken apart once, so the template reads each as the ref it is.
@@ -116,13 +122,13 @@ const {
                     <input
                         v-if="amountOf(bill) > 0"
                         type="hidden"
-                        :name="`alloc[${bill.id}][work_file_id]`"
+                        :name="`${field}[${bill.id}][work_file_id]`"
                         :value="bill.id">
                     <input
                         type="number"
                         class="ui-input"
                         :class="{ 'ui-input--invalid': overOpen(bill) }"
-                        :name="amountOf(bill) > 0 ? `alloc[${bill.id}][amount]` : null"
+                        :name="amountOf(bill) > 0 ? `${field}[${bill.id}][amount]` : null"
                         min="0"
                         step="0.01"
                         placeholder="0.00"
@@ -154,13 +160,13 @@ const {
                     <input
                         v-if="amountOf(line) > 0"
                         type="hidden"
-                        :name="`alloc[${line.id}][work_file_id]`"
+                        :name="`${field}[${line.id}][work_file_id]`"
                         :value="line.id">
                     <input
                         type="number"
                         class="ui-input"
                         :class="{ 'ui-input--invalid': overKept(line) }"
-                        :name="amountOf(line) > 0 ? `alloc[${line.id}][amount]` : null"
+                        :name="amountOf(line) > 0 ? `${field}[${line.id}][amount]` : null"
                         min="0"
                         step="0.01"
                         placeholder="0.00"

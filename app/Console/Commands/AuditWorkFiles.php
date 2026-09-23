@@ -44,6 +44,7 @@ class AuditWorkFiles extends Command
 
         $this->checkOrphans($note);
         $this->checkAdjustments($note);
+        $this->checkSetOffs($note);
 
         $this->line("Read $files files.");
 
@@ -64,6 +65,99 @@ class AuditWorkFiles extends Command
         $this->warn(count($problems).' disagreements. None of this is changed by running the audit.');
 
         return self::FAILURE;
+    }
+
+    /**
+     * Customers set off against their vendor accounts, half against half.
+     *
+     * A set-off is two rows on two accounts that must stay one act: a credit
+     * on a customer and a debit on a vendor, the same amount on the same day,
+     * each naming the other, reversed together or not at all. The screens
+     * write and reverse them only as pairs, so what is here is what a hand in
+     * the database, or a bug, might leave — one account cleared and the other
+     * not, with no cash row to explain it. The link between the two accounts
+     * is not checked: it may change after a set-off, which keeps its own pair.
+     */
+    private function checkSetOffs(callable $note): void
+    {
+        if (! PartyLedgerModel::canSetOff()) {
+            return;
+        }
+
+        $rows = DB::table('party_ledger as e')
+            ->join('party as p', 'p.id', '=', 'e.party_id')
+            ->where(fn ($q) => $q->where('e.entry_kind', PartyLedgerModel::SETOFF)->orWhereNotNull('e.setoff_with_id'))
+            ->get([
+                'e.id', 'e.party_id', 'e.txn_date', 'e.entry_type', 'e.amount', 'e.payment_mode',
+                'e.work_file_id', 'e.file_role', 'e.entry_kind', 'e.setoff_with_id', 'p.party_type',
+            ])
+            ->keyBy('id');
+
+        if ($rows->isEmpty()) {
+            return;
+        }
+
+        $reversed = DB::table('party_ledger')->whereIn('reverses_id', $rows->keys())->pluck('reverses_id')->flip();
+        $seen = [];
+
+        foreach ($rows as $row) {
+            $label = 'set-off #'.$row->id;
+
+            if ($row->entry_kind !== PartyLedgerModel::SETOFF) {
+                $note($label, 'names a set-off partner but is not a set-off');
+
+                continue;
+            }
+
+            // Its own shape: the customer's half a credit, the vendor's a debit.
+            $shape = ['customer' => 'credit', 'vendor' => 'debit'][$row->party_type] ?? null;
+
+            if ($row->entry_type !== $shape) {
+                $note($label, "is a {$row->entry_type} on a {$row->party_type}'s account, not a set-off's side");
+            }
+
+            // A file's own rows are rewritten when it is saved; a half is not one.
+            if ($row->work_file_id || $row->file_role) {
+                $note($label, 'belongs to a file, and the file will rewrite it');
+            }
+
+            if (in_array($row->payment_mode, PartyLedgerModel::MONEY_MODES, true)) {
+                $note($label, "says it was paid in {$row->payment_mode}, but no money moves in a set-off");
+            }
+
+            $partner = $row->setoff_with_id ? ($rows[$row->setoff_with_id] ?? null) : null;
+
+            if (! $partner || (int) $partner->setoff_with_id !== (int) $row->id || $partner->entry_kind !== PartyLedgerModel::SETOFF) {
+                $note($label, 'has no other half that names it back — one account is cleared and the other is not');
+
+                continue;
+            }
+
+            // Each pair once from here on.
+            if (isset($seen[$partner->id])) {
+                continue;
+            }
+
+            $seen[$row->id] = true;
+            $pair = 'set-off #'.min($row->id, $partner->id).'/#'.max($row->id, $partner->id);
+
+            if ($row->party_type === $partner->party_type) {
+                $note($pair, "is between two {$row->party_type} accounts, not a customer and a vendor");
+            }
+
+            if (abs((float) $row->amount - (float) $partner->amount) > 0.005) {
+                $note($pair, "has halves of {$row->amount} and {$partner->amount}");
+            }
+
+            if (date('Y-m-d', strtotime($row->txn_date)) !== date('Y-m-d', strtotime($partner->txn_date))) {
+                $note($pair, 'has halves dated '.date('d-m-Y', strtotime($row->txn_date)).' and '.date('d-m-Y', strtotime($partner->txn_date)));
+            }
+
+            if (isset($reversed[$row->id]) !== isset($reversed[$partner->id])) {
+                $alone = isset($reversed[$row->id]) ? $row->id : $partner->id;
+                $note($pair, "had only #$alone reversed — the other half still stands, so the two accounts disagree");
+            }
+        }
     }
 
     /**
@@ -97,7 +191,7 @@ class AuditWorkFiles extends Command
 
         foreach ($lines->groupBy('entry_id') as $entryId => $mine) {
             $first = $mine->first();
-            $label = 'payment #'.$entryId;
+            $label = ($first->entry_kind === PartyLedgerModel::SETOFF ? 'set-off #' : 'payment #').$entryId;
             $paymentSide = $first->party_type === 'customer' ? 'credit' : 'debit';
 
             if ($first->entry_file || $first->entry_type !== $paymentSide) {

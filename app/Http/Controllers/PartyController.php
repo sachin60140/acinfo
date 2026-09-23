@@ -295,11 +295,30 @@ class PartyController extends Controller
         $party = PartyModel::findOrFail($id);
 
         if ($req->isMethod('POST')) {
+            /*
+             * The vendor account that is this same customer, said by the
+             * office and never guessed; see PartyModel::counterpartId(). On
+             * the customer's form only, so the link has one owner. One vendor
+             * is one customer's, and a set-off already made keeps its own
+             * pair whatever the link says later.
+             */
+            $linking = PartyLedgerModel::canSetOff() && $party->party_type === 'customer';
+
             $req->validate([
                 'name' => 'required|string|max:255',
                 'mobile' => ['required', 'digits:10', Rule::unique('party', 'mobile')->where('party_type', $party->party_type)->ignore($party->id)],
                 'whatsapp' => 'nullable|digits:10',
                 'address' => 'nullable|string|max:255',
+            ] + ($linking ? [
+                'linked_vendor_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('party', 'id')->where('party_type', 'vendor'),
+                    Rule::unique('party', 'linked_vendor_id')->ignore($party->id),
+                ],
+            ] : []), [
+                'linked_vendor_id.exists' => 'Pick a vendor from the list.',
+                'linked_vendor_id.unique' => 'That vendor is already linked to another customer.',
             ]);
 
             $party->name = $req->name;
@@ -307,6 +326,18 @@ class PartyController extends Controller
             $party->whatsapp = $req->whatsapp;
             $party->address = $req->address;
             $party->is_active = $req->boolean('is_active');
+
+            if ($linking) {
+                $vendorId = $req->filled('linked_vendor_id') ? (int) $req->linked_vendor_id : null;
+
+                // Who said so and when, only when it changes.
+                if ($vendorId !== ($party->linked_vendor_id ? (int) $party->linked_vendor_id : null)) {
+                    $party->linked_vendor_id = $vendorId;
+                    $party->linked_by = $vendorId ? Auth::id() : null;
+                    $party->linked_at = $vendorId ? now() : null;
+                }
+            }
+
             $party->save();
 
             return redirect()->route('party.index', $party->party_type)
@@ -330,16 +361,21 @@ class PartyController extends Controller
                 'amount' => 'required|numeric|gt:0|max:99999999',
                 'payment_mode' => ['nullable', Rule::in(PartyLedgerModel::PAYMENT_MODES)],
                 'ref_no' => 'nullable|string|max:50',
-                // Not asked for on a write-off: the server writes "Discount".
-                'particular' => [Rule::requiredIf($req->input('entry_kind') !== PartyLedgerModel::WRITEOFF), 'nullable', 'string', 'max:255'],
+                // Not asked for on a write-off or a set-off: the server writes
+                // what each says.
+                'particular' => [Rule::requiredIf(! in_array($req->input('entry_kind'), [PartyLedgerModel::WRITEOFF, PartyLedgerModel::SETOFF], true)), 'nullable', 'string', 'max:255'],
 
                 /*
                  * Writing off a difference rather than taking money: the entry
                  * is the same shape, said as a Discount on the customer's
                  * statement, and why it was given is kept for the office.
+                 *
+                 * Or setting a customer off against their own vendor account:
+                 * see saveSetOff(). A remark is the office's own, and optional.
                  */
-                'entry_kind' => ['nullable', Rule::in([PartyLedgerModel::WRITEOFF])],
+                'entry_kind' => ['nullable', Rule::in([PartyLedgerModel::WRITEOFF, PartyLedgerModel::SETOFF])],
                 'reason' => [Rule::requiredIf($req->input('entry_kind') === PartyLedgerModel::WRITEOFF), 'nullable', 'string', 'max:255'],
+                'counterpart_id' => 'nullable|integer',
 
                 // The files this payment is adjusted against, keyed by file;
                 // see below. An empty box is no line at all.
@@ -347,8 +383,13 @@ class PartyController extends Controller
                 'alloc' => 'nullable|array',
                 'alloc.*.work_file_id' => 'required|integer',
                 'alloc.*.amount' => 'nullable|numeric|min:0|max:99999999',
+                // A set-off's other account's files, the same way.
+                'counter_alloc' => 'nullable|array',
+                'counter_alloc.*.work_file_id' => 'required|integer',
+                'counter_alloc.*.amount' => 'nullable|numeric|min:0|max:99999999',
             ], [
                 'alloc.*.amount.numeric' => 'An amount against a file must be a number.',
+                'counter_alloc.*.amount.numeric' => 'An amount against a file must be a number.',
                 'reason.required' => 'Say why the rest is being given up — it is kept for the office and the customer never sees it.',
             ]);
 
@@ -377,6 +418,19 @@ class PartyController extends Controller
             if (! $writeOff && strcasecmp(trim((string) $req->particular), PartyLedgerModel::WRITEOFF_PARTICULAR) === 0) {
                 return back()->withInput()->withErrors([
                     'particular' => 'Tick "Write this off" to give up a difference. An ordinary entry cannot be called a Discount.',
+                ]);
+            }
+
+            if ($req->input('entry_kind') === PartyLedgerModel::SETOFF) {
+                return $this->saveSetOff($req, $type, $lines);
+            }
+
+            // Nor may one be worded as a set-off, with no other half behind it.
+            $said = strtolower(trim((string) $req->particular));
+
+            if (in_array($said, [strtolower(PartyLedgerModel::SETOFF_CUSTOMER_PARTICULAR), strtolower(PartyLedgerModel::SETOFF_VENDOR_PARTICULAR)], true)) {
+                return back()->withInput()->withErrors([
+                    'particular' => 'Tick "Set off" to clear what they owe against what they are owed. An ordinary entry cannot be worded as a set-off.',
                 ]);
             }
 
@@ -548,10 +602,16 @@ class PartyController extends Controller
             'limitsUrl' => route('setting.index'),
             'billsUrl' => route('party.bills', ['id' => '__ID__']),
             // A refused save's amounts, file by file, to be put back.
-            'initialAlloc' => (object) collect((array) old('alloc', []))
-                ->filter(fn ($line) => is_array($line) && ($line['amount'] ?? '') !== '')
-                ->mapWithKeys(fn ($line) => [(int) ($line['work_file_id'] ?? 0) => (string) $line['amount']])
-                ->all(),
+            'initialAlloc' => self::oldAlloc('alloc'),
+
+            /*
+             * Setting a customer off against their own vendor account: each
+             * party's other account, where the office has linked one, with
+             * its balance. The office's own screen, so it is named here.
+             */
+            'settable' => PartyLedgerModel::canSetOff(),
+            'counterparts' => PartyModel::counterparts($type),
+            'initialCounterAlloc' => self::oldAlloc('counter_alloc'),
         ];
 
         return Screen::make('admin.party.entry', 'vue-party-entry', $props, [
@@ -570,6 +630,169 @@ class PartyController extends Controller
         return $type === 'customer' ? 'credit' : 'debit';
     }
 
+    /** A refused save's amounts under one key, file by file, to be put back. */
+    private static function oldAlloc(string $key): object
+    {
+        return (object) collect((array) old($key, []))
+            ->filter(fn ($line) => is_array($line) && ($line['amount'] ?? '') !== '')
+            ->mapWithKeys(fn ($line) => [(int) ($line['work_file_id'] ?? 0) => (string) $line['amount']])
+            ->all();
+    }
+
+    /**
+     * A customer set off against their own vendor account.
+     *
+     * One person owes the office for files and is owed for work, and the one
+     * is cleared against the other with no money moving: a credit on the
+     * customer, as a receipt would be, and a debit on the vendor, as a payment
+     * would be — the same amount, the same day, each naming the other. So
+     * every balance, statement and file reads right with nothing else changed,
+     * and what is not named against files settles the oldest on each side.
+     *
+     * Only between two accounts the office linked by hand, both active, and
+     * never more than the customer owes or the office owes the vendor, read
+     * under a lock on both — or one side would be left in advance for money
+     * nobody paid. Typed from either account's Entry screen, on its payment
+     * side; the two halves are the same whichever it was.
+     */
+    private function saveSetOff(Request $req, string $type, Collection $lines)
+    {
+        $counterLines = self::allocLines($req, 'counter_alloc');
+        $amount = round((float) $req->amount, 2);
+
+        if (! PartyLedgerModel::canSetOff()) {
+            return back()->withInput()->withErrors([
+                'entry_kind' => 'Setting off needs the database update that came with it (php artisan migrate).',
+            ]);
+        }
+
+        if ($req->entry_type !== self::paymentSide($type)) {
+            return back()->withInput()->withErrors(['entry_kind' => $type === 'customer'
+                ? "A set-off is a Credit on a customer's account: it lowers what they owe."
+                : "A set-off is a Debit on a vendor's account: it lowers what we owe them."]);
+        }
+
+        foreach (['alloc' => $lines, 'counter_alloc' => $counterLines] as $key => $these) {
+            if ($refused = self::allocRefusal($these, $amount)) {
+                return back()->withInput()->withErrors([$key => $refused]);
+            }
+        }
+
+        [$customerHalf, $vendorHalf, $customer, $vendor] = DB::transaction(function () use ($req, $type, $lines, $counterLines, $amount) {
+            /*
+             * Both accounts, the lower id first, so a set-off and a payment
+             * typed on either at the same moment never wait on each other the
+             * wrong way round. What the page said is checked again under them.
+             */
+            $ids = [(int) $req->party_id, (int) $req->input('counterpart_id')];
+            sort($ids);
+
+            foreach ($ids as $id) {
+                PartyModel::whereKey($id)->lockForUpdate()->first();
+            }
+
+            $party = PartyModel::findOrFail($req->party_id);
+            $otherId = $party->counterpartId();
+
+            if (! $otherId) {
+                throw ValidationException::withMessages(['entry_kind' => $party->name.' is not linked to a '
+                    .($type === 'customer' ? 'vendor' : 'customer')." account. Link the two on the customer's Edit screen first."]);
+            }
+
+            if ($otherId !== (int) $req->input('counterpart_id')) {
+                throw ValidationException::withMessages(['entry_kind' => 'The account '.$party->name
+                    .' is linked to changed since this page was opened. Nothing was saved; check it and save again.']);
+            }
+
+            $other = PartyModel::findOrFail($otherId);
+
+            [$customer, $vendor] = $type === 'customer' ? [$party, $other] : [$other, $party];
+            [$customerLines, $vendorLines] = $type === 'customer' ? [$lines, $counterLines] : [$counterLines, $lines];
+            [$customerKey, $vendorKey] = $type === 'customer' ? ['alloc', 'counter_alloc'] : ['counter_alloc', 'alloc'];
+
+            foreach ([$customer, $vendor] as $one) {
+                if (! $one->is_active) {
+                    throw ValidationException::withMessages(['entry_kind' => $one->name.' is inactive, and nothing new is set off against an inactive account.']);
+                }
+            }
+
+            $owes = round(PartyLedgerModel::currentBalance($customer->id), 2);
+            $owed = round(-PartyLedgerModel::currentBalance($vendor->id), 2);
+
+            if ($amount > $owes + 0.005) {
+                throw ValidationException::withMessages(['amount' => $owes > 0.005
+                    ? $customer->name.' owes only '.number_format($owes, 2, '.', ',').' as a customer, so no more than that can be set off.'
+                    : $customer->name.' owes nothing as a customer, so there is nothing to set off.']);
+            }
+
+            if ($amount > $owed + 0.005) {
+                throw ValidationException::withMessages(['amount' => $owed > 0.005
+                    ? 'We owe '.$vendor->name.' only '.number_format($owed, 2, '.', ',').' as a vendor, so no more than that can be set off.'
+                    : 'We owe '.$vendor->name.' nothing as a vendor, so there is nothing to set off.']);
+            }
+
+            self::checkAgainstLedger((int) $customer->id, 'customer', $customerLines, null, [], $customerKey);
+            self::checkAgainstLedger((int) $vendor->id, 'vendor', $vendorLines, null, [], $vendorKey);
+
+            $note = trim((string) $req->input('reason'));
+
+            $half = function (PartyModel $who, string $side, string $particular, ?int $partner) use ($req, $amount, $note) {
+                $row = new PartyLedgerModel;
+                $row->party_id = $who->id;
+                $row->txn_date = $req->txn_date;
+                $row->entry_type = $side;
+                $row->amount = $amount;
+                // Nothing changed hands, and what it says is the server's own.
+                $row->payment_mode = PartyLedgerModel::SETOFF_MODE;
+                $row->ref_no = null;
+                $row->particular = $particular;
+                $row->entry_kind = PartyLedgerModel::SETOFF;
+                $row->note = $note !== '' ? $note : null;
+                $row->setoff_with_id = $partner;
+                $row->created_by = Auth::id();
+                $row->save();
+
+                return $row;
+            };
+
+            $customerHalf = $half($customer, 'credit', PartyLedgerModel::SETOFF_CUSTOMER_PARTICULAR, null);
+            $vendorHalf = $half($vendor, 'debit', PartyLedgerModel::SETOFF_VENDOR_PARTICULAR, (int) $customerHalf->id);
+
+            // Each names the other.
+            $customerHalf->setoff_with_id = $vendorHalf->id;
+            $customerHalf->save();
+
+            // Each half's files under its own account, never the other's.
+            self::allocate((int) $customerHalf->id, (int) $customer->id, $customerLines, $customerHalf->created_at);
+            self::allocate((int) $vendorHalf->id, (int) $vendor->id, $vendorLines, $vendorHalf->created_at);
+
+            return [$customerHalf, $vendorHalf, $customer, $vendor];
+        });
+
+        $money = number_format($amount, 2, '.', ',');
+
+        return back()
+            ->with('success', 'Set off '.$money.': '.$customer->name.' owes '.$money.' less as a customer, and is owed '
+                .$money.' less as a vendor. Entry #'.$customerHalf->id.' on the customer, #'.$vendorHalf->id.' on the vendor.')
+            /*
+             * The customer is told, as they are of any adjustment: a message
+             * to send on WhatsApp, never sent from here. Their half only —
+             * the vendor half's files are other customers' vehicles.
+             */
+            ->with('receipt', [
+                'kind' => 'setoff',
+                'name' => $customer->name,
+                'mobile' => (string) ($customer->whatsapp ?: $customer->mobile),
+                'amount' => (float) $amount,
+                'dateLabel' => date('d-m-Y', strtotime($customerHalf->txn_date)),
+                'mode' => '',
+                'reference' => '',
+                'balance' => round(PartyLedgerModel::currentBalance($customer->id), 2),
+                'todayLabel' => now()->format('d-m-Y'),
+                'against' => PartyLedgerModel::againstFor([$customerHalf->id])[$customerHalf->id] ?? [],
+            ]);
+    }
+
     /**
      * The files a payment is posted against, as lines.
      *
@@ -578,9 +801,9 @@ class PartyController extends Controller
      *
      * @return Collection<int, array{work_file_id: int, amount: float}>
      */
-    private static function allocLines(Request $req): Collection
+    private static function allocLines(Request $req, string $key = 'alloc'): Collection
     {
-        return collect((array) $req->input('alloc', []))
+        return collect((array) $req->input($key, []))
             ->filter(fn ($line) => is_array($line))
             ->map(fn ($line) => [
                 'work_file_id' => (int) ($line['work_file_id'] ?? 0),
@@ -724,8 +947,9 @@ class PartyController extends Controller
      * already take.
      *
      * @param  array<int, string>  $keep  file id => amount
+     * @param  string  $key  the field the problems are said against: a set-off's other account has its own
      */
-    private static function checkAgainstLedger(int $partyId, string $type, Collection $lines, ?int $except = null, array $keep = []): void
+    private static function checkAgainstLedger(int $partyId, string $type, Collection $lines, ?int $except = null, array $keep = [], string $key = 'alloc'): void
     {
         $lines = $lines->reject(fn ($line) => isset($keep[$line['work_file_id']])
             && $line['amount'] <= (float) $keep[$line['work_file_id']] + 0.005);
@@ -750,7 +974,7 @@ class PartyController extends Controller
         }
 
         if ($problems) {
-            throw ValidationException::withMessages(['alloc' => implode(' ', $problems)]);
+            throw ValidationException::withMessages([$key => implode(' ', $problems)]);
         }
     }
 
@@ -794,7 +1018,9 @@ class PartyController extends Controller
         }
 
         if (PartyLedgerModel::reversible()) {
-            if ($entry->reverses_id || $entry->entry_kind) {
+            // A set-off's half is, as a receipt is: its files can change with
+            // no money moving, and the other half is not touched.
+            if ($entry->reverses_id || ($entry->entry_kind && $entry->entry_kind !== PartyLedgerModel::SETOFF)) {
                 return 'Entry #'.$entry->id.' is not an ordinary payment, and is not adjusted against files.';
             }
 
@@ -1336,9 +1562,45 @@ class PartyController extends Controller
             'reason.required' => 'Say why this entry is being taken back — it is kept for the office.',
         ]);
 
-        [$entry, $lines] = DB::transaction(function () use ($req, $id) {
-            $entry = PartyLedgerModel::whereKey($id)->lockForUpdate()->firstOrFail();
-            PartyModel::whereKey($entry->party_id)->lockForUpdate()->first();
+        /*
+         * A set-off is two halves on two accounts, and goes back as two or not
+         * at all: one alone would leave the customer owing again while the
+         * office still owed the vendor nothing, or the other way round. Its
+         * partner is fixed when it is made, so it is read here, before the
+         * transaction — and inside it both are locked, halves then accounts,
+         * each the lower id first, the order adjust() and a set-off take
+         * theirs in.
+         *
+         * Not read inside it. Found in review: a plain read first in the
+         * transaction fixes what every later read sees at that moment, before
+         * the locks were waited for — so a reversal a colleague had just
+         * committed went unseen, and the second one was a 500 on the unique
+         * index rather than "already reversed"; Correct refilled the files as
+         * they were before a colleague's change, and saving undid it.
+         */
+        $first = PartyLedgerModel::findOrFail($id);
+        $partnerId = PartyLedgerModel::canSetOff() && $first->entry_kind === PartyLedgerModel::SETOFF
+            ? (int) $first->setoff_with_id
+            : 0;
+
+        [$entry, $lines, $partner, $partnerLines] = DB::transaction(function () use ($req, $first, $partnerId) {
+            $ids = array_values(array_filter([(int) $first->id, $partnerId]));
+            sort($ids);
+            $locked = [];
+
+            foreach ($ids as $one) {
+                $locked[$one] = PartyLedgerModel::whereKey($one)->lockForUpdate()->first();
+            }
+
+            $entry = $locked[(int) $first->id];
+            $partner = $partnerId ? ($locked[$partnerId] ?? null) : null;
+
+            $parties = array_unique(array_filter([(int) $entry->party_id, (int) $partner?->party_id]));
+            sort($parties);
+
+            foreach ($parties as $one) {
+                PartyModel::whereKey($one)->lockForUpdate()->first();
+            }
 
             if ($entry->work_file_id) {
                 $fileNo = DB::table('work_file')->where('id', $entry->work_file_id)->value('file_no');
@@ -1358,55 +1620,118 @@ class PartyController extends Controller
                 throw ValidationException::withMessages(['reason' => 'Entry #'.$entry->id.' has already been reversed.']);
             }
 
-            // What it was adjusted against, released: a reversed payment
+            if ($partnerId) {
+                // Nothing on a screen can part them; a hand in the database
+                // might, and then it is put right by hand, not guessed at here.
+                if (! $partner || $partner->entry_kind !== PartyLedgerModel::SETOFF || (int) $partner->setoff_with_id !== (int) $entry->id) {
+                    throw ValidationException::withMessages(['reason' => 'The other half of this set-off, entry #'.$partnerId
+                        .', is missing or no longer names it back, so the two cannot be reversed together. files:audit names it; it is put right by hand.']);
+                }
+
+                if (PartyLedgerModel::where('reverses_id', $partner->id)->exists()) {
+                    throw ValidationException::withMessages(['reason' => 'Entry #'.$partner->id
+                        .', the other half of this set-off, has already been reversed on its own. files:audit names it; it is put right by hand.']);
+                }
+
+                /*
+                 * Entered again, it is a set-off again — between the same two
+                 * accounts, still linked and both active, or it could not be
+                 * saved. Refused before anything is reversed, so Correct never
+                 * leaves the office with a reversal and nothing to type.
+                 */
+                if ($req->boolean('correct')) {
+                    [$customerId, $vendorId] = PartyModel::whereKey($entry->party_id)->value('party_type') === 'customer'
+                        ? [(int) $entry->party_id, (int) $partner->party_id]
+                        : [(int) $partner->party_id, (int) $entry->party_id];
+
+                    $customer = PartyModel::find($customerId);
+                    $vendor = PartyModel::find($vendorId);
+
+                    if ((int) $customer?->linked_vendor_id !== $vendorId || ! $customer->is_active || ! $vendor?->is_active) {
+                        throw ValidationException::withMessages(['reason' => 'These two accounts are no longer linked, or one is inactive, '
+                            .'so this cannot be entered again as a set-off. Reverse it instead.']);
+                    }
+                }
+            }
+
+            $halves = array_filter([$entry, $partner]);
+
+            // What they were adjusted against, released: a reversed payment
             // settles nothing, and the lines go with it to be typed again.
-            $lines = DB::table('party_ledger_allocation')
-                ->where('entry_id', $entry->id)
-                ->whereNull('released_at')
-                ->orderBy('id')
-                ->get(['work_file_id', 'amount']);
+            // One moment for the whole save, both halves.
+            $at = now();
+            $released = [];
 
-            DB::table('party_ledger_allocation')
-                ->where('entry_id', $entry->id)
-                ->whereNull('released_at')
-                ->update(['released_at' => now(), 'released_by' => Auth::id(), 'updated_at' => now()]);
+            foreach ($halves as $half) {
+                $released[$half->id] = DB::table('party_ledger_allocation')
+                    ->where('entry_id', $half->id)
+                    ->whereNull('released_at')
+                    ->orderBy('id')
+                    ->get(['work_file_id', 'amount']);
 
-            $reversal = new PartyLedgerModel;
-            $reversal->party_id = $entry->party_id;
+                DB::table('party_ledger_allocation')
+                    ->where('entry_id', $half->id)
+                    ->whereNull('released_at')
+                    ->update(['released_at' => $at, 'released_by' => Auth::id(), 'updated_at' => $at]);
+            }
+
             /*
              * Today, so a statement already sent is not changed after the fact.
              * Never before the entry it takes back, though. Found in review: a
              * post-dated entry reversed today put the reversal first, and every
              * period statement until that date showed money owed that was not.
              * Nothing dated ahead can have been sent yet, so the later date
-             * keeps the rule's reason.
+             * keeps the rule's reason. One date for both halves of a set-off,
+             * so the two reversals are a pair as well.
              */
-            $reversal->txn_date = max(now()->toDateString(), date('Y-m-d', strtotime($entry->txn_date)));
-            $reversal->entry_type = $entry->entry_type === 'debit' ? 'credit' : 'debit';
-            $reversal->amount = $entry->amount;
-            $reversal->payment_mode = PartyLedgerModel::REVERSAL_MODE;
-            $reversal->ref_no = $entry->ref_no;
-            // What the customer reads: which entry, by its date and amount.
-            $reversal->particular = 'Reversal of entry #'.$entry->id.' of '.date('d-m-Y', strtotime($entry->txn_date));
-            $reversal->entry_kind = PartyLedgerModel::REVERSAL;
-            $reversal->note = trim($req->reason);
-            $reversal->reverses_id = $entry->id;
-            $reversal->created_by = Auth::id();
-            $reversal->save();
+            $dated = max(array_merge(
+                [now()->toDateString()],
+                array_map(fn ($half) => date('Y-m-d', strtotime($half->txn_date)), $halves)
+            ));
 
-            return [$entry, $lines];
+            foreach ($halves as $half) {
+                $reversal = new PartyLedgerModel;
+                $reversal->party_id = $half->party_id;
+                $reversal->txn_date = $dated;
+                $reversal->entry_type = $half->entry_type === 'debit' ? 'credit' : 'debit';
+                $reversal->amount = $half->amount;
+                $reversal->payment_mode = PartyLedgerModel::REVERSAL_MODE;
+                $reversal->ref_no = $half->ref_no;
+                // What the customer reads: which entry, by its date and amount.
+                $reversal->particular = 'Reversal of entry #'.$half->id.' of '.date('d-m-Y', strtotime($half->txn_date));
+                $reversal->entry_kind = PartyLedgerModel::REVERSAL;
+                $reversal->note = trim($req->reason);
+                $reversal->reverses_id = $half->id;
+                $reversal->created_by = Auth::id();
+                $reversal->save();
+            }
+
+            return [$entry, $released[$entry->id], $partner, $partner ? $released[$partner->id] : collect()];
         });
 
         $type = PartyModel::whereKey($entry->party_id)->value('party_type');
 
+        $asInput = fn ($lines) => $lines->mapWithKeys(fn ($line) => [(int) $line->work_file_id => [
+            'work_file_id' => (int) $line->work_file_id,
+            'amount' => (string) (float) $line->amount,
+        ]])->all();
+
         if ($req->boolean('correct')) {
+            /*
+             * A set-off comes back as one, from whichever account it was
+             * changed on: ticked, against the same other account, each side's
+             * files where they were. Its words are the server's and are left
+             * behind, as a write-off's are.
+             */
+            $setOff = $partner !== null;
+
             return redirect()->route('party.entry', $type)
                 ->withInput([
                     'party_id' => (string) $entry->party_id,
                     'entry_type' => $entry->entry_type,
                     'txn_date' => date('Y-m-d', strtotime($entry->txn_date)),
                     'amount' => (string) (float) $entry->amount,
-                    'payment_mode' => (string) $entry->payment_mode,
+                    'payment_mode' => $setOff ? '' : (string) $entry->payment_mode,
                     'ref_no' => (string) $entry->ref_no,
                     /*
                      * A write-off comes back as one. Found in review: only the
@@ -1416,22 +1741,28 @@ class PartyController extends Controller
                      * under no limit and in no report. Its own label is left
                      * behind with it: the server writes that word, nobody types it.
                      */
-                    'particular' => $entry->entry_kind === PartyLedgerModel::WRITEOFF ? '' : (string) $entry->particular,
+                    'particular' => in_array($entry->entry_kind, [PartyLedgerModel::WRITEOFF, PartyLedgerModel::SETOFF], true) ? '' : (string) $entry->particular,
                     'entry_kind' => (string) $entry->entry_kind,
                     'reason' => (string) $entry->note,
-                    'alloc' => $lines->mapWithKeys(fn ($line) => [(int) $line->work_file_id => [
-                        'work_file_id' => (int) $line->work_file_id,
-                        'amount' => (string) (float) $line->amount,
-                    ]])->all(),
+                    'counterpart_id' => $setOff ? (string) $partner->party_id : '',
+                    'alloc' => $asInput($lines),
+                    'counter_alloc' => $asInput($partnerLines),
                 ])
-                ->with('success', 'Entry #'.$entry->id.' has been reversed. Enter it again correctly below.');
+                ->with('success', $setOff
+                    ? 'Set-off entries #'.$entry->id.' and #'.$partner->id.' have been reversed, on both accounts. Enter it again correctly below.'
+                    : 'Entry #'.$entry->id.' has been reversed. Enter it again correctly below.');
         }
 
         // Said as it is: today, unless the entry was dated ahead of today.
         $dated = PartyLedgerModel::where('reverses_id', $entry->id)->value('txn_date');
+        $when = date('Y-m-d', strtotime($dated)) === now()->toDateString() ? 'today' : date('d-m-Y', strtotime($dated));
 
-        return back()->with('success', 'Entry #'.$entry->id.' has been reversed. The reversal is dated '
-            .(date('Y-m-d', strtotime($dated)) === now()->toDateString() ? 'today' : date('d-m-Y', strtotime($dated))).'.');
+        if ($partner) {
+            return back()->with('success', 'Set-off entries #'.$entry->id.' and #'.$partner->id.' have been reversed, on both accounts. '
+                .'The reversals are dated '.$when.'.');
+        }
+
+        return back()->with('success', 'Entry #'.$entry->id.' has been reversed. The reversal is dated '.$when.'.');
     }
 
     /**
@@ -1442,22 +1773,38 @@ class PartyController extends Controller
      * And whether it can be adjusted against files: a payment, standing, typed
      * by hand. The Change dialog offers that when adjust_url is set.
      *
-     * @return array{change: ?string, row_state: ?string, office_note: ?string, adjust_url: ?string}
+     * And, for a half of a set-off, which entry is its other half: the dialog
+     * says the two go back together.
+     *
+     * @return array{change: ?string, row_state: ?string, office_note: ?string, adjust_url: ?string, setoff_with: ?int}
      */
     private static function changeFields($entry, $reversedBy, bool $reversible, string $paymentSide, array $history = [], array $period = []): array
     {
         if (! $reversible) {
-            return ['change' => null, 'row_state' => null, 'office_note' => null, 'adjust_url' => null];
+            return ['change' => null, 'row_state' => null, 'office_note' => null, 'adjust_url' => null, 'setoff_with' => null];
         }
 
         $reversal = $reversedBy[$entry->id] ?? null;
+
+        /*
+         * The other half of a set-off, for the office only: on the vendor's
+         * account for a customer's statement, and the other way round. By its
+         * number and not its name — the note is the office's, but the page
+         * is a customer's.
+         */
+        $partner = $entry->entry_kind === PartyLedgerModel::SETOFF && $entry->setoff_with_id ? (int) $entry->setoff_with_id : null;
+        $partnerSays = $partner
+            ? ($paymentSide === 'credit' ? 'vendor' : 'customer').' entry #'.$partner
+            : null;
 
         if ($reversal) {
             return [
                 'change' => null,
                 'row_state' => 'is-reversed',
-                'office_note' => 'Reversed by #'.$reversal->id.' on '.date('d-m-Y', strtotime($reversal->txn_date)),
+                'office_note' => 'Reversed by #'.$reversal->id.' on '.date('d-m-Y', strtotime($reversal->txn_date))
+                    .($partnerSays ? ', with its other half, '.$partnerSays : ''),
                 'adjust_url' => null,
+                'setoff_with' => null,
             ];
         }
 
@@ -1467,22 +1814,35 @@ class PartyController extends Controller
                 'row_state' => 'is-reversal',
                 'office_note' => $entry->note ? 'Why: '.$entry->note : null,
                 'adjust_url' => null,
+                'setoff_with' => null,
             ];
         }
 
-        $byHand = ! $entry->work_file_id && ! $entry->entry_kind;
+        // Typed by hand: an ordinary payment, or a set-off's half, whose files
+        // can change as a receipt's can.
+        $byHand = ! $entry->work_file_id && (! $entry->entry_kind || $partner);
+
+        $note = match (true) {
+            // Why a difference was given up. The customer's own statement
+            // does not say.
+            $entry->entry_kind === PartyLedgerModel::WRITEOFF && (bool) $entry->note => 'Why: '.$entry->note,
+            (bool) $partner => implode(' · ', array_filter([
+                'Set off against '.$partnerSays,
+                $entry->note ? 'Remark: '.$entry->note : null,
+                $history[$entry->id] ?? null,
+            ])),
+            // When its files were last changed.
+            default => $history[$entry->id] ?? null,
+        };
 
         return [
             'change' => $entry->work_file_id ? null : 'Change',
             'row_state' => null,
-            // Why a difference was given up, and when its files were last
-            // changed. The customer's own statement says neither.
-            'office_note' => $entry->entry_kind === PartyLedgerModel::WRITEOFF && $entry->note
-                ? 'Why: '.$entry->note
-                : ($history[$entry->id] ?? null),
+            'office_note' => $note,
             'adjust_url' => $byHand && $entry->entry_type === $paymentSide
                 ? route('party.adjust', ['id' => $entry->id] + $period)
                 : null,
+            'setoff_with' => $partner,
         ];
     }
 
@@ -1598,6 +1958,7 @@ class PartyController extends Controller
             'row_state' => null,
             'office_note' => null,
             'adjust_url' => null,
+            'setoff_with' => null,
         ]];
 
         $closing = [[
@@ -1616,6 +1977,7 @@ class PartyController extends Controller
             'row_state' => null,
             'office_note' => null,
             'adjust_url' => null,
+            'setoff_with' => null,
         ]];
 
         // Only when there is one to show. A column of empty cells is clutter on
@@ -1746,6 +2108,50 @@ class PartyController extends Controller
         ])->toResponse($req);
     }
     /**
+     * The link between a customer and the vendor account that is the same
+     * person, as the edit form shows it. Chosen on the customer's form; read
+     * only on the vendor's, with the way to the customer's.
+     *
+     * The same keys whatever is shown, so the screen's props keep one shape.
+     */
+    private static function linkProps(?PartyModel $party): array
+    {
+        $link = ['shown' => false, 'side' => '', 'value' => '', 'options' => [], 'linkedName' => '', 'linkedUrl' => ''];
+
+        if (! $party || ! PartyLedgerModel::canSetOff()) {
+            return $link;
+        }
+
+        if ($party->party_type === 'customer') {
+            $current = $party->linked_vendor_id ? (int) $party->linked_vendor_id : null;
+
+            // Active vendors not linked to someone else, and the one it is
+            // linked to now even if inactive — or a save would drop it.
+            $taken = DB::table('party')->where('party_type', 'customer')->where('id', '!=', $party->id)
+                ->whereNotNull('linked_vendor_id')->pluck('linked_vendor_id')->map(fn ($id) => (int) $id)->flip();
+
+            return [
+                'shown' => true,
+                'side' => 'customer',
+                'value' => (string) old('linked_vendor_id', $current ? (string) $current : ''),
+                'options' => PartyModel::selectList('vendor', $current)
+                    ->reject(fn ($vendor) => isset($taken[(int) $vendor->id]))
+                    ->map(fn ($vendor) => ['id' => (int) $vendor->id, 'name' => (string) $vendor->name, 'mobile' => (string) $vendor->mobile])
+                    ->values()->all(),
+            ] + $link;
+        }
+
+        $customer = PartyModel::where('party_type', 'customer')->where('linked_vendor_id', $party->id)->first();
+
+        return [
+            'shown' => true,
+            'side' => 'vendor',
+            'linkedName' => $customer ? $customer->name.' ('.$customer->mobile.')' : '',
+            'linkedUrl' => $customer ? route('party.edit', $customer->id) : '',
+        ] + $link;
+    }
+
+    /**
      * The add and edit forms are the same screen with a party or without one,
      * so they describe it in one place rather than twice.
      */
@@ -1788,6 +2194,7 @@ class PartyController extends Controller
             // against the field it came from. Cast so an empty bag still
             // arrives as an object rather than as an array.
             'errors' => (object) array_map(fn ($m) => $m[0], $bag ? $bag->messages() : []),
+            'link' => self::linkProps($party),
         ];
 
         return Screen::make('admin.party.form', 'vue-party-form', $props, [

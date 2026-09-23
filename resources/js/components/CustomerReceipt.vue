@@ -3,7 +3,8 @@
  * A receipt for the payment just saved, to send the customer on WhatsApp.
  *
  * Shown once, beside the "saved" message, after a customer credit paid in
- * money — the server decides that and leaves this out otherwise. Nothing is
+ * money, or a set-off against what they are owed — the server decides that
+ * and leaves this out otherwise. Nothing is
  * sent from here: WhatsApp opens with the receipt filled in and the office
  * presses Send.
  */
@@ -24,6 +25,8 @@ const props = defineProps({
     todayLabel: { type: String, default: '' },
     // The files it was adjusted against: [{ label, amount }].
     against: { type: Array, default: () => [] },
+    // 'payment', or 'setoff' for what they owe cleared against what they are owed.
+    kind: { type: String, default: 'payment' },
 });
 
 const text = computed(() => receiptMessage(props));
@@ -33,7 +36,8 @@ const text = computed(() => receiptMessage(props));
     <div v-if="text" class="customer-receipt">
         <span class="customer-receipt__what">
             <i class="bi bi-receipt"></i>
-            {{ money(amount) }} received from {{ name }}
+            <template v-if="kind === 'setoff'">{{ money(amount) }} set off for {{ name }}</template>
+            <template v-else>{{ money(amount) }} received from {{ name }}</template>
         </span>
         <WhatsAppShare :text="text" :mobile="mobile" :name="name" send-label="Send receipt on WhatsApp" copy-label="Copy receipt" />
     </div>

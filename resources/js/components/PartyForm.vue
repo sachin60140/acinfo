@@ -26,6 +26,16 @@ const props = defineProps({
     defaultOpeningType: { type: String, default: 'debit' },
     dateField: { type: String, default: '' },
     errors: { type: Object, default: () => ({}) },
+
+    /*
+     * The vendor account that is this same customer, for setting one off
+     * against the other. Chosen on the customer's form; the vendor's shows
+     * who it is linked to, and the way there.
+     */
+    link: {
+        type: Object,
+        default: () => ({ shown: false, side: '', value: '', options: [], linkedName: '', linkedUrl: '' }),
+    },
 });
 
 const form = reactive({
@@ -193,6 +203,42 @@ onMounted(() => {
                 <div class="ui-hint">
                     Inactive {{ lower }}s stay in the list and keep their statement,
                     but are hidden from the entry form.
+                </div>
+            </div>
+
+            <!-- One person with two accounts: said by the office, never
+                 guessed from a mobile number. -->
+            <div v-if="isEdit && link.shown && link.side === 'customer'" class="ui-field">
+                <label class="ui-label" for="linked_vendor_id">Same person as vendor</label>
+                <select
+                    id="linked_vendor_id"
+                    class="ui-select"
+                    :class="{ 'ui-input--invalid': errors.linked_vendor_id }"
+                    name="linked_vendor_id">
+                    <option value="" :selected="link.value === ''">Not a vendor</option>
+                    <option
+                        v-for="vendor in link.options"
+                        :key="vendor.id"
+                        :value="String(vendor.id)"
+                        :selected="link.value === String(vendor.id)">
+                        {{ vendor.name }} ({{ vendor.mobile }})
+                    </option>
+                </select>
+                <div class="ui-hint">
+                    Linked, what they owe as a customer can be set off against what we owe them as a vendor,
+                    on the Entry screen.
+                </div>
+                <div v-if="errors.linked_vendor_id" class="ui-hint ui-hint--error">{{ errors.linked_vendor_id }}</div>
+            </div>
+
+            <div v-if="isEdit && link.shown && link.side === 'vendor'" class="ui-field">
+                <span class="ui-label">Same person as customer</span>
+                <div v-if="link.linkedName">
+                    {{ link.linkedName }}
+                    <a :href="link.linkedUrl" class="ui-link">Change on the customer</a>
+                </div>
+                <div v-else class="ui-hint">
+                    Not linked. A vendor is linked from the customer's Edit screen.
                 </div>
             </div>
 

@@ -195,6 +195,40 @@ class PartyLedgerModel extends Model
      */
     public const WRITEOFF_PARTICULAR = 'Discount';
 
+    /** The kind each half of a set-off is, in entry_kind. */
+    public const SETOFF = 'setoff';
+
+    /**
+     * The mode a set-off is written with. Not offered on the form, and not
+     * money: nothing changed hands, so MONEY_MODES does not have it.
+     */
+    public const SETOFF_MODE = 'Set-off';
+
+    /**
+     * What each half says, in the owner's words (2026-09-23). Written by the
+     * server and never typed, so it reads the same on every one — and names
+     * nobody: to a customer the vendor account is their own, but a name in it
+     * would be read for vendors and cut, and the word "vendor" would tell them
+     * how the office books other people's work.
+     */
+    public const SETOFF_CUSTOMER_PARTICULAR = 'Adjusted against payment due to you';
+
+    public const SETOFF_VENDOR_PARTICULAR = 'Adjusted against amount due from you';
+
+    /**
+     * Whether a customer can be set off against their vendor account yet: the
+     * link and the pair arrive with a migration, and a deploy here is a git
+     * pull that does not run one.
+     */
+    public static function canSetOff(): bool
+    {
+        static $known = null;
+
+        return $known ??= self::reversible()
+            && Schema::hasColumn('party_ledger', 'setoff_with_id')
+            && Schema::hasColumn('party', 'linked_vendor_id');
+    }
+
     /**
      * Whether a difference can be written off yet.
      *

@@ -87,24 +87,35 @@ export function readyMessage(customer, rows, today = '') {
  * find the payment in their bank — but the particular on the entry never
  * does: it is the office's description, written for the office.
  *
+ * A set-off (kind 'setoff') is said as what it is: nothing was received, so
+ * the words are the owner's — adjusted against payment due to them — with
+ * no mode, no reference and nobody else named. The files are theirs as a
+ * customer only; the server sends no others.
+ *
  * @param {{name:string, amount:number, dateLabel?:string, mode?:string,
- *          reference?:string, balance:number, todayLabel?:string}} receipt
+ *          reference?:string, balance:number, todayLabel?:string, kind?:string}} receipt
  *          balance: today's, signed, positive when they still owe and negative
  *          when they are in advance
  */
-export function receiptMessage({ name, amount, dateLabel = '', mode = '', reference = '', balance = 0, todayLabel = '', against = [] }) {
+export function receiptMessage({ name, amount, dateLabel = '', mode = '', reference = '', balance = 0, todayLabel = '', against = [], kind = 'payment' }) {
     if (! (Number(amount) > 0.005)) {
         return '';
     }
 
     const left = Number(balance) || 0;
+    const setOff = kind === 'setoff';
 
-    const lines = [
-        `*Payment received — ${name}*`,
-        [`${rupees(amount)} received`, dateLabel && `on ${dateLabel}`, mode && `(${mode})`].filter(Boolean).join(' '),
-    ];
+    const lines = setOff
+        ? [
+            `*Account adjusted — ${name}*`,
+            [`${rupees(amount)} adjusted against payment due to you`, dateLabel && `on ${dateLabel}`].filter(Boolean).join(' '),
+        ]
+        : [
+            `*Payment received — ${name}*`,
+            [`${rupees(amount)} received`, dateLabel && `on ${dateLabel}`, mode && `(${mode})`].filter(Boolean).join(' '),
+        ];
 
-    if (reference && reference.trim()) {
+    if (! setOff && reference && reference.trim()) {
         lines.push(`Ref: ${reference.trim()}`);
     }
 
