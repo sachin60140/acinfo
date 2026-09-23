@@ -87,35 +87,54 @@ export function readyMessage(customer, rows, today = '') {
  * find the payment in their bank — but the particular on the entry never
  * does: it is the office's description, written for the office.
  *
- * A set-off (kind 'setoff') is said as what it is: nothing was received, so
- * the words are the owner's — adjusted against payment due to them — with
- * no mode, no reference and nobody else named. The files are theirs as a
- * customer only; the server sends no others.
+ * The other things that change what a customer owes are said as what they
+ * are, in the words their statement already uses, with nobody else named:
+ *  - a set-off (kind 'setoff'): nothing was received, so the owner's words —
+ *    adjusted against payment due to them — with no mode and no reference;
+ *  - a write-off (kind 'writeoff'): a Discount, as the statement says it;
+ *  - a reversal (kind 'reversal'): which entry was taken back, by its number
+ *    and date, with their own reference to find it by. Never why: that is
+ *    the office's, and no thanks for a correction.
+ * The files are theirs as a customer only; the server sends no others.
  *
  * @param {{name:string, amount:number, dateLabel?:string, mode?:string,
- *          reference?:string, balance:number, todayLabel?:string, kind?:string}} receipt
+ *          reference?:string, balance:number, todayLabel?:string, kind?:string,
+ *          entryNo?:number}} receipt
  *          balance: today's, signed, positive when they still owe and negative
  *          when they are in advance
  */
-export function receiptMessage({ name, amount, dateLabel = '', mode = '', reference = '', balance = 0, todayLabel = '', against = [], kind = 'payment' }) {
+export function receiptMessage({ name, amount, dateLabel = '', mode = '', reference = '', balance = 0, todayLabel = '', against = [], kind = 'payment', entryNo = 0 }) {
     if (! (Number(amount) > 0.005)) {
         return '';
     }
 
     const left = Number(balance) || 0;
-    const setOff = kind === 'setoff';
+    const on = dateLabel && `on ${dateLabel}`;
 
-    const lines = setOff
-        ? [
+    const heads = {
+        setoff: [
             `*Account adjusted — ${name}*`,
-            [`${rupees(amount)} adjusted against payment due to you`, dateLabel && `on ${dateLabel}`].filter(Boolean).join(' '),
-        ]
-        : [
+            [`${rupees(amount)} adjusted against payment due to you`, on].filter(Boolean).join(' '),
+        ],
+        writeoff: [
+            `*Discount — ${name}*`,
+            [`${rupees(amount)} discount`, on].filter(Boolean).join(' '),
+        ],
+        reversal: [
+            `*Account corrected — ${name}*`,
+            [entryNo ? `Entry #${entryNo}` : 'An entry', dateLabel && `of ${dateLabel}`, `for ${rupees(amount)} has been reversed.`].filter(Boolean).join(' '),
+        ],
+        payment: [
             `*Payment received — ${name}*`,
-            [`${rupees(amount)} received`, dateLabel && `on ${dateLabel}`, mode && `(${mode})`].filter(Boolean).join(' '),
-        ];
+            [`${rupees(amount)} received`, on, mode && `(${mode})`].filter(Boolean).join(' '),
+        ],
+    };
 
-    if (! setOff && reference && reference.trim()) {
+    const lines = [...(heads[kind] ?? heads.payment)];
+
+    // Their own reference, to find it in their bank: a payment's, or the one
+    // a reversal takes back.
+    if ((kind === 'payment' || kind === 'reversal') && reference && reference.trim()) {
         lines.push(`Ref: ${reference.trim()}`);
     }
 
@@ -141,8 +160,11 @@ export function receiptMessage({ name, amount, dateLabel = '', mode = '', refere
         lines.push(`Your account is fully settled${asOf}.`);
     }
 
-    lines.push('');
-    lines.push('Thank you.');
+    // No thanks for a correction.
+    if (kind !== 'reversal') {
+        lines.push('');
+        lines.push('Thank you.');
+    }
 
     return lines.join('\n');
 }
