@@ -78,12 +78,26 @@
                 @if ($vehicle !== '')
                     {{-- Asked about one vehicle: what its work cost altogether,
                          the vendor's charge with every expense on the file. --}}
-                    <h5 class="card-title p-0 m-0">Costs on {{ $vehicle }}</h5>
+                    <h5 class="card-title p-0 m-0">{{ $heading }}</h5>
                     <div class="statement-period">
-                        {{ $periodText }} &middot; {{ $count }} {{ Str::plural('line', $count) }}
+                        {{ $periodText }} &middot; {{ $count }} {{ Str::plural($withVendor ? 'line' : 'expense', $count) }}
                         on {{ $fileCount }} {{ Str::plural('file', $fileCount) }}
-                        &middot; the vendor's charge and every expense, file by file
+                        &middot;
+                        @if ($withVendor)
+                            the vendor's charge and every expense, file by file
+                        @else
+                            the vendor's charge is left out when a kind is chosen
+                        @endif
                     </div>
+                    @if (count($plates) > 1)
+                        {{-- Part of a number found more than one: say which. --}}
+                        <div class="statement-period">
+                            {{ collect($plates)->take(8)->implode(', ') }}
+                            @if (count($plates) > 8)
+                                and {{ count($plates) - 8 }} more
+                            @endif
+                        </div>
+                    @endif
                 @else
                     <h5 class="card-title p-0 m-0">Expenses</h5>
                     <div class="statement-period">
@@ -99,7 +113,7 @@
                 --}}
                 <div class="statement-summary my-3">
                     <div class="stat closing">
-                        <span class="label">{{ $vehicle !== '' ? 'Total Cost' : 'Paid Out' }}</span>
+                        <span class="label">{{ $withVendor ? 'Total Cost' : 'Paid Out' }}</span>
                         <span class="value cr">{{ number_format((float) $total, 2, '.', ',') }}</span>
                     </div>
                     @foreach ($byType->take(4) as $name => $one)

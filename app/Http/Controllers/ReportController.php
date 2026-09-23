@@ -170,6 +170,18 @@ class ReportController extends Controller
          */
         $vehicle = WorkFileModel::normaliseRegistration($req->query('vehicle'));
 
+        /*
+         * The whole number, when it is one. BR05AS632 is a vehicle of its own
+         * and BR05AS6321 is another that happens to contain it, so a number
+         * typed out in full finds that vehicle and no other. Part of one — the
+         * last four, as a plate is usually quoted — finds every vehicle it is
+         * in, and the page says how many that was.
+         */
+        $exact = $vehicle !== '' && WorkFileModel::where('registration_no', $vehicle)->exists();
+        $plate = fn ($q, string $column) => $exact
+            ? $q->where($column, $vehicle)
+            : $q->where($column, 'like', '%'.$vehicle.'%');
+
         $query = WorkFileExpenseModel::query()
             ->join('work_file', 'work_file.id', '=', 'work_file_expense.work_file_id')
             ->join('expense_type', 'expense_type.id', '=', 'work_file_expense.expense_type_id')
@@ -197,7 +209,7 @@ class ReportController extends Controller
         }
 
         if ($vehicle !== '') {
-            $query->where('work_file.registration_no', 'like', '%'.$vehicle.'%');
+            $plate($query, 'work_file.registration_no');
         }
 
         // On the day the money left, not the day somebody entered it.
@@ -221,8 +233,27 @@ class ReportController extends Controller
          * out on the file. Money the office is owed is no part of a cost, and
          * is not here — the margin is the Profit report's question.
          */
-        $vendorCosts = $vehicle === '' ? collect() : self::vendorCosts($vehicle, $partyId, $typeId);
+        $vendorCosts = $vehicle === '' ? collect() : self::vendorCosts($plate, $partyId, $typeId, $from, $to);
         $rows = $rows->concat($vendorCosts);
+
+        // One vehicle: banded by file, so each band subtotals what that file
+        // cost. Otherwise by kind, which is what the report is read for.
+        $byFile = $vehicle !== '';
+
+        /*
+         * File by file, and in each file in the order it happened: the grid
+         * bands in the order a file first appears, and an export or a print
+         * has no bands at all, so the rows themselves have to read right.
+         */
+        if ($byFile) {
+            $rows = $rows->sortBy([
+                fn ($a, $b) => (int) $a->file_id <=> (int) $b->file_id,
+                fn ($a, $b) => strtotime((string) $a->spent_on) <=> strtotime((string) $b->spent_on),
+                // The vendor's charge before what was spent on the same day.
+                fn ($a, $b) => ((int) $a->type_id === 0 ? 0 : 1) <=> ((int) $b->type_id === 0 ? 0 : 1),
+                fn ($a, $b) => abs((int) $a->id) <=> abs((int) $b->id),
+            ])->values();
+        }
 
         $fromText = $from ? date('d-m-Y', strtotime($from)) : 'Beginning';
         $toText = $to ? date('d-m-Y', strtotime($to)) : 'Till date';
@@ -230,12 +261,29 @@ class ReportController extends Controller
 
         $total = (float) $rows->sum('amount');
 
-        // One vehicle: banded by file, so each band subtotals what that file
-        // cost. Otherwise by kind, which is what the report is read for.
-        $byFile = $vehicle !== '';
+        /*
+         * What the page is about, said plainly. Part of a number can match
+         * more than one vehicle, and a total over two of them read as one
+         * vehicle's cost is wrong without anything on the page being wrong.
+         * A kind asked for leaves the vendor's charge out, so the page does
+         * not call what is left the vehicle's cost.
+         */
+        $plates = $byFile ? $rows->pluck('registration_no')->filter()->unique()->sort()->values() : collect();
+        $withVendor = $byFile && ! $typeId;
+        $heading = '';
+
+        if ($byFile) {
+            $on = match (true) {
+                $plates->count() > 1 => $plates->count().' vehicles matching '.$vehicle,
+                $plates->count() === 1 => $plates->first(),
+                default => $vehicle,
+            };
+
+            $heading = ($withVendor ? 'Costs' : ExpenseTypeModel::whereKey($typeId)->value('name')).' on '.$on;
+        }
 
         $props = [
-            'title' => ($byFile ? 'Costs — '.$vehicle.' — ' : 'Expenses — ').$periodText,
+            'title' => ($byFile ? $heading.' — ' : 'Expenses — ').$periodText,
             'groupBy' => $byFile ? 'file_id' : 'type_id',
             'groupLabel' => $byFile ? 'file_band' : 'type_band',
             'totals' => ['amount' => 'sum'],
@@ -244,13 +292,19 @@ class ReportController extends Controller
             'perPage' => max($rows->count(), 1),
             'sortable' => false,
             'emptyText' => match (true) {
+                // A number mistyped reads as a vehicle that cost nothing
+                // unless it is told apart from one.
+                $rows->isEmpty() && $vehicle !== '' && ! $exact
+                    && ! WorkFileModel::where('registration_no', 'like', '%'.$vehicle.'%')->exists() => 'No file has a vehicle number with '.$vehicle.' in it. Check the number.',
+                $vehicle !== '' && ($typeId || $partyId || $from || $to) => 'Nothing on '.$vehicle.' matches this report. Try widening the dates, or clearing the kind or the customer.',
                 $vehicle !== '' => 'Nothing has been paid out on '.$vehicle.', and no vendor rate is agreed on its work.',
                 (bool) ($typeId || $partyId || $from || $to) => 'No expenses match this report. Try widening the dates, or clearing the kind.',
                 default => 'Nothing recorded yet. Expenses are entered on a file, under the works.',
             },
             'columns' => [
                 ['key' => 'type_id', 'label' => 'Kind Id', 'hidden' => true],
-                ['key' => 'spent_on', 'label' => 'Paid On', 'sortBy' => 'spent_sort'],
+                // A vendor's rate is agreed on a day, not paid on it.
+                ['key' => 'spent_on', 'label' => $byFile ? 'Date' : 'Paid On', 'sortBy' => 'spent_sort'],
                 ['key' => 'type_name', 'label' => 'Kind'],
                 ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'file_url'],
                 ['key' => 'registration_no', 'label' => 'Vehicle'],
@@ -282,7 +336,8 @@ class ReportController extends Controller
         // What each kind came to, for the tiles above the table.
         $byType = $rows->groupBy('type_name')
             ->map(fn ($group) => [
-                'count' => $group->count(),
+                // A rate reversed is netted into the figure, not another time.
+                'count' => $group->where('amount', '>', 0)->count(),
                 'total' => (float) $group->sum('amount'),
             ])
             ->sortByDesc('total');
@@ -295,8 +350,9 @@ class ReportController extends Controller
             'typeId' => $typeId ? (int) $typeId : null,
             'partyId' => $partyId ? (int) $partyId : null,
             'vehicle' => $vehicle,
-            // What the office is asking when it asks by vehicle.
-            'vehicleFiles' => $vehicle === '' ? 0 : $rows->pluck('file_id')->unique()->count(),
+            'heading' => $heading,
+            'plates' => $plates,
+            'withVendor' => $withVendor,
             'total' => $total,
             'count' => $rows->count(),
             'fileCount' => $rows->pluck('file_id')->unique()->count(),
@@ -317,59 +373,112 @@ class ReportController extends Controller
      * the rows beside it rather than given a table of its own on the page.
      *
      * By the work, because that is how a rate is agreed: a folder split between
-     * two vendors has two of them. Cancelled work charges nobody. A kind filter
-     * is a filter on kinds of expense, so these are left out under one.
+     * two vendors has two of them. A folder with no works carries its rate on
+     * itself, and is read from there. Cancelled work charges nobody. A kind
+     * filter is a filter on kinds of expense, so these are left out under one.
      *
+     * A file the vendor handed back undone has its rate reversed, in whole or
+     * in part, and that is a row of its own on the day it came back: the rate
+     * stands as agreed and the reversal takes it off, so a file adds up to
+     * exactly what WorkFileModel::SPENT says it cost — the Profit report and
+     * the file's own screen — and the reader can see why.
+     *
+     * Each row is dated, and filtered by the dates asked for, on the day it is
+     * shown under, so the period, the grid and the total always agree.
+     *
+     * @param  \Closure(mixed, string): mixed  $plate  narrows a query to the vehicle
      * @return \Illuminate\Support\Collection<int, object>
      */
-    private static function vendorCosts(string $vehicle, $partyId, $typeId)
+    private static function vendorCosts(\Closure $plate, $partyId, $typeId, $from, $to)
     {
         if ($typeId) {
             return collect();
         }
 
-        return DB::table('work_file_item as i')
-            ->join('work_file as f', 'f.id', '=', 'i.work_file_id')
-            ->leftJoin('work_type as t', 't.id', '=', 'i.work_type_id')
-            ->leftJoin('party as v', 'v.id', '=', 'i.vendor_id')
+        $files = fn ($q, string $day) => $q
             ->leftJoin('party as customer', 'customer.id', '=', 'f.customer_id')
-            ->where('f.registration_no', 'like', '%'.$vehicle.'%')
-            ->where('i.status', '<>', WorkFileModel::CANCELLED)
-            ->whereNotNull('i.vendor_amount')
-            ->where('i.vendor_amount', '>', 0)
+            ->tap(fn ($q) => $plate($q, 'f.registration_no'))
+            ->where('f.status', '<>', WorkFileModel::CANCELLED)
             ->when($partyId, fn ($q) => $q->where('f.customer_id', $partyId))
-            ->orderBy('f.file_no')
-            ->orderBy('i.id')
-            ->get([
-                'i.id',
-                'i.vendor_amount as amount',
-                'i.vendor_date',
-                'f.received_date',
+            ->when($from, fn ($q) => $q->whereRaw($day.' >= ?', [$from]))
+            ->when($to, fn ($q) => $q->whereRaw($day.' <= ?', [$to]))
+            ->addSelect([
+                DB::raw($day.' as day'),
                 'f.id as file_id',
                 'f.file_no',
                 'f.registration_no',
                 'f.status',
-                't.name as work',
-                'v.name as vendor_name',
                 'customer.name as customer_name',
-            ])
-            ->map(fn ($row) => (object) [
-                // Apart from an expense id: the two are different rows in one
-                // list, and the grid keys on this.
-                'id' => -1 * (int) $row->id,
-                'amount' => (float) $row->amount,
-                // The day it went out, or the day the papers came in if it has
-                // not gone yet: a rate agreed is a cost from then.
-                'spent_on' => $row->vendor_date ?: $row->received_date,
-                'remark' => trim(($row->work ?: 'Work').($row->vendor_name ? ' · '.$row->vendor_name : ' · not given out yet')),
-                'file_id' => (int) $row->file_id,
-                'file_no' => $row->file_no,
-                'registration_no' => $row->registration_no,
-                'status' => $row->status,
-                'type_id' => 0,
-                'type_name' => 'Vendor charge',
-                'customer_name' => $row->customer_name,
             ]);
+
+        $row = fn ($one, int $id, float $amount, string $remark) => (object) [
+            // Apart from an expense id: the two are different rows in one
+            // list, and the grid keys on this.
+            'id' => $id,
+            'amount' => $amount,
+            'spent_on' => $one->day,
+            'remark' => $remark,
+            'file_id' => (int) $one->file_id,
+            'file_no' => $one->file_no,
+            'registration_no' => $one->registration_no,
+            'status' => $one->status,
+            'type_id' => 0,
+            'type_name' => 'Vendor charge',
+            'customer_name' => $one->customer_name,
+        ];
+
+        // The day it went out, or the day the papers came in if it has not
+        // gone yet: a rate agreed is a cost from then.
+        $works = DB::table('work_file_item as i')
+            ->join('work_file as f', 'f.id', '=', 'i.work_file_id')
+            ->leftJoin('work_type as t', 't.id', '=', 'i.work_type_id')
+            ->leftJoin('party as v', 'v.id', '=', 'i.vendor_id')
+            ->where('i.status', '<>', WorkFileModel::CANCELLED)
+            ->where('i.vendor_amount', '>', 0)
+            ->select('i.id', 'i.vendor_amount as amount', 't.name as work', 'v.name as vendor_name')
+            ->tap(fn ($q) => $files($q, 'COALESCE(i.vendor_date, f.received_date)'))
+            ->get()
+            ->map(fn ($one) => $row($one, -1 * (int) $one->id, (float) $one->amount, self::givenOut($one->work, $one->vendor_name)));
+
+        $folders = DB::table('work_file as f')
+            ->leftJoin('work_type as t', 't.id', '=', 'f.work_type_id')
+            ->leftJoin('party as v', 'v.id', '=', 'f.vendor_id')
+            ->whereNotExists(fn ($q) => $q->select(DB::raw(1))
+                ->from('work_file_item')
+                ->whereColumn('work_file_item.work_file_id', 'f.id'))
+            ->where('f.vendor_amount', '>', 0)
+            ->select('f.vendor_amount as amount', 't.name as work', 'v.name as vendor_name')
+            ->tap(fn ($q) => $files($q, 'COALESCE(f.vendor_date, f.received_date)'))
+            ->get()
+            ->map(fn ($one) => $row($one, -1_000_000_000 - (int) $one->file_id, (float) $one->amount, self::givenOut($one->work, $one->vendor_name)));
+
+        // What the vendor handed back is gated on the folder, as SPENT is:
+        // the folder is back when every work on it is.
+        $reversed = DB::table('work_file as f')
+            ->leftJoin('party as v', 'v.id', '=', 'f.vendor_id')
+            ->whereNotNull('f.vendor_returned_on')
+            ->where('f.vendor_amount', '>', 0)
+            ->select(
+                DB::raw('LEAST(COALESCE(f.vendor_returned_amount, f.vendor_amount), f.vendor_amount) as amount'),
+                'v.name as vendor_name'
+            )
+            ->tap(fn ($q) => $files($q, 'f.vendor_returned_on'))
+            ->get()
+            ->filter(fn ($one) => (float) $one->amount > 0)
+            ->map(fn ($one) => $row(
+                $one,
+                -2_000_000_000 - (int) $one->file_id,
+                -1 * (float) $one->amount,
+                'Handed back'.($one->vendor_name ? ' by '.$one->vendor_name : ' by the vendor').' · rate reversed'
+            ));
+
+        return $works->concat($folders)->concat($reversed)->values();
+    }
+
+    /** "TR · Parwez Ji · given out", or that it has not gone to anybody yet. */
+    private static function givenOut(?string $work, ?string $vendor): string
+    {
+        return ($work ?: 'Work').($vendor ? ' · '.$vendor.' · given out' : ' · rate agreed, not given out yet');
     }
 
     public function files(Request $req)

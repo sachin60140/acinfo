@@ -130,13 +130,13 @@ class ExpenseByVehicleTest extends TestCase
         return $file->fresh();
     }
 
-    private function spend(WorkFileModel $file, int $kind, float $amount, string $what = ''): void
+    private function spend(WorkFileModel $file, int $kind, float $amount, string $what = '', string $on = '2026-09-19'): void
     {
         DB::table('work_file_expense')->insert([
             'work_file_id' => $file->id,
             'expense_type_id' => $kind,
             'amount' => $amount,
-            'spent_on' => '2026-09-19',
+            'spent_on' => $on,
             'remark' => $what ?: null,
             'created_at' => now(),
             'updated_at' => now(),
@@ -148,6 +148,29 @@ class ExpenseByVehicleTest extends TestCase
         return $this->actingAs($this->admin)
             ->getJson(route('report.expenses').'?'.http_build_query($query))
             ->assertOk();
+    }
+
+    private function page(array $query): string
+    {
+        return $this->actingAs($this->admin)
+            ->get(route('report.expenses', $query))
+            ->assertOk()->getContent();
+    }
+
+    /** What the rest of the app says the file cost: the Profit report and the file screen. */
+    private function spent(WorkFileModel $file): float
+    {
+        return (float) WorkFileModel::whereKey($file->id)->selectRaw(WorkFileModel::SPENT.' as spent')->value('spent');
+    }
+
+    /** The vendor hands the folder back undone, as the vendor-return screen records it. */
+    private function handBack(WorkFileModel $file, ?float $reversed, string $on = '2026-09-20'): void
+    {
+        $file->items()->update(['vendor_returned_on' => $on, 'status' => WorkFileModel::IN_OFFICE]);
+        $file->vendor_returned_amount = $reversed;
+        $file->rollUp();
+        $file->save();
+        $file->syncLedger();
     }
 
     // ------------------------------------------------------------- the point
@@ -266,5 +289,197 @@ class ExpenseByVehicleTest extends TestCase
         $this->assertStringContainsString('Costs on '.$this->plate, $page);
         $this->assertStringContainsString('Total Cost', $page);
         $this->assertStringContainsString('value="'.$this->plate.'"', $page);
+    }
+
+    // ------------------------------------------------ found in review (#32)
+
+    /**
+     * Handed back undone, the vendor's rate is reversed: the report nets it
+     * off exactly as the Profit report and the file's screen do, on a row of
+     * its own so the reader sees why.
+     */
+    public function test_a_file_handed_back_whole_costs_what_the_rest_of_the_app_says(): void
+    {
+        $file = $this->file($this->plate);
+        $this->spend($file, $this->challan, 450);
+        $this->handBack($file, null);
+
+        $rows = collect($this->report(['vehicle' => $this->plate])->json('props.rows'));
+
+        $this->assertEqualsWithDelta(450, $this->spent($file), 0.005);
+        $this->assertEqualsWithDelta($this->spent($file), $rows->sum('amount'), 0.005);
+
+        $back = $rows->firstWhere('amount', -4200.0);
+        $this->assertNotNull($back);
+        $this->assertSame('20-09-2026', $back['spent_on']);
+        $this->assertStringContainsString('Handed back', $back['remark']);
+
+        // A reversal is netted into the charge's tile, not counted as another time.
+        $page = $this->page(['vehicle' => $this->plate]);
+        $this->assertStringContainsString('2 times', $page);
+        $this->assertStringNotContainsString('3 times', $page);
+    }
+
+    public function test_a_part_reversal_leaves_the_rest_of_the_rate_as_a_cost(): void
+    {
+        $file = $this->file($this->plate);
+        $this->spend($file, $this->challan, 450);
+        $this->handBack($file, 1000);
+
+        $rows = collect($this->report(['vehicle' => $this->plate])->json('props.rows'));
+
+        // 3,000 + 1,200 − 1,000 + 450.
+        $this->assertEqualsWithDelta(3650, $this->spent($file), 0.005);
+        $this->assertEqualsWithDelta($this->spent($file), $rows->sum('amount'), 0.005);
+    }
+
+    /** The dates asked for hold for the vendor's charge as for any expense. */
+    public function test_the_dates_hold_for_the_vendors_charge_too(): void
+    {
+        $file = $this->file($this->plate);
+        $this->spend($file, $this->challan, 450);
+
+        // Given out on the 18th, the challan paid on the 19th.
+        $rows = collect($this->report(['vehicle' => $this->plate, 'from' => '2026-01-01', 'to' => '2026-01-31'])->json('props.rows'));
+        $this->assertCount(0, $rows);
+
+        $rows = collect($this->report(['vehicle' => $this->plate, 'from' => '2026-09-19', 'to' => '2026-09-19'])->json('props.rows'));
+        $this->assertEqualsWithDelta(450, $rows->sum('amount'), 0.005);
+
+        $rows = collect($this->report(['vehicle' => $this->plate, 'from' => '2026-09-18', 'to' => '2026-09-18'])->json('props.rows'));
+        $this->assertEqualsWithDelta(4200, $rows->sum('amount'), 0.005);
+
+        // Handed back on the 20th: not yet, in a period that ends before it.
+        $this->handBack($file, null);
+        $rows = collect($this->report(['vehicle' => $this->plate, 'to' => '2026-09-19'])->json('props.rows'));
+        $this->assertEqualsWithDelta(4650, $rows->sum('amount'), 0.005);
+    }
+
+    /** A folder with no works carries its vendor's rate on itself. */
+    public function test_a_folder_with_no_works_shows_its_rate(): void
+    {
+        $file = new WorkFileModel;
+        $file->file_no = 'F-EV-'.uniqid();
+        $file->received_date = '2026-09-15';
+        $file->registration_no = $this->plate;
+        $file->work_type_id = $this->tr->id;
+        $file->customer_id = $this->customer->id;
+        $file->customer_amount = 5000;
+        $file->vendor_id = $this->vendor->id;
+        $file->vendor_amount = 2000;
+        $file->vendor_date = '2026-09-17';
+        $file->status = WorkFileModel::DISPATCHED;
+        $file->save();
+
+        // Cancelled, a folder charges nobody and costs nothing.
+        $struck = $file->replicate();
+        $struck->file_no = 'F-EV-'.uniqid();
+        $struck->status = WorkFileModel::CANCELLED;
+        $struck->save();
+
+        $rows = collect($this->report(['vehicle' => $this->plate])->json('props.rows'));
+
+        $this->assertCount(1, $rows);
+        $this->assertSame('17-09-2026', $rows->first()['spent_on']);
+        $this->assertStringContainsString($this->vendor->name, $rows->first()['remark']);
+        $this->assertEqualsWithDelta($this->spent($file), $rows->sum('amount'), 0.005);
+    }
+
+    /** A customer asked for is a customer: another's vehicle charges are not theirs. */
+    public function test_a_customer_asked_for_leaves_other_customers_charges_out(): void
+    {
+        $this->file($this->plate);
+        $other = $this->party('customer', 'Somebody Else');
+
+        $rows = collect($this->report(['vehicle' => $this->plate, 'party_id' => $other->id])->json('props.rows'));
+
+        $this->assertCount(0, $rows);
+    }
+
+    /** BR05AS632 is a vehicle, and BR05AS6321 another one that contains it. */
+    public function test_a_whole_number_finds_that_vehicle_and_not_a_longer_one(): void
+    {
+        $short = substr($this->plate, 0, -1);
+        $mine = $this->file($short);
+        $this->file($this->plate, 9999, 8888);
+
+        $rows = collect($this->report(['vehicle' => $short])->json('props.rows'));
+
+        $this->assertSame([$mine->id], $rows->pluck('file_id')->unique()->values()->all());
+    }
+
+    /** Part of a number can find two vehicles, and the page says so rather than adding them up as one. */
+    public function test_part_of_a_number_says_how_many_vehicles_it_found(): void
+    {
+        $tail = substr($this->plate, 4);
+        $twin = 'JH01'.$tail;
+        $this->file($this->plate);
+        $this->file($twin);
+
+        $json = $this->report(['vehicle' => $tail]);
+
+        $this->assertSame('Costs on 2 vehicles matching '.$tail, $json->json('page.heading'));
+        $this->assertSame([$this->plate, $twin], collect($json->json('page.plates'))->sort()->values()->all());
+
+        // In the heading, and the two named under it (the grid's own data
+        // carries each plate on its own, never the two together).
+        $page = $this->page(['vehicle' => $tail]);
+        $this->assertStringContainsString('Costs on 2 vehicles matching '.$tail.'</h5>', $page);
+        $this->assertStringContainsString($this->plate.', '.$twin, $page);
+    }
+
+    /** Found by part of its number, one vehicle is named by the whole of it. */
+    public function test_one_vehicle_found_is_named_in_full(): void
+    {
+        $this->file($this->plate);
+
+        $json = $this->report(['vehicle' => substr($this->plate, 4)]);
+
+        $this->assertSame('Costs on '.$this->plate, $json->json('page.heading'));
+        $this->assertSame('Date', collect($json->json('props.columns'))->firstWhere('key', 'spent_on')['label']);
+    }
+
+    /** Under a kind the vendor's charge is left out, and the page does not call what is left the cost. */
+    public function test_under_a_kind_the_page_does_not_claim_the_whole_cost(): void
+    {
+        $file = $this->file($this->plate);
+        $this->spend($file, $this->challan, 450);
+
+        $page = $this->page(['vehicle' => $this->plate, 'expense_type_id' => $this->challan]);
+
+        $this->assertStringNotContainsString('Total Cost', $page);
+        $this->assertStringNotContainsString('Costs on', $page);
+        $this->assertStringContainsString('Paid Out', $page);
+        $this->assertStringContainsString('left out when a kind is chosen', $page);
+    }
+
+    /** File by file, and in each file in the order it happened — the export has no bands to sort it. */
+    public function test_rows_come_file_by_file_in_the_order_they_happened(): void
+    {
+        $first = $this->file($this->plate);
+        $second = $this->file($this->plate);
+        // By kind, the second file's affidavit would lead the list.
+        $this->spend($second, $this->affidavit, 150);
+        $this->spend($first, $this->challan, 450, '', '2026-09-19');
+        // Paid the day the work went out: the charge still reads first.
+        $this->spend($first, $this->challan, 50, '', '2026-09-18');
+
+        $rows = collect($this->report(['vehicle' => $this->plate])->json('props.rows'));
+
+        $this->assertSame([$first->id, $first->id, $first->id, $first->id, $second->id, $second->id, $second->id], $rows->pluck('file_id')->all());
+        $this->assertSame(['Vendor charge', 'Vendor charge'], $rows->take(2)->pluck('type_name')->all());
+        $this->assertEquals([50, 450], $rows->slice(2, 2)->pluck('amount')->values()->all());
+    }
+
+    /** The empty list says why it is empty. */
+    public function test_an_empty_list_says_why(): void
+    {
+        $this->file($this->plate);
+
+        $mistyped = $this->report(['vehicle' => 'BR05QZ'.substr($this->plate, 6).'X'])->json('props.emptyText');
+        $this->assertStringContainsString('No file has a vehicle number', $mistyped);
+
+        $underKind = $this->report(['vehicle' => $this->plate, 'expense_type_id' => $this->challan])->json('props.emptyText');
+        $this->assertStringContainsString('Nothing on '.$this->plate.' matches this report', $underKind);
     }
 }
