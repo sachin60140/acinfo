@@ -2805,12 +2805,26 @@ class WorkFileModel extends Model
 
         $from = now()->startOfMonth()->subMonths($months - 1);
 
-        $rows = DB::table('work_file')
+        /*
+         * Every file worked out on its own, then grouped — as profitBy() does,
+         * for its reason: the cost and the outstanding test are correlated
+         * subqueries against the file, and inside an aggregate under a GROUP
+         * BY that is something MySQL allows and MariaDB — the live server —
+         * refuses ("work_file.id isn't in GROUP BY"). Found in review.
+         */
+        $each = DB::table('work_file')
             ->whereDate('received_date', '>=', $from->toDateString())
             ->selectRaw("DATE_FORMAT(received_date, '%Y-%m') as month")
-            ->selectRaw("COALESCE(SUM($earned), 0) as billed")
-            ->selectRaw("COALESCE(SUM(CASE WHEN $unsettled THEN 0 ELSE ($spent) END), 0) as cost")
-            ->selectRaw("COALESCE(SUM(CASE WHEN $unsettled THEN 0 ELSE $earned - ($spent) END), 0) as margin")
+            ->selectRaw("$earned as billed")
+            ->selectRaw("CASE WHEN $unsettled THEN 0 ELSE ($spent) END as cost")
+            ->selectRaw("CASE WHEN $unsettled THEN 0 ELSE $earned - ($spent) END as margin");
+
+        $rows = DB::query()
+            ->fromSub($each, 'each_file')
+            ->select('month')
+            ->selectRaw('COALESCE(SUM(billed), 0) as billed')
+            ->selectRaw('COALESCE(SUM(cost), 0) as cost')
+            ->selectRaw('COALESCE(SUM(margin), 0) as margin')
             ->selectRaw('COUNT(*) as files')
             ->groupBy('month')
             // keyBy, not pluck: a row here is four figures, and pluck wants one.
