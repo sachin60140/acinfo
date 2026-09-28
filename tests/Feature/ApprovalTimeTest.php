@@ -127,7 +127,35 @@ class ApprovalTimeTest extends TestCase
         $this->assertSame(12, $row['days']);
         $this->assertSame(now()->subDays(30)->format('d-m-Y'), $row['dispatched']);
         $this->assertSame(now()->subDays(18)->format('d-m-Y'), $row['approved']);
-        $this->assertSame($vendor->name, $row['counterparty']);
+    }
+
+    /**
+     * Customer-wise, no vendor: asked for by the owner on 2026-09-28. Not
+     * hidden but absent — a spreadsheet made from the page could not carry
+     * what the page was never sent.
+     */
+    public function test_customer_wise_never_names_the_vendor(): void
+    {
+        $vendor = $this->party('vendor');
+        $vendor->name = 'Zorawar Distinct Works';
+        $vendor->save();
+        $file = $this->file([[$vendor, 30, 18]]);
+
+        $page = $this->page(['party_id' => $this->customer->id]);
+
+        $this->assertNotNull($this->row($file, ['party_id' => $this->customer->id]));
+        $this->assertNull(collect($page->json('props.columns'))->firstWhere('key', 'counterparty'));
+        $this->assertStringNotContainsString('Zorawar', json_encode($page->json()));
+
+        $this->actingAs($this->admin)->get(route('report.approvaltime', ['party_id' => $this->customer->id]))
+            ->assertOk()
+            ->assertDontSee('Zorawar')
+            ->assertDontSee('Given To');
+
+        // Vendor-wise, the office still sees whose file it was.
+        $byVendor = $this->page(['party_type' => 'vendor', 'party_id' => $vendor->id]);
+        $this->assertSame('Customer', collect($byVendor->json('props.columns'))->firstWhere('key', 'counterparty')['label']);
+        $this->assertSame($this->customer->name, collect($byVendor->json('props.rows'))->firstWhere('file_no', $file->file_no)['counterparty']);
     }
 
     /** A folder of three is not through until the third one is. */
