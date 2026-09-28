@@ -1143,6 +1143,8 @@ class ReportTest extends TestCase
         WorkFileModel::workTypeCounts('all');
         WorkFileModel::statusCounts();
         WorkFileModel::summary();
+        // The dashboard's Money by month chart, grouped by month.
+        WorkFileModel::monthlyMoney(12);
 
         foreach (array_keys(WorkFileModel::PROFIT_GROUPS) as $group) {
             WorkFileModel::profitBy($group);
@@ -1152,7 +1154,13 @@ class ReportTest extends TestCase
         $problems = [];
 
         foreach ($seen as $sql) {
-            $lower = strtolower($sql);
+            /*
+             * One space for every run of whitespace. Found in review: a
+             * subquery written "EXISTS (" and then SELECT on the next line
+             * read as no subquery at all, and the dashboard's chart — the
+             * very shape this refuses — passed.
+             */
+            $lower = strtolower(preg_replace(['/\s+/', '/\(\s+/'], [' ', '('], $sql));
 
             if (! str_contains($lower, 'group by')) {
                 continue;
