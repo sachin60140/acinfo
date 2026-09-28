@@ -4417,7 +4417,40 @@ class WorkFileModel extends Model
             SQL);
     }
 
-    public static function report(string $partyType, $partyId = null, ?string $status = null, ?string $from = null, ?string $to = null)
+    /**
+     * A folder whose vendor has only part of it, as a where clause.
+     *
+     * It names a vendor, because roll-up names the one vendor its works went
+     * to — but a live work on it went to nobody, or to somebody else. A
+     * transfer given to Sharma and a hypothecation kept in the office is such a
+     * folder: Sharma's, by its own vendor, and half of it is not.
+     *
+     * A folder none of whose works ever carried a vendor, cancelled ones
+     * included, is not: it is from before works had their own, and its vendor
+     * has all of it. Asked of every work, as Approval Time asks — asked of the
+     * live ones only, a folder whose one given work was cancelled read as older,
+     * and the work kept in the office went to the vendor.
+     */
+    private static function givenInPart($q): void
+    {
+        $q->whereNotNull('work_file.vendor_id')
+            ->whereExists(fn ($given) => $given->select(DB::raw(1))
+                ->from('work_file_item as given')
+                ->whereColumn('given.work_file_id', 'work_file.id')
+                ->whereNotNull('given.vendor_id'))
+            ->whereExists(fn ($other) => $other->select(DB::raw(1))
+                ->from('work_file_item as other')
+                ->whereColumn('other.work_file_id', 'work_file.id')
+                ->where('other.status', '<>', self::CANCELLED)
+                ->where(fn ($not) => $not->whereNull('other.vendor_id')
+                    ->orWhereColumn('other.vendor_id', '<>', 'work_file.vendor_id')));
+    }
+
+    /**
+     * @param  bool  $folderStatus  vendor-wise, narrow on the folder's own status
+     *                              rather than that of the vendor's works; see below
+     */
+    public static function report(string $partyType, $partyId = null, ?string $status = null, ?string $from = null, ?string $to = null, bool $folderStatus = false)
     {
         $isVendor = $partyType === 'vendor';
 
@@ -4465,15 +4498,17 @@ class WorkFileModel extends Model
                     : "COALESCE(NULLIF(customer.whatsapp, ''), customer.mobile) as party_mobile")
             );
 
-        // The status and the period narrow both halves of a vendor report the
-        // same way, so they are said once.
-        $narrow = function ($q) use ($status, $from, $to) {
+        // The status and the period, said once for both halves of a vendor
+        // report — though the half below is not always asked its status here.
+        $byStatus = function ($q) use ($status) {
             if ($status === 'open') {
                 $q->whereIn('work_file.status', self::OPEN_STATUSES);
             } elseif ($status && array_key_exists($status, self::STATUSES)) {
                 $q->where('work_file.status', $status);
             }
+        };
 
+        $byDate = function ($q) use ($from, $to) {
             if ($from) {
                 $q->whereDate('work_file.received_date', '>=', $from);
             }
@@ -4488,14 +4523,18 @@ class WorkFileModel extends Model
         $split = $isVendor ? clone $query : null;
 
         if ($isVendor) {
-            $query->whereNotNull('work_file.vendor_id');
+            // Whole, only where the folder's vendor has all of it; the rest is
+            // drawn below, a vendor's own works at a time.
+            $query->whereNotNull('work_file.vendor_id')
+                ->whereNot(fn ($q) => self::givenInPart($q));
         }
 
         if ($partyId) {
             $query->where($isVendor ? 'work_file.vendor_id' : 'work_file.customer_id', $partyId);
         }
 
-        $narrow($query);
+        $byStatus($query);
+        $byDate($query);
 
         $rows = $query
             ->orderBy('party_name', 'asc')
@@ -4518,19 +4557,54 @@ class WorkFileModel extends Model
          * the list the office now sends them on WhatsApp.
          *
          * Each such folder is drawn once under every vendor holding any of it,
-         * showing only that vendor's works. Folders with one vendor are left
-         * exactly as they were.
+         * showing only that vendor's works.
+         *
+         * And so is a folder its vendor holds only part of. Asked for by the
+         * owner on 2026-09-28: F-00089's hypothecation went to a vendor and its
+         * transfer to nobody, and the vendor's list said "HPT, TR" — on the
+         * screen, on the WhatsApp list the office sends him, with the whole
+         * folder's charge and the transfer's standing as its status.
+         *
+         * Folders whose vendor has all of them are left exactly as they were.
          */
-        $split->whereNull('work_file.vendor_id')
-            ->whereExists(fn ($q) => $q->select(DB::raw(1))
+        $split->where(fn ($q) => $q
+            ->where(fn ($none) => $none->whereNull('work_file.vendor_id')
+                ->whereExists(fn ($given) => $given->select(DB::raw(1))
+                    ->from('work_file_item')
+                    ->whereColumn('work_file_item.work_file_id', 'work_file.id')
+                    ->whereNotNull('work_file_item.vendor_id')
+                    ->where('work_file_item.status', '<>', self::CANCELLED)))
+            ->orWhere(fn ($part) => self::givenInPart($part)));
+
+        if ($partyId) {
+            $split->whereExists(fn ($theirs) => $theirs->select(DB::raw(1))
                 ->from('work_file_item')
                 ->whereColumn('work_file_item.work_file_id', 'work_file.id')
-                ->whereNotNull('work_file_item.vendor_id')
+                ->where('work_file_item.vendor_id', $partyId)
                 ->where('work_file_item.status', '<>', self::CANCELLED));
+        }
 
-        $narrow($split);
+        $byDate($split);
+
+        /*
+         * A vendor's row stands where their works stand, not where the
+         * folder does — a folder waiting on work kept in the office is In
+         * Office, with the vendor's part long since approved. So the status
+         * asked for is asked of each row once it is drawn. Approval Time
+         * asks the folder's instead: it counts approved files, which is
+         * what the owner chose it to count.
+         */
+        if ($folderStatus) {
+            $byStatus($split);
+        }
 
         $shares = self::splitByVendor($split->get(), $partyId);
+
+        if (! $folderStatus && $status === 'open') {
+            $shares = $shares->filter(fn ($row) => in_array($row->status, self::OPEN_STATUSES, true))->values();
+        } elseif (! $folderStatus && $status && array_key_exists($status, self::STATUSES)) {
+            $shares = $shares->filter(fn ($row) => $row->status === $status)->values();
+        }
 
         // Nothing split, nothing to change: the report is what it always was.
         if ($shares->isEmpty()) {
@@ -4550,18 +4624,26 @@ class WorkFileModel extends Model
     }
 
     /**
-     * A split folder, as one report row per vendor holding any of it.
+     * A folder its vendors share — with each other, or with the office — as
+     * one report row per vendor holding any of it.
      *
-     * Each row is the folder with its money narrowed to that vendor's works:
-     * what the customer is charged for them, what that vendor is owed for them,
-     * the day the first of them went out. Summed, the rows come to the folder's
-     * works once, which is what keeps a report total from counting a split
-     * folder twice.
+     * Each row is the folder narrowed to that vendor's works: what the
+     * customer is charged for them, what that vendor is owed for them, the day
+     * the first of them went out, and where they stand — a vendor whose part is
+     * approved is not still at work because the office's part is. Summed, the
+     * rows come to the folder's given works once, which is what keeps a report
+     * total from counting a split folder twice. Work kept in the office is
+     * under no vendor, as a folder kept wholly in the office always was.
      *
      * The office's own expenses belong to the file and not to either vendor,
-     * so they are shared in proportion to each vendor's charge; so are any
-     * refund and any amount a vendor returned. The last share takes the
-     * rounding, so the shares always add up to the paisa.
+     * so they are shared in proportion to each work's charge — the office's
+     * own works taking their share, which appears under nobody: shared among
+     * the vendors alone, a vendor holding one work of three was given the
+     * whole folder's expenses, and a margin on their work it never had. So is
+     * a refund, a folder
+     * going back to its customer whole. An amount a vendor returned is only
+     * ever the vendors'. The last share takes the rounding, so the shares
+     * always add up to the paisa.
      *
      * Each row carries the ids of its works, so the screen shows and moves
      * those and not the whole folder's.
@@ -4576,14 +4658,13 @@ class WorkFileModel extends Model
 
         $works = DB::table('work_file_item as i')
             ->join('work_type as t', 't.id', '=', 'i.work_type_id')
-            ->join('party as v', 'v.id', '=', 'i.vendor_id')
+            ->leftJoin('party as v', 'v.id', '=', 'i.vendor_id')
             ->whereIn('i.work_file_id', $folders->pluck('id')->all())
-            ->whereNotNull('i.vendor_id')
             ->where('i.status', '<>', self::CANCELLED)
             ->orderBy('i.id')
             ->get([
                 'i.id', 'i.work_file_id', 'i.vendor_id', 'i.customer_amount', 'i.vendor_amount',
-                'i.vendor_date', 'i.vendor_returned_on',
+                'i.vendor_date', 'i.vendor_returned_on', 'i.status', 'i.approved_on',
                 't.name as work', 'v.name as vendor_name', 'v.mobile as vendor_mobile', 'v.whatsapp as vendor_whatsapp',
             ])
             ->groupBy('work_file_id');
@@ -4591,18 +4672,23 @@ class WorkFileModel extends Model
         $out = collect();
 
         foreach ($folders as $folder) {
-            $byVendor = ($works[$folder->id] ?? collect())->groupBy('vendor_id');
+            $live = $works[$folder->id] ?? collect();
+            $byVendor = $live->filter(fn ($w) => $w->vendor_id)->groupBy('vendor_id');
+            $office = $live->reject(fn ($w) => $w->vendor_id);
 
             if ($byVendor->isEmpty()) {
                 continue;
             }
 
-            // Each vendor's weight is what the customer is charged for their works.
-            $weights = $byVendor->map(fn ($mine) => $mine->sum(fn ($w) => (float) $w->customer_amount))->all();
+            // Each vendor's weight is what the customer is charged for their
+            // works; the office's, for the works it kept.
+            $charged = fn ($some) => $some->sum(fn ($w) => (float) $w->customer_amount);
+            $vendors = $byVendor->map($charged)->all();
+            $weights = $office->isEmpty() ? $vendors : $vendors + ['office' => $charged($office)];
 
             $expenses = self::apportion((float) ($folder->expenses ?? 0), $weights);
             $refund = $folder->returned_amount === null ? null : self::apportion((float) $folder->returned_amount, $weights);
-            $sentBack = $folder->vendor_returned_amount === null ? null : self::apportion((float) $folder->vendor_returned_amount, $weights);
+            $sentBack = $folder->vendor_returned_amount === null ? null : self::apportion((float) $folder->vendor_returned_amount, $vendors);
 
             foreach ($byVendor as $vendorId => $mine) {
                 if ($onlyVendor && (int) $vendorId !== (int) $onlyVendor) {
@@ -4631,6 +4717,21 @@ class WorkFileModel extends Model
                     : $mine->pluck('vendor_returned_on')->filter()->max();
 
                 $row->work_type = $mine->pluck('work')->filter()->implode(', ');
+
+                /*
+                 * Where these works stand, and the day they were through —
+                 * which the days under the dispatch date count to, on the
+                 * screen and on the list the vendor is sent. The folder's
+                 * status is passed so a returned folder stays returned; a
+                 * return is always of the whole folder, so its day is the
+                 * folder's.
+                 */
+                $row->status = self::statusFromItems($mine, $folder->status);
+                $row->finished_on = match ($row->status) {
+                    self::APPROVED => $mine->pluck('approved_on')->filter()->max(),
+                    self::RETURNED => $folder->finished_on,
+                    default => null,
+                };
 
                 // So awaitingPrice() asks about these works, not the whole folder's.
                 $row->unpriced_works = $mine->filter(fn ($w) => $w->vendor_amount === null || (float) $w->vendor_amount <= 0)->count();

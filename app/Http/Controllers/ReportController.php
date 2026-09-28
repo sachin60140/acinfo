@@ -682,8 +682,9 @@ class ReportController extends Controller
 
                 /*
                  * The works this row is about: all of the folder's, or — for a
-                 * folder split between vendors, drawn once under each — only the
-                 * ones this vendor holds. What the row lists, what its status
+                 * folder split between vendors, drawn once under each, or one
+                 * whose vendor holds only part of it — only the ones this
+                 * vendor holds. What the row lists, what its status
                  * note says and what its Update button moves all come from here.
                  */
                 $works = $breakdown[$row->id] ?? [];
@@ -1454,7 +1455,9 @@ class ReportController extends Controller
             $partyId = null;
         }
 
-        $files = WorkFileModel::report($partyType, $partyId, WorkFileModel::APPROVED);
+        // Approved files, as the owner chose: a vendor's part approved on a
+        // folder still at work is not yet counted.
+        $files = WorkFileModel::report($partyType, $partyId, WorkFileModel::APPROVED, folderStatus: true);
         $works = WorkFileModel::workBreakdown($files->pluck('id')->unique()->values()->all());
 
         $inHouse = 0;
