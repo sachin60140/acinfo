@@ -2374,6 +2374,38 @@ class WorkFileModel extends Model
         + ".self::PAID_OUT.')';
 
     /**
+     * A work on this file (as vrs) that was given to a vendor and has no rate
+     * for it yet, as the condition on it. The one definition every screen that
+     * chases a vendor's rate asks.
+     *
+     * Given to a vendor means it names one — or, on a file from before works
+     * carried their own vendor, none of its works names one and the folder
+     * does. A work nobody was given, done in-house, has no rate to agree and
+     * never will. Found by the owner on 2026-09-28: asked of every work on a
+     * folder with a vendor, one done in-house kept an approved file, every
+     * price on it agreed, under Awaiting Price with no margin for good. And
+     * asked only of a folder's own vendor, a folder split between two — which
+     * names neither — was never chased for the rate one of them lacked.
+     */
+    public const VENDOR_WORK_UNPRICED = "vrs.work_file_id = work_file.id
+        AND vrs.status <> 'cancelled'
+        AND (vrs.vendor_amount IS NULL OR vrs.vendor_amount <= 0)
+        AND (vrs.vendor_id IS NOT NULL
+             OR (work_file.vendor_id IS NOT NULL AND NOT EXISTS (
+                 SELECT 1 FROM work_file_item AS vrg
+                 WHERE vrg.work_file_id = work_file.id
+                   AND vrg.status <> 'cancelled'
+                   AND vrg.vendor_id IS NOT NULL)))";
+
+    /**
+     * Whether the file is still waiting on a vendor's rate, as SQL: the
+     * folder names a vendor and has no figure, or a work given to one has none.
+     */
+    public const VENDOR_UNPRICED = "((work_file.vendor_id IS NOT NULL
+            AND (work_file.vendor_amount IS NULL OR work_file.vendor_amount <= 0))
+        OR EXISTS (SELECT 1 FROM work_file_item AS vrs WHERE ".self::VENDOR_WORK_UNPRICED."))";
+
+    /**
      * Whether a file's margin can be known yet, as SQL.
      *
      * Mirrors awaitingPrice(): settled files are not outstanding, and a folder
@@ -2386,12 +2418,7 @@ class WorkFileModel extends Model
             WHERE work_file_item.work_file_id = work_file.id
               AND work_file_item.status <> 'cancelled'
               AND (work_file_item.customer_amount IS NULL OR work_file_item.customer_amount <= 0))
-        OR (work_file.vendor_id IS NOT NULL AND (
-            work_file.vendor_amount IS NULL OR work_file.vendor_amount <= 0
-            OR EXISTS (SELECT 1 FROM work_file_item
-                WHERE work_file_item.work_file_id = work_file.id
-                  AND work_file_item.status <> 'cancelled'
-                  AND (work_file_item.vendor_amount IS NULL OR work_file_item.vendor_amount <= 0))))))";
+        OR ".self::VENDOR_UNPRICED."))";
 
     /**
      * The ways the profit report can be cut, and what each row is called.
@@ -2584,29 +2611,42 @@ class WorkFileModel extends Model
      */
     private static function profitByWorkType(?string $from, ?string $to)
     {
-        $query = DB::table('work_file_item')
+        // A work waits on a price the same way a file does, on either side —
+        // a vendor's only if it was given to one; see VENDOR_WORK_UNPRICED.
+        $outstanding = "(work_file_item.customer_amount IS NULL OR work_file_item.customer_amount <= 0
+            OR EXISTS (SELECT 1 FROM work_file_item AS vrs
+                WHERE vrs.id = work_file_item.id AND ".self::VENDOR_WORK_UNPRICED."))";
+
+        /*
+         * Every work worked out on its own, before anything is grouped — as
+         * profitBy() does each file, for the same reason: the outstanding test
+         * is a correlated subquery, which MariaDB refuses inside an aggregate
+         * under a GROUP BY and MySQL allows.
+         */
+        $each = DB::table('work_file_item')
             ->join('work_file', 'work_file.id', '=', 'work_file_item.work_file_id')
             ->join('work_type', 'work_type.id', '=', 'work_file_item.work_type_id')
             ->where('work_file_item.status', '<>', self::CANCELLED)
-            ->whereNotIn('work_file.status', [self::CANCELLED, self::RETURNED]);
-
-        self::betweenDates($query, $from, $to);
-
-        // A work waits on a price the same way a file does, on either side.
-        $outstanding = "(work_file_item.customer_amount IS NULL OR work_file_item.customer_amount <= 0
-            OR (work_file.vendor_id IS NOT NULL
-                AND (work_file_item.vendor_amount IS NULL OR work_file_item.vendor_amount <= 0)))";
-
-        $rows = $query
+            ->whereNotIn('work_file.status', [self::CANCELLED, self::RETURNED])
             ->selectRaw('work_type.id as group_key')
             ->selectRaw('work_type.name as group_label')
+            ->selectRaw('COALESCE(work_file_item.customer_amount, 0) as billed')
+            ->selectRaw('COALESCE(work_file_item.vendor_amount, 0) as cost')
+            ->selectRaw("CASE WHEN $outstanding THEN 0
+                ELSE work_file_item.customer_amount - COALESCE(work_file_item.vendor_amount, 0) END as margin")
+            ->selectRaw("CASE WHEN $outstanding THEN 1 ELSE 0 END as unpriced");
+
+        self::betweenDates($each, $from, $to);
+
+        $rows = DB::query()
+            ->fromSub($each, 'each_work')
+            ->select('group_key', 'group_label')
             ->selectRaw('COUNT(*) as files')
-            ->selectRaw('COALESCE(SUM(work_file_item.customer_amount), 0) as billed')
-            ->selectRaw('COALESCE(SUM(COALESCE(work_file_item.vendor_amount, 0)), 0) as cost')
-            ->selectRaw("COALESCE(SUM(CASE WHEN $outstanding THEN 0
-                ELSE work_file_item.customer_amount - COALESCE(work_file_item.vendor_amount, 0) END), 0) as margin")
-            ->selectRaw("COALESCE(SUM(CASE WHEN $outstanding THEN 1 ELSE 0 END), 0) as unpriced")
-            ->groupBy('work_type.id', 'work_type.name')
+            ->selectRaw('COALESCE(SUM(billed), 0) as billed')
+            ->selectRaw('COALESCE(SUM(cost), 0) as cost')
+            ->selectRaw('COALESCE(SUM(margin), 0) as margin')
+            ->selectRaw('COALESCE(SUM(unpriced), 0) as unpriced')
+            ->groupBy('group_key', 'group_label')
             ->orderByRaw('billed desc')
             ->get();
 
@@ -2743,9 +2783,7 @@ class WorkFileModel extends Model
         return "(status NOT IN ('".self::CANCELLED."', '".self::RETURNED."') AND (
             customer_amount IS NULL OR customer_amount <= 0
             OR ".$shortWork('customer_amount')."
-            OR (vendor_id IS NOT NULL AND (
-                vendor_amount IS NULL OR vendor_amount <= 0
-                OR ".$shortWork('vendor_amount')."))))";
+            OR ".self::VENDOR_UNPRICED."))";
     }
 
     /**
@@ -4317,17 +4355,10 @@ class WorkFileModel extends Model
     {
         return implode(', ', array_unique(array_map(fn ($work) => $work->name, $works)));
     }
+    /** Works given to a vendor with no rate yet; see VENDOR_WORK_UNPRICED. */
     private static function unpricedWorksColumn()
     {
-        $cancelled = self::CANCELLED;
-
-        return DB::raw(<<<SQL
-            (SELECT COUNT(*) FROM work_file_item
-              WHERE work_file_item.work_file_id = work_file.id
-                AND work_file_item.status <> '$cancelled'
-                AND (work_file_item.vendor_amount IS NULL OR work_file_item.vendor_amount <= 0)
-            ) AS unpriced_works
-            SQL);
+        return DB::raw('(SELECT COUNT(*) FROM work_file_item AS vrs WHERE '.self::VENDOR_WORK_UNPRICED.') AS unpriced_works');
     }
 
     private static function unbilledWorksColumn()
@@ -4696,8 +4727,15 @@ class WorkFileModel extends Model
         $unbilled = (float) ($row->customer_amount ?? 0) <= 0
             || (int) ($row->unbilled_works ?? 0) > 0;
 
-        $unpriced = ($row->vendor_id ?? null) !== null
-            && ((float) ($row->vendor_amount ?? 0) <= 0 || (int) ($row->unpriced_works ?? 0) > 0);
+        /*
+         * The folder's vendor with no figure, or a work given to a vendor with
+         * none — counted by VENDOR_WORK_UNPRICED, so work done in-house is not
+         * asked for a rate, and a folder split between two vendors, naming
+         * neither, still is for the one it lacks.
+         */
+        $unpriced = (($row->vendor_id ?? null) !== null && (float) ($row->vendor_amount ?? 0) <= 0)
+            || (int) ($row->unpriced_works ?? 0) > 0;
+
         return $unbilled || $unpriced;
     }
 
@@ -5097,9 +5135,9 @@ class WorkFileModel extends Model
 
         $unbilled = fn ($q) => $outstanding($q, 'customer_amount');
 
-        // Only meaningful once there is a vendor — an in-house file has no rate
-        // to agree and never will.
-        $unpriced = fn ($q) => $outstanding($q->whereNotNull('work_file.vendor_id'), 'vendor_amount');
+        // Only work given to a vendor — work done in-house has no rate to
+        // agree and never will. The same test as the list's; see VENDOR_UNPRICED.
+        $unpriced = fn ($q) => $q->whereRaw(self::VENDOR_UNPRICED);
         match ($which) {
             'customer' => $unbilled($query),
             'vendor' => $unpriced($query),
