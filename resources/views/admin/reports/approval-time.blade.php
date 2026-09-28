@@ -139,8 +139,10 @@
                     <i class="bi bi-info-circle"></i>
                     Counted from the day the work was <strong>dispatched</strong> to the day it was
                     <strong>approved</strong> — for a file of several works, the day the last of them was.
-                    Vendor-wise, only that vendor's works count. Each {{ strtolower($partyLabel) }}'s average is under
-                    their files, and everyone's is at the foot.
+                    @if ($partyType === 'vendor')
+                        Only that vendor's works count.
+                    @endif
+                    Each {{ strtolower($partyLabel) }}'s average is under their files, and everyone's is at the foot.
                 </div>
 
                 {{-- Approved and not counted, said rather than hidden. --}}

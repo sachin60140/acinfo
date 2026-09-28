@@ -1533,6 +1533,14 @@ class ReportController extends Controller
                 continue;
             }
 
+            /*
+             * Customer-wise, no vendor: the owner asked on 2026-09-28 for
+             * Given To to go, and a customer is never shown who did their
+             * work — not on screen, and not in a spreadsheet made from it —
+             * so it is not sent to the page at all.
+             */
+            $counterparty = $partyType === 'vendor' ? ['counterparty' => (string) $file->customer_name] : [];
+
             $rows->push([
                 'id' => $file->id.'-'.$file->party_id,
                 'party_id' => (int) $file->party_id,
@@ -1541,7 +1549,7 @@ class ReportController extends Controller
                 'edit_url' => route('workfile.edit', $file->id),
                 'registration_no' => (string) $file->registration_no,
                 'work_type' => (string) $file->work_type,
-                'counterparty' => $partyType === 'vendor' ? (string) $file->customer_name : (string) ($file->vendor_name ?: 'Several vendors'),
+            ] + $counterparty + [
                 'dispatched' => date('d-m-Y', strtotime($sent)),
                 'dispatched_raw' => date('Y-m-d', strtotime($sent)),
                 'approved' => date('d-m-Y', strtotime($approved)),
@@ -1571,18 +1579,19 @@ class ReportController extends Controller
             'emptyText' => ($partyId || $from || $to)
                 ? 'No approved file matches. Try widening the dates or clearing the '.strtolower($partyLabel).'.'
                 : 'No file has been approved after being dispatched yet.',
-            'columns' => [
+            'columns' => array_values(array_filter([
                 // Exported, never drawn: the band says who on screen, and a
                 // spreadsheet has no bands.
                 ['key' => 'party_name', 'label' => $partyLabel, 'exportOnly' => true],
                 ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
                 ['key' => 'registration_no', 'label' => 'Vehicle'],
                 ['key' => 'work_type', 'label' => 'Work'],
-                ['key' => 'counterparty', 'label' => $partyType === 'vendor' ? 'Customer' : 'Given To'],
+                // Vendor-wise only; see above.
+                $partyType === 'vendor' ? ['key' => 'counterparty', 'label' => 'Customer'] : null,
                 ['key' => 'dispatched', 'label' => 'Dispatched', 'sortBy' => 'dispatched_raw'],
                 ['key' => 'approved', 'label' => 'Approved', 'sortBy' => 'approved_raw'],
                 ['key' => 'days', 'label' => 'Days Taken', 'type' => 'count', 'class' => 'fw-bold', 'sortDesc' => true],
-            ],
+            ])),
             'rows' => $rows,
         ];
 

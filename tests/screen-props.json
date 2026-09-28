@@ -1410,7 +1410,6 @@
                 "file_no:link",
                 "registration_no:text",
                 "work_type:text",
-                "counterparty:text",
                 "dispatched:text",
                 "approved:text",
                 "days:count"
@@ -1423,7 +1422,6 @@
                 "list_of": {
                     "approved": "string",
                     "approved_raw": "string",
-                    "counterparty": "string",
                     "days": "number",
                     "dispatched": "string",
                     "dispatched_raw": "string",
