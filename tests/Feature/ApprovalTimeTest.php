@@ -243,8 +243,9 @@ class ApprovalTimeTest extends TestCase
     }
 
     /**
-     * Its only vendor work cancelled, the folder still names the vendor and
-     * the day — and the in-house work approved later is no time of theirs.
+     * Its only vendor work cancelled — and the in-house work approved later is
+     * no time of theirs. The folder named the vendor and the day still, until
+     * roll-up learned to clear them (2026-09-28); either way it is not theirs.
      */
     public function test_a_folder_whose_vendor_work_was_cancelled_is_in_house(): void
     {
@@ -260,7 +261,7 @@ class ApprovalTimeTest extends TestCase
         $file->rollUp();
         $file->save();
 
-        $this->assertSame($vendor->id, (int) $file->fresh()->vendor_id, 'the folder still names them');
+        $this->assertNull($file->fresh()->vendor_id, 'the folder names nobody now');
         $this->assertSame(WorkFileModel::APPROVED, $file->fresh()->status);
 
         $page = $this->page();

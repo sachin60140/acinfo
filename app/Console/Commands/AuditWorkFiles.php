@@ -333,42 +333,28 @@ class AuditWorkFiles extends Command
                 && $file->customer_id
                 && (float) $file->customer_amount > 0,
 
-            'vendor' => ! $file->isCancelled()
-                && $file->vendor_id
-                && (float) $file->vendor_amount > 0,
-
             'customer_return' => $file->isReturned()
                 && $file->customer_id
                 && $file->refundToCustomer() > 0,
-
-            'vendor_return' => $file->vendor_returned_on
-                && ! $file->isCancelled()
-                && $file->vendor_id
-                && $file->reversedToVendor() > 0,
         ];
 
         $amounts = [
             'customer' => (float) $file->customer_amount,
-            'vendor' => (float) $file->vendor_amount,
             'customer_return' => $file->refundToCustomer(),
-            'vendor_return' => $file->reversedToVendor(),
         ];
 
         $whose = [
             'customer' => (int) $file->customer_id,
-            'vendor' => (int) $file->vendor_id,
             'customer_return' => (int) $file->customer_id,
-            'vendor_return' => (int) $file->vendor_id,
         ];
 
         $said = [
             'customer' => 'charges the customer',
-            'vendor' => 'owes the vendor',
             'customer_return' => 'refunds the customer',
-            'vendor_return' => 'takes back from the vendor',
         ];
 
-        $entries = PartyLedgerModel::where('work_file_id', $file->id)->get()->keyBy('file_role');
+        $all = PartyLedgerModel::where('work_file_id', $file->id)->get();
+        $entries = $all->whereIn('file_role', ['customer', 'customer_return'])->keyBy('file_role');
 
         foreach ($expected as $role => $wanted) {
             $entry = $entries->get($role);
@@ -396,6 +382,45 @@ class AuditWorkFiles extends Command
             if ((int) $entry->party_id !== $whose[$role]) {
                 $note($id, "posts \"$role\" against party {$entry->party_id}, and the file says {$whose[$role]}");
             }
+        }
+
+        /*
+         * The vendors' lines, one per vendor, against what syncVendors()
+         * writes — asked of vendorLines(), so this and the writer cannot
+         * disagree. Found on 2026-09-28: asked of the folder's own vendor and
+         * figure, a folder a vendor held part of was said to owe them the
+         * office's rate too, and a split folder's second vendor's line was
+         * reported as one nothing called for.
+         */
+        $lines = $file->vendorLines();
+
+        foreach (['vendor' => 'owes vendor', 'vendor_return' => 'takes back from vendor'] as $role => $says) {
+            $have = $all->where('file_role', $role)->keyBy(fn ($entry) => (int) $entry->party_id);
+
+            foreach ($lines[$role] as $vendor => $line) {
+                $entry = $have->get($vendor);
+
+                if (! $entry) {
+                    $note($id, "$says $vendor ".number_format($line['amount'], 2).' but has no entry for it');
+                } elseif (abs((float) $entry->amount - $line['amount']) > 0.005) {
+                    $note($id, "$says $vendor ".number_format($line['amount'], 2)." but the entry says {$entry->amount}");
+                }
+            }
+
+            foreach ($have as $vendor => $entry) {
+                if (! isset($lines[$role][$vendor])) {
+                    $note($id, "has a \"$role\" entry of {$entry->amount} for vendor $vendor that nothing on the file calls for"
+                        .' — files:resync-vendors puts this right');
+                }
+            }
+        }
+
+        // And who the folder names, against what its works say.
+        $works = WorkFileModel::vendorFromWorks($file->items);
+
+        if ($works !== null && (int) $works['vendor_id'] !== (int) $file->vendor_id) {
+            $note($id, 'names vendor '.($file->vendor_id ?: 'none').' but its works say '.($works['vendor_id'] ?: 'none')
+                .' — files:resync-vendors puts this right');
         }
 
         // The wording, which files:relabel-ledger is what puts right.

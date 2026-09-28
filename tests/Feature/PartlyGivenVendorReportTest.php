@@ -10,6 +10,7 @@ use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
@@ -443,9 +444,10 @@ class PartlyGivenVendorReportTest extends TestCase
     // ---------------------------------------------------------- the edges
 
     /**
-     * Its one given work cancelled, the folder still names the vendor — no
-     * live work carries one to say otherwise. It is not an older file, all of
-     * it theirs: what is left was kept in the office.
+     * Its one given work cancelled, the folder named the vendor still, until
+     * files:resync-vendors puts it right — no live work carried one to say
+     * otherwise. It is not an older file, all of it theirs: what is left was
+     * kept in the office.
      */
     public function test_a_cancelled_given_work_leaves_nothing_under_the_vendor(): void
     {
@@ -458,7 +460,9 @@ class PartlyGivenVendorReportTest extends TestCase
         $file->save();
         $file->syncLedger();
 
-        $this->assertSame($this->sharma->id, (int) $file->fresh()->vendor_id);
+        // As a folder struck off before roll-up learned to clear its vendor.
+        DB::table('work_file')->where('id', $file->id)->update(['vendor_id' => $this->sharma->id]);
+
         $this->assertSame([], $this->rowsFor($file), 'the transfer kept in the office went on his list');
     }
 

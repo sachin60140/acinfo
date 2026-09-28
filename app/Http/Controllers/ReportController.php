@@ -1478,7 +1478,7 @@ class ReportController extends Controller
              * works carried a vendor — none of them ever did — is the folder's
              * vendor's, all of it.
              */
-            $older = $all->every(fn ($work) => ! $work->vendor_id);
+            $older = WorkFileModel::isOlderFolder($all);
 
             if ($partyType === 'vendor') {
                 /*

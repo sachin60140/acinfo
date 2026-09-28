@@ -911,8 +911,18 @@ class WorkFileModel extends Model
             ->unique();
 
         $moved = false;
+        $items = $this->items()->get();
 
-        foreach ($this->items()->get() as $item) {
+        /*
+         * Where a work goes when its papers are in: to File Dispatch if it was
+         * given out — its own vendor, or on an older folder the folder's — and
+         * back to the office if not. Found on 2026-09-28: asked of the folder's
+         * vendor, work the office kept on a folder a vendor had part of went
+         * to File Dispatch, which nobody had it for.
+         */
+        $older = self::isOlderFolder($items);
+
+        foreach ($items as $item) {
             if ($item->isSettled()) {
                 continue;
             }
@@ -933,7 +943,7 @@ class WorkFileModel extends Model
             if ($pending && $item->status === self::IN_OFFICE) {
                 $item->status = self::PAPER_PENDENCY;
             } elseif (! $pending && $item->status === self::PAPER_PENDENCY) {
-                $item->status = $this->vendor_id ? self::DISPATCHED : self::IN_OFFICE;
+                $item->status = ($item->vendor_id || ($older && $this->vendor_id)) ? self::DISPATCHED : self::IN_OFFICE;
             } else {
                 continue;
             }
@@ -1986,7 +1996,7 @@ class WorkFileModel extends Model
          * same person. A folder that did go to one vendor writes the one line
          * it always wrote, to the same party, with the same words on it.
          */
-        $this->syncVendors($cancelled);
+        $this->syncVendors();
 
         // Papers returned: give the customer their money back, in full, as a
         // credit that sits beside the original charge. Setting any other status
@@ -2023,6 +2033,70 @@ class WorkFileModel extends Model
             ->distinct()->count('vendor_id');
 
         return $vendors > 1 ? $vendors.' vendors' : null;
+    }
+
+    /**
+     * A folder from before works carried a vendor of their own: none of its
+     * works, cancelled ones included, ever named one. Only then is the
+     * folder's own vendor the vendor of all of it.
+     *
+     * Asked of every work, never the live ones alone. Found on 2026-09-28: a
+     * vendor whose one given work was cancelled read, by the live works, as
+     * the vendor of an older folder — and was credited the rate of the work
+     * the office kept, named on its statement, and chased for its price.
+     *
+     * The one definition; see also olderFolderSql() and OLDER_FOLDER.
+     */
+    public static function isOlderFolder($works): bool
+    {
+        return collect($works)->every(fn ($work) => ! $work->vendor_id);
+    }
+
+    /** isOlderFolder(), as SQL, of the row called work_file. */
+    public const OLDER_FOLDER = 'NOT EXISTS (SELECT 1 FROM work_file_item AS ever_given
+        WHERE ever_given.work_file_id = work_file.id AND ever_given.vendor_id IS NOT NULL)';
+
+    /** isOlderFolder(), as SQL, of a folder by another name. */
+    public static function olderFolderSql(string $folder = 'work_file'): string
+    {
+        return str_replace('work_file.id', $folder.'.id', self::OLDER_FOLDER);
+    }
+
+    /**
+     * Who the folder is with, as its works say it — or null where they cannot
+     * say, and what is written on the folder stands.
+     *
+     * One vendor while the live works given out agree, none while they do not.
+     * The date is the earliest of theirs; the folder is back when every one of
+     * them is, on the day the last came.
+     *
+     * With no live work given out: an older folder, or one struck off whole,
+     * keeps what is written — who had it. One whose given work was cancelled,
+     * the rest never given to anybody, is with nobody now.
+     *
+     * @return array{vendor_id: ?int, vendor_date: ?string, vendor_returned_on: ?string}|null
+     */
+    public static function vendorFromWorks($works): ?array
+    {
+        $works = collect($works);
+        $live = $works->reject(fn ($work) => $work->status === self::CANCELLED);
+        $out = $live->filter(fn ($work) => $work->vendor_id);
+
+        if ($out->isEmpty()) {
+            return $live->isNotEmpty() && ! self::isOlderFolder($works)
+                ? ['vendor_id' => null, 'vendor_date' => null, 'vendor_returned_on' => null]
+                : null;
+        }
+
+        $vendors = $out->pluck('vendor_id')->unique();
+
+        return [
+            'vendor_id' => $vendors->count() === 1 ? (int) $vendors->first() : null,
+            'vendor_date' => $out->pluck('vendor_date')->filter()->min() ?: null,
+            'vendor_returned_on' => $out->contains(fn ($work) => ! $work->vendor_returned_on)
+                ? null
+                : $out->pluck('vendor_returned_on')->filter()->max(),
+        ];
     }
 
     /**
@@ -2079,35 +2153,53 @@ class WorkFileModel extends Model
     }
 
     /**
-     * One credit per vendor on this folder, and one reversal each where their
-     * work has come back.
+     * The lines this folder should have on its vendors' statements: one
+     * credit per vendor, and one reversal each where their work has come back.
      *
-     * While no work carries a vendor of its own — a file priced before it was
-     * given to anybody, or one saved by a screen that has not been taught about
-     * the works yet — the folder's own vendor is written, exactly as before.
+     * What syncVendors() writes, and what files:audit and files:resync-vendors
+     * check the ledger against — one answer, so the three cannot disagree.
+     *
+     * An older folder — no work ever named a vendor — writes its own vendor,
+     * exactly as before. Any other folder writes what its live works say, and
+     * nothing where no live work is given out: a vendor whose one given work
+     * was cancelled is owed nothing for the work the office kept.
+     *
+     * @return array{vendor: array<int, array{amount: float, date: ?string, says: string}>, vendor_return: array<int, array{amount: float, date: ?string, says: string}>}
      */
-    private function syncVendors(bool $cancelled): void
+    public function vendorLines(): array
     {
-        $shares = $cancelled ? [] : $this->vendorShares();
+        $lines = ['vendor' => [], 'vendor_return' => []];
+
+        if ($this->isCancelled()) {
+            return $lines;
+        }
 
         // Never the file's typed details; see vendorParticular().
         $particular = $this->vendorParticular();
 
-        if (! $shares) {
-            $folder = ($cancelled || ! $this->vendor_id) ? null : (int) $this->vendor_id;
+        if (self::isOlderFolder($this->items()->get())) {
+            $folder = $this->vendor_id ? (int) $this->vendor_id : null;
 
-            $this->clearRole('vendor', [$folder]);
-            $this->clearRole('vendor_return', [$folder]);
+            if ($folder && (float) $this->vendor_amount > 0) {
+                $lines['vendor'][$folder] = [
+                    'amount' => (float) $this->vendor_amount,
+                    'date' => $this->vendor_date ?: $this->received_date,
+                    'says' => $particular,
+                ];
+            }
 
-            $this->syncSide('vendor', 'credit', $folder, $this->vendor_amount,
-                $this->vendor_date ?: $this->received_date, $particular);
+            if ($folder && $this->vendor_returned_on && $this->reversedToVendor() > 0) {
+                $lines['vendor_return'][$folder] = [
+                    'amount' => $this->reversedToVendor(),
+                    'date' => $this->vendor_returned_on,
+                    'says' => $particular.' - returned by vendor',
+                ];
+            }
 
-            $this->syncSide('vendor_return', 'debit', ($this->vendor_returned_on && ! $cancelled) ? $folder : null,
-                $this->reversedToVendor(), $this->vendor_returned_on ?: $this->received_date,
-                $particular.' - returned by vendor');
-
-            return;
+            return $lines;
         }
+
+        $shares = $this->vendorShares();
 
         /*
          * A rate agreed on the folder and never written down onto its works.
@@ -2116,23 +2208,17 @@ class WorkFileModel extends Model
          * so this is the older shape rather than a current one — but the folder
          * is what the ledger read until now, and a file carrying its rate only
          * there would have its vendor's credit silently drop to nothing. Only
-         * where the whole folder is one vendor's: a split folder has its rates
-         * on the works by construction.
+         * where the whole folder is one vendor's: found on 2026-09-28, a vendor
+         * holding part of it was credited, under his own work's name, the rate
+         * typed on a work the office kept.
          */
         if (count($shares) === 1) {
             $only = array_key_first($shares);
 
-            if ($shares[$only]['amount'] <= 0 && (float) $this->vendor_amount > 0) {
+            if ($shares[$only]['all'] && $shares[$only]['amount'] <= 0 && (float) $this->vendor_amount > 0) {
                 $shares[$only]['amount'] = (float) $this->vendor_amount;
             }
         }
-
-        $this->clearRole('vendor', array_keys($shares));
-
-        // Only the vendors whose work has actually come back keep a reversal:
-        // the rest are cleared here rather than in the loop, where a vendor
-        // still holding their work would have deleted somebody else's.
-        $this->clearRole('vendor_return', array_keys(array_filter($shares, fn ($share) => (bool) $share['returned_on'])));
 
         foreach ($shares as $vendor => $share) {
             /*
@@ -2143,8 +2229,13 @@ class WorkFileModel extends Model
              */
             $says = $share['all'] ? $particular : $this->vendorParticular($share['works']);
 
-            $this->syncSide('vendor', 'credit', $vendor, $share['amount'],
-                $share['date'] ?: $this->received_date, $says, true);
+            if ($share['amount'] > 0) {
+                $lines['vendor'][$vendor] = [
+                    'amount' => (float) $share['amount'],
+                    'date' => $share['date'] ?: $this->received_date,
+                    'says' => $says,
+                ];
+            }
 
             /*
              * A part reversal is the folder's own figure, and it belongs to a
@@ -2153,10 +2244,38 @@ class WorkFileModel extends Model
              * reversal waits for the return screen to be asked work by work.
              */
             if ($share['returned_on']) {
-                $reversed = $share['all'] ? $this->reversedToVendor() : $share['amount'];
+                $reversed = $share['all'] ? $this->reversedToVendor() : (float) $share['amount'];
 
-                $this->syncSide('vendor_return', 'debit', $vendor, $reversed,
-                    $share['returned_on'], $says.' - returned by vendor', true);
+                if ($reversed > 0) {
+                    $lines['vendor_return'][$vendor] = [
+                        'amount' => $reversed,
+                        'date' => $share['returned_on'],
+                        'says' => $says.' - returned by vendor',
+                    ];
+                }
+            }
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Writes vendorLines() to the ledger: the lines it names, updated in
+     * place, and every other vendor line of this folder's cleared — a line on
+     * a statement nobody is owed is money the office thinks it has to pay.
+     *
+     * Public so files:resync-vendors can put a folder's vendor lines right
+     * without touching its customer's.
+     */
+    public function syncVendors(): void
+    {
+        $lines = $this->vendorLines();
+
+        foreach (['vendor' => 'credit', 'vendor_return' => 'debit'] as $role => $side) {
+            $this->clearRole($role, array_keys($lines[$role]));
+
+            foreach ($lines[$role] as $vendor => $line) {
+                $this->syncSide($role, $side, $vendor, $line['amount'], $line['date'], $line['says'], true);
             }
         }
     }
@@ -2238,14 +2357,16 @@ class WorkFileModel extends Model
              * else to carry one, and the screens that still set a vendor on the
              * folder direct leave its works empty-handed — asked of the works
              * alone, both would drop off this screen with the vendor still
-             * holding the papers.
+             * holding the papers. Only an older folder, though: one whose only
+             * given work was cancelled has nothing out with anybody.
              */
             ->where(fn ($outer) => $outer
                 ->whereHas('items', fn ($q) => $q->whereNotNull('vendor_id')
                     ->whereNull('vendor_returned_on')
                     ->whereNotIn('status', [self::CANCELLED]))
                 ->orWhere(fn ($own) => $own->whereNotNull('vendor_id')
-                    ->whereNull('vendor_returned_on')))
+                    ->whereNull('vendor_returned_on')
+                    ->whereRaw(self::OLDER_FOLDER)))
             /*
              * Everything the vendor is still holding, whatever state the work
              * is in. An approved file is the one that comes back — they got the
@@ -2386,16 +2507,16 @@ class WorkFileModel extends Model
      * price on it agreed, under Awaiting Price with no margin for good. And
      * asked only of a folder's own vendor, a folder split between two — which
      * names neither — was never chased for the rate one of them lacked.
+     *
+     * The older file is asked of every work, cancelled ones included; see
+     * isOlderFolder(). Asked of the live ones, a folder whose one given work
+     * was cancelled was chased for a vendor's rate on the work the office kept.
      */
     public const VENDOR_WORK_UNPRICED = "vrs.work_file_id = work_file.id
         AND vrs.status <> 'cancelled'
         AND (vrs.vendor_amount IS NULL OR vrs.vendor_amount <= 0)
         AND (vrs.vendor_id IS NOT NULL
-             OR (work_file.vendor_id IS NOT NULL AND NOT EXISTS (
-                 SELECT 1 FROM work_file_item AS vrg
-                 WHERE vrg.work_file_id = work_file.id
-                   AND vrg.status <> 'cancelled'
-                   AND vrg.vendor_id IS NOT NULL)))";
+             OR (work_file.vendor_id IS NOT NULL AND ".self::OLDER_FOLDER.'))';
 
     /**
      * Whether the file is still waiting on a vendor's rate, as SQL: the
@@ -4434,10 +4555,7 @@ class WorkFileModel extends Model
     private static function givenInPart($q): void
     {
         $q->whereNotNull('work_file.vendor_id')
-            ->whereExists(fn ($given) => $given->select(DB::raw(1))
-                ->from('work_file_item as given')
-                ->whereColumn('given.work_file_id', 'work_file.id')
-                ->whereNotNull('given.vendor_id'))
+            ->whereRaw('NOT '.self::OLDER_FOLDER)
             ->whereExists(fn ($other) => $other->select(DB::raw(1))
                 ->from('work_file_item as other')
                 ->whereColumn('other.work_file_id', 'work_file.id')
@@ -5097,23 +5215,17 @@ class WorkFileModel extends Model
          * the folder would put the other's work on his statement. The date is
          * the earliest of theirs: the day this folder started being out.
          *
-         * Only from works that carry one. A folder whose works have no vendor
-         * keeps whatever was set on it, so the screens that still write the
-         * folder direct are not undone by the next save.
+         * Only from works that carry one. A folder whose works never had a
+         * vendor keeps whatever was set on it, so the screens that still write
+         * the folder direct are not undone by the next save. One whose only
+         * given work was cancelled names nobody now: found on 2026-09-28, it
+         * kept naming that vendor, and every list that reads the folder's
+         * vendor put the office's own work under his name.
          */
-        $out = $live->filter(fn ($item) => $item->vendor_id);
-
-        if ($out->isNotEmpty()) {
-            $vendors = $out->pluck('vendor_id')->unique();
-
-            $this->vendor_id = $vendors->count() === 1 ? (int) $vendors->first() : null;
-            $this->vendor_date = $out->pluck('vendor_date')->filter()->min() ?: null;
-
-            // The folder is back when every work on it is back, and on the day
-            // the last of it came.
-            $this->vendor_returned_on = $out->contains(fn ($item) => ! $item->vendor_returned_on)
-                ? null
-                : $out->pluck('vendor_returned_on')->filter()->max();
+        if ($from = self::vendorFromWorks($items)) {
+            $this->vendor_id = $from['vendor_id'];
+            $this->vendor_date = $from['vendor_date'];
+            $this->vendor_returned_on = $from['vendor_returned_on'];
         }
 
         // What it is now, so a return is kept; see statusFromItems().
@@ -5153,7 +5265,7 @@ class WorkFileModel extends Model
     /**
      * The works on this file that are not cancelled — for a vendor, only the
      * ones they were given. A file from before works carried their own vendor
-     * is the folder's vendor's, all of it.
+     * is the folder's vendor's, all of it; see isOlderFolder().
      */
     public function itemsFor(?int $vendorId = null)
     {
@@ -5163,13 +5275,11 @@ class WorkFileModel extends Model
             return $live;
         }
 
-        $theirs = $live->where('vendor_id', $vendorId);
-
-        if ($theirs->isEmpty() && $live->every(fn ($item) => ! $item->vendor_id) && (int) $this->vendor_id === $vendorId) {
-            return $live;
+        if (self::isOlderFolder($this->items)) {
+            return (int) $this->vendor_id === $vendorId ? $live : $live->take(0);
         }
 
-        return $theirs;
+        return $live->where('vendor_id', $vendorId);
     }
 
     public function workLabel(): string
