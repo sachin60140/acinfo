@@ -106,7 +106,7 @@ const props = defineProps({
     // Where the group's heading text comes from, if not the grouping key itself.
     groupLabel: { type: String, default: '' },
 
-    // Columns to total, per group and overall: { columnKey: 'sum' }
+    // Columns to total, per group and overall: { columnKey: 'sum' | 'avg' }
     totals: { type: Object, default: () => ({}) },
 
     /*
@@ -342,6 +342,18 @@ function sum(rows) {
     const out = {};
 
     for (const key of Object.keys(props.totals)) {
+        /*
+         * 'avg': the mean of the cells that have a figure. A blank is a figure
+         * nobody could work out, not a nought, and counting it as one would
+         * pull every average down by the rows it could not measure.
+         */
+        if (props.totals[key] === 'avg') {
+            const figures = rows.map((row) => row[key]).filter((value) => ! blank(value)).map(Number);
+            out[key] = figures.length ? figures.reduce((a, b) => a + b, 0) / figures.length : null;
+
+            continue;
+        }
+
         out[key] = rows.reduce((carry, row) => carry + (Number(row[key]) || 0), 0);
     }
 
@@ -356,6 +368,11 @@ function sum(rows) {
  * one of which the rest of the app never uses.
  */
 function total(column, value) {
+    // An average says it is one, under a row labelled Total.
+    if (props.totals[column.key] === 'avg') {
+        return value === null ? '—' : `avg ${Number(value).toFixed(1)}`;
+    }
+
     if (column.type === 'balance') {
         return balance(value);
     }

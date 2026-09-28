@@ -255,6 +255,7 @@ class DashboardTest extends TestCase
             'admin/reports/files',
             'admin/reports/collection',
             'admin/reports/vendor-payments',
+            'admin/reports/approval-time',
         ];
 
         foreach ($screens as $screen) {

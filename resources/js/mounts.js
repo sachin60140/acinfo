@@ -92,6 +92,7 @@ export const components = {
     'vue-profit-report': DataGrid,
     'vue-expense-report': DataGrid,
     'vue-vendor-report': DataGrid,
+    'vue-approval-time': DataGrid,
     // The grid, with the Work Report's Update dialog over it.
     'vue-inhouse-work': InHouseWork,
     // Banded by customer, with a message for each band.

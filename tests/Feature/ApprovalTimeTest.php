@@ -1,0 +1,272 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\PartyModel;
+use App\Models\User;
+use App\Models\WorkFileItemModel;
+use App\Models\WorkFileModel;
+use App\Models\WorkTypeModel;
+use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\Hash;
+use Tests\TestCase;
+
+/**
+ * Approval Time: how many days approval took from the day the work was
+ * dispatched, for every approved file, customer-wise and vendor-wise. Asked
+ * for by the owner on 2026-09-28, one row a file.
+ *
+ * See the note in PartyLedgerTest: DatabaseTransactions, never RefreshDatabase.
+ */
+class ApprovalTimeTest extends TestCase
+{
+    use DatabaseTransactions;
+
+    private User $admin;
+
+    private PartyModel $customer;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->admin = new User;
+        $this->admin->name = 'Approval Time Admin';
+        $this->admin->email = 'approval-time-'.uniqid().'@example.com';
+        $this->admin->password = Hash::make('password-for-tests');
+        $this->admin->user_type = 1;
+        $this->admin->save();
+
+        $this->customer = $this->party('customer');
+    }
+
+    private function party(string $type): PartyModel
+    {
+        $party = new PartyModel;
+        $party->party_type = $type;
+        $party->name = ucfirst($type).' '.uniqid().' timed';
+        $party->mobile = '93500'.random_int(10000, 99999);
+        $party->is_active = 1;
+        $party->save();
+
+        return $party;
+    }
+
+    /**
+     * A file of works, each [vendor or null, dispatched days ago or null, approved days ago or null, status].
+     *
+     * @param  array<int, array{0: ?PartyModel, 1: ?int, 2: ?int, 3?: string}>  $works
+     */
+    private function file(array $works, ?PartyModel $customer = null): WorkFileModel
+    {
+        $file = new WorkFileModel;
+        $file->file_no = 'F-AT-'.uniqid();
+        $file->received_date = now()->subDays(120)->toDateString();
+        $file->registration_no = 'BR06AT'.random_int(1000, 9999);
+        $file->work_type_id = $this->type()->id;
+        $file->customer_id = ($customer ?? $this->customer)->id;
+        $file->customer_amount = 0;
+        $file->status = WorkFileModel::DISPATCHED;
+        $file->save();
+
+        foreach ($works as $work) {
+            [$vendor, $sent, $approved] = $work;
+
+            $item = new WorkFileItemModel;
+            $item->work_file_id = $file->id;
+            $item->work_type_id = $this->type()->id;
+            $item->customer_amount = 1000;
+            $item->status = $work[3] ?? ($approved !== null ? WorkFileModel::APPROVED : WorkFileModel::DISPATCHED);
+            $item->approved_on = $approved !== null ? now()->subDays($approved)->toDateString() : null;
+
+            if ($vendor) {
+                $item->vendor_id = $vendor->id;
+                $item->vendor_amount = 500;
+                $item->vendor_date = now()->subDays($sent)->toDateString();
+            } else {
+                $item->kept_in_house_on = now()->subDays(100)->toDateString();
+            }
+
+            $item->save();
+        }
+
+        $file->rollUp();
+        $file->save();
+        $file->syncLedger();
+
+        return $file->fresh();
+    }
+
+    private function type(): WorkTypeModel
+    {
+        $type = new WorkTypeModel;
+        $type->name = 'Timed Work '.uniqid();
+        $type->is_active = 1;
+        $type->save();
+
+        return $type;
+    }
+
+    private function page(array $query = [])
+    {
+        return $this->actingAs($this->admin)->getJson(route('report.approvaltime', $query))->assertOk();
+    }
+
+    private function row(WorkFileModel $file, array $query = []): ?array
+    {
+        return collect($this->page($query)->json('props.rows'))->firstWhere('file_no', $file->file_no);
+    }
+
+    public function test_it_counts_from_dispatch_to_approval(): void
+    {
+        $vendor = $this->party('vendor');
+        $file = $this->file([[$vendor, 30, 18]]);
+
+        $row = $this->row($file);
+
+        $this->assertSame(12, $row['days']);
+        $this->assertSame(now()->subDays(30)->format('d-m-Y'), $row['dispatched']);
+        $this->assertSame(now()->subDays(18)->format('d-m-Y'), $row['approved']);
+        $this->assertSame($vendor->name, $row['counterparty']);
+    }
+
+    /** A folder of three is not through until the third one is. */
+    public function test_a_file_of_several_works_is_approved_when_its_last_one_is(): void
+    {
+        $vendor = $this->party('vendor');
+        $file = $this->file([[$vendor, 40, 35], [$vendor, 40, 20], [$vendor, 40, 28]]);
+
+        $this->assertSame(20, $this->row($file)['days']);
+    }
+
+    public function test_only_approved_files_are_counted(): void
+    {
+        $vendor = $this->party('vendor');
+        $running = $this->file([[$vendor, 10, null]]);
+        $half = $this->file([[$vendor, 10, 5], [$vendor, 10, null]]);
+
+        $this->assertNull($this->row($running));
+        $this->assertNull($this->row($half), 'partly approved is not approved');
+
+        // Papers given back to the customer finished too — on the day they
+        // went back, which is not an approval.
+        $returned = $this->file([[$vendor, 10, null, WorkFileModel::RETURNED]]);
+        $returned->status = WorkFileModel::RETURNED;
+        $returned->returned_on = now()->subDays(2)->toDateString();
+        $returned->save();
+
+        $this->assertNull($this->row($returned));
+    }
+
+    public function test_files_that_cannot_be_counted_are_said_not_hidden(): void
+    {
+        $before = $this->page()->json('page');
+
+        // Done here and never dispatched.
+        $inHouse = $this->file([[null, null, 5]]);
+
+        // Approved before it went out: a date typed wrong.
+        $misdated = $this->file([[$this->party('vendor'), 5, 9]]);
+
+        $page = $this->page();
+
+        $this->assertNull($this->row($inHouse));
+        $this->assertNull($this->row($misdated));
+        $this->assertSame($before['inHouse'] + 1, $page->json('page.inHouse'));
+        $this->assertSame($before['misdated'] + 1, $page->json('page.misdated'));
+
+        $this->actingAs($this->admin)->get(route('report.approvaltime'))
+            ->assertSee('done in-house and never dispatched')
+            ->assertSee('an approval dated before');
+    }
+
+    public function test_the_period_is_the_day_it_was_approved(): void
+    {
+        $vendor = $this->party('vendor');
+        $lastMonth = $this->file([[$vendor, 90, 40]]);
+        $thisWeek = $this->file([[$vendor, 90, 3]]);
+
+        $query = ['from' => now()->subDays(10)->toDateString(), 'to' => now()->toDateString()];
+
+        $this->assertNull($this->row($lastMonth, $query), 'went out long ago and was approved long ago');
+        $this->assertSame(87, $this->row($thisWeek, $query)['days'], 'went out long ago, approved this week');
+    }
+
+    /**
+     * Vendor-wise, a vendor's own works: another vendor's, or work done
+     * in-house, approved later is not time this vendor took.
+     */
+    public function test_vendor_wise_counts_only_that_vendors_works(): void
+    {
+        $quick = $this->party('vendor');
+        $slow = $this->party('vendor');
+
+        // Split between two vendors, and one work done in-house, approved last.
+        $file = $this->file([[$quick, 30, 26], [$slow, 25, 5], [null, null, 2]]);
+
+        $rows = collect($this->page(['party_type' => 'vendor'])->json('props.rows'))->where('file_no', $file->file_no)->keyBy('party_id');
+
+        $this->assertSame(4, $rows[$quick->id]['days']);
+        $this->assertSame(20, $rows[$slow->id]['days']);
+        $this->assertSame($this->customer->name, $rows[$quick->id]['counterparty']);
+
+        // Customer-wise it is one file: from the first dispatch to the last approval.
+        $this->assertSame(28, $this->row($file)['days']);
+    }
+
+    public function test_a_party_can_be_picked(): void
+    {
+        $vendor = $this->party('vendor');
+        $other = $this->party('customer');
+        $mine = $this->file([[$vendor, 20, 10]]);
+        $theirs = $this->file([[$vendor, 20, 10]], $other);
+
+        $rows = collect($this->page(['party_id' => $this->customer->id])->json('props.rows'))->pluck('file_no');
+
+        $this->assertContains($mine->file_no, $rows);
+        $this->assertNotContains($theirs->file_no, $rows);
+
+        $byVendor = collect($this->page(['party_type' => 'vendor', 'party_id' => $vendor->id])->json('props.rows'))->pluck('file_no');
+        $this->assertEqualsCanonicalizing([$mine->file_no, $theirs->file_no], $byVendor->all());
+    }
+
+    public function test_it_says_the_average_the_fastest_and_the_slowest(): void
+    {
+        $vendor = $this->party('vendor');
+        $this->file([[$vendor, 20, 16]]);
+        $slowest = $this->file([[$vendor, 60, 10]]);
+        $this->file([[$vendor, 30, 20]]);
+
+        $page = $this->page(['party_type' => 'vendor', 'party_id' => $vendor->id]);
+
+        $this->assertEquals(21.3, $page->json('page.totals.average'));
+        $this->assertSame(4, $page->json('page.totals.fastest'));
+        $this->assertSame(50, $page->json('page.totals.slowest'));
+        $this->assertSame($slowest->file_no, $page->json('page.totals.slowestFile'));
+
+        // And each party's under their files, by the grid.
+        $this->assertSame('avg', $page->json('props.totals.days'));
+    }
+
+    public function test_it_exports_the_days_and_who_they_belong_to(): void
+    {
+        $columns = collect($this->page()->json('props.columns'))->keyBy('key');
+
+        $this->assertArrayHasKey('days', $columns);
+        $this->assertNotFalse($columns['days']['exportable'] ?? true, 'Days Taken reaches the spreadsheet');
+        $this->assertTrue($columns['party_name']['exportOnly'], 'and the party, which a spreadsheet has no band for');
+    }
+
+    public function test_it_is_on_the_menu_and_shut_to_strangers(): void
+    {
+        $this->actingAs($this->admin)->get('admin/dashboard')->assertOk()->assertSee(route('report.approvaltime'), false);
+
+        $this->actingAs($this->admin)->get(route('report.approvaltime'))
+            ->assertOk()
+            ->assertSee('data-vue="vue-approval-time"', false);
+
+        auth()->logout();
+
+        $this->get(route('report.approvaltime'))->assertRedirect(url('/admin'));
+    }
+}
