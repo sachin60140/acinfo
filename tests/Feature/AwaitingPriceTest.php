@@ -180,6 +180,34 @@ class AwaitingPriceTest extends TestCase
         $this->assertEquals(3500, $this->listed($file)['margin']);
     }
 
+    /** A rate typed as 0 is no rate: it posts nothing to the vendor's ledger. */
+    public function test_a_rate_of_nothing_is_still_chased(): void
+    {
+        $vendor = $this->party('vendor');
+        $file = $this->file([[5000, $vendor, 3000], [2500, $vendor, 0]]);
+
+        $this->assertContains($file->id, $this->chased('vendor'));
+        $this->assertNull($this->listed($file)['margin']);
+    }
+
+    /** Work struck off waits on nobody's rate, here or at a vendor. */
+    public function test_cancelled_work_waits_on_no_rate(): void
+    {
+        $vendor = $this->party('vendor');
+        $file = $this->file([[5000, $vendor, 3000], [2500, null, null], [1000, $vendor, null]]);
+
+        $struck = $file->items->last();
+        $struck->status = WorkFileModel::CANCELLED;
+        $struck->save();
+        $file->rollUp();
+        $file->save();
+        $file->syncLedger();
+
+        $this->assertNotContains($file->id, $this->chased('vendor'));
+        // Charged 7,500 for what is left, costing 3,000.
+        $this->assertEquals(4500, $this->listed($file->fresh())['margin']);
+    }
+
     /** From before works carried a vendor: the folder's vendor has all of it, as before. */
     public function test_an_older_file_whose_works_carry_no_vendor_is_asked_as_before(): void
     {
