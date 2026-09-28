@@ -1168,13 +1168,54 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
         width: 100%;
     }
 
-    .grid__table thead,
-    .grid__table tfoot {
+    .grid__table thead {
         position: absolute;
         width: 1px;
         height: 1px;
         overflow: hidden;
         clip: rect(0 0 0 0);
+    }
+
+    /*
+     * The totals, as a card of their own at the foot, each figure beside the
+     * name of its column. Found in review: hidden with the header, a phone
+     * never showed a list's totals — nor a search's Total (filtered), nor
+     * Expense Types' totals, which are nowhere else.
+     */
+    .grid__table tfoot {
+        display: block;
+    }
+
+    .grid__table tfoot tr {
+        background: var(--n-050);
+        border: 1px solid var(--n-300);
+        border-radius: var(--r-md);
+        padding: var(--s-2) var(--s-3);
+    }
+
+    .grid__table tfoot td {
+        border: 0;
+        display: flex;
+        justify-content: space-between;
+        padding: var(--s-1) 0;
+    }
+
+    .grid__table tfoot td:first-child {
+        font-weight: 700;
+    }
+
+    .grid__table tfoot td:not(:first-child)::before {
+        color: var(--n-500);
+        content: attr(data-label);
+        font-size: var(--t-xs);
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    /* A column with no total says nothing. */
+    .grid__table tfoot td:not(:first-child):not(:has(span)) {
+        display: none;
     }
 
     .grid__table tbody tr {
@@ -1189,9 +1230,18 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
         display: flex;
         flex-wrap: wrap;
         gap: 0 var(--s-3);
-        justify-content: space-between;
+        /* The label pushes the value to the right; a value that has to wrap
+           onto a line of its own stays on the right too (found in review:
+           between, it went to the left edge alone). */
+        justify-content: flex-end;
         padding: var(--s-1) 0;
         text-align: right;
+    }
+
+    /* A card's values are all on the right: a short link grown to the tap
+       size on a touch screen grows to the left, its figure staying put. */
+    .grid__table tbody td .ui-link {
+        justify-content: flex-end;
     }
 
     /* A value may wrap rather than push the card wider than the screen. */
@@ -1213,6 +1263,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
     .grid__table tbody td::before {
         color: var(--n-500);
         content: attr(data-label);
+        margin-right: auto;
         font-size: var(--t-xs);
         font-weight: 700;
         letter-spacing: 0.04em;

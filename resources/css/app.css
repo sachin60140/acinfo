@@ -751,10 +751,13 @@
         min-height: var(--tap);
     }
 
-    /* Its words in the middle of the taller box, not sat at the top of it. */
+    /* Its words in the middle of the taller box, not sat at the top of it —
+       and apart from its icon: as a flex box, the space written between
+       them is dropped (found in review). */
     .btn {
         align-items: center;
         display: inline-flex;
+        gap: 0.35em;
         justify-content: center;
     }
 
@@ -763,11 +766,15 @@
      * it is tapped — and leave it zoomed, a column of figures now wider than
      * the screen. Every field here was 14px.
      */
-    .ui-input,
-    .ui-select,
-    .ui-textarea,
-    .form-control,
-    .form-select {
+    input.ui-input,
+    select.ui-select,
+    textarea.ui-textarea,
+    input.form-control,
+    select.form-select,
+    textarea.form-control {
+        /* By element and class, so a screen's own one-class rule for a
+           field's size (found in review: the board's date, Give to Vendor's
+           reason) cannot undo it. */
         font-size: 16px;
     }
 
@@ -783,7 +790,7 @@
         min-width: var(--tap);
     }
 
-    /* The header's logo, search and profile: 26 to 36px. */
+    /* The header's logo and profile: 26 to 36px. */
     .header .logo,
     .header-nav .nav-link {
         min-height: var(--tap);
@@ -806,15 +813,51 @@
     }
 
     /*
-     * A link's target grows to the tap size; the line it sits on does not —
-     * the padding and the negative margin cancel. A link in a table cell (a
-     * file number, Edit, Statement) was 21px tall and "Edit" 27px wide.
+     * A link in a table cell (a file number, Edit, Statement) was 21px tall
+     * and "Edit" 27px wide; a breadcrumb 19px. It is the tap size itself, its
+     * line with it — its target grows sideways only, into the space beside
+     * it. Found in review: grown upwards and downwards too, by a negative
+     * margin, it reached into the link above in a list's card, and a tap on
+     * the bottom of a customer's name rang their mobile instead.
      */
     .breadcrumb a,
     .ui-table td .ui-link {
-        display: inline-block;
-        margin: -14px -11px;
-        padding: 14px 11px;
+        align-items: center;
+        display: inline-flex;
+        margin-inline: -11px;
+        min-height: var(--tap);
+        min-width: var(--tap);
+        padding-inline: 11px;
+    }
+
+    /* A count, "2", was 30px wide. Where figures sit on the right, a short
+       link grows to the left, so its figure stays in line with the rest. */
+    .ui-table td:is(.num, .text-end) .ui-link {
+        justify-content: flex-end;
+    }
+
+    /* The page's own name beside the taller link, level with it rather than
+       sat at the top of the line (found re-measuring). */
+    .breadcrumb {
+        align-items: center;
+    }
+
+    /* The date ranges on a statement: This Month, This FY, All. 29px. */
+    .quick-ranges a {
+        align-items: center;
+        display: inline-flex;
+        min-height: var(--tap);
+    }
+
+    /* A tick alone in a cell: the whole square around it; see .tick-hit. */
+    .tick-hit {
+        min-height: var(--tap);
+        min-width: var(--tap);
+    }
+
+    .back-to-top {
+        height: var(--tap);
+        width: var(--tap);
     }
 
     /* A tick with its words, "Select all": the words are the target too. */
@@ -838,9 +881,11 @@
 }
 
 /*
- * A tick alone in a cell: the whole square around it ticks it, so a thumb
- * need not find a 24px box. The label wraps the box, so tapping it is tapping
- * the box — change events and all.
+ * A tick alone in a cell: on a touch screen the whole square around it ticks
+ * it, so a thumb need not find a 24px box. The label wraps the box, so tapping
+ * it is tapping the box — change events and all. With a mouse it is only the
+ * box, and a row keeps its height (found in review: 44px squares made Hand
+ * Over's rows half as tall again on a desk).
  */
 .tick-hit {
     align-items: center;
@@ -848,8 +893,17 @@
     display: inline-flex;
     justify-content: center;
     margin: 0;
-    min-height: var(--tap);
-    min-width: var(--tap);
+}
+
+/*
+ * Back to top, clear of the Save bars that stick to the bottom of a form on a
+ * phone: in the corner it covered the end of Save Entry, Give to Vendor and
+ * Update File (found in review).
+ */
+@media (max-width: 991.98px) {
+    .back-to-top {
+        bottom: 5.5rem;
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {

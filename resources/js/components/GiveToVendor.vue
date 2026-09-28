@@ -565,15 +565,18 @@ onMounted(() => {
                                     <!-- Half-ticked while some of the folder's work is going and
                                          some is staying, so a part handover is legible from the
                                          row without reading down the works. -->
-                                    <input
-                                        type="checkbox"
-                                        class="give-check"
-                                        name="files[]"
-                                        :value="file.id"
-                                        v-model="picked"
-                                        :indeterminate="partlyPicked(file)"
-                                        :aria-label="`Give out everything still here on ${file.file_no}`"
-                                        @change="onFileToggle(file)">
+                                    <!-- The square around the box ticks it too; see .tick-hit. -->
+                                    <label class="tick-hit">
+                                        <input
+                                            type="checkbox"
+                                            class="give-check"
+                                            name="files[]"
+                                            :value="file.id"
+                                            v-model="picked"
+                                            :indeterminate="partlyPicked(file)"
+                                            :aria-label="`Give out everything still here on ${file.file_no}`"
+                                            @change="onFileToggle(file)">
+                                    </label>
                                 </td>
 
                                 <td data-label="File No.">

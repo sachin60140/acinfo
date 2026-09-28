@@ -147,7 +147,9 @@ const groups = computed(() => {
 .dash__charts {
     display: grid;
     gap: var(--s-4);
-    grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+    /* min(): never wider than the screen — at 22rem a chart was cut off on a
+       320-360px phone (found in review). */
+    grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr));
 }
 
 .dash__chart {

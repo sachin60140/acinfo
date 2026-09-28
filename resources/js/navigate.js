@@ -51,7 +51,15 @@ function isPlainNavigation(event, link) {
         !link.dataset.noSwap &&
         link.origin === window.location.origin &&
         // An in-page anchor is the browser's job.
-        !(link.pathname === window.location.pathname && link.hash)
+        !(link.pathname === window.location.pathname && link.hash) &&
+        /*
+         * And so is href="#", which is no link at all but a control some
+         * script handles — the header's search, the back-to-top arrow. Its hash
+         * reads empty, so it looked like this very page: found in the mobile
+         * audit, tapping one fetched the page again and threw away what was
+         * typed on it.
+         */
+        !(link.getAttribute('href') || '').startsWith('#')
     );
 }
 
@@ -76,7 +84,15 @@ function adoptStyles(doc) {
         const copy = document.createElement('style');
         copy.textContent = text;
         copy.dataset.navStyle = '1';
-        document.head.appendChild(copy);
+
+        /*
+         * Where the page's own @yield('style') sits: before the shared sheets,
+         * as a full load has it, so a screen's styles cannot outrank them.
+         * Found in the mobile audit: appended at the end, a report's 40px
+         * filter fields beat the rule making them 44 on a touch screen.
+         */
+        const shared = document.head.querySelector('link[href*="assets/css/nav.css"]');
+        document.head.insertBefore(copy, shared);
     });
 }
 

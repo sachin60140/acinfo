@@ -183,6 +183,11 @@ class CloseClientLedgerTest extends TestCase
         $this->assertStringContainsString('form-select form-select-sm cb-pick', $page);
         $this->assertStringNotContainsString('w-auto', $page);
         $this->assertMatchesRegularExpression('/@media \(max-width: 767\.98px\)\s*\{\s*\.cb-table thead\s*\{\s*display: none;/', $page);
+
+        // The header hidden alone leaves a table as wide as before, headerless
+        // (found in review): the rows have to become blocks, each value labelled.
+        $this->assertMatchesRegularExpression('/\.cb-table,\s*\.cb-table tbody,\s*\.cb-table tr,\s*\.cb-table td\s*\{\s*display: block;/', $page);
+        $this->assertMatchesRegularExpression('/\.cb-table td\[data-label\]::before\s*\{[^}]*content: attr\(data-label\)/', $page);
     }
 
     /** A customer with the client's own mobile is offered first, and not made again. */

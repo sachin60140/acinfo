@@ -120,6 +120,28 @@ describe('following a link', () => {
 
         await vi.waitFor(() => expect(document.head.innerHTML).toContain('.report-filter'));
     });
+
+    /*
+     * Where a full load has it: before the shared sheets. Found in the mobile
+     * audit: appended after app.css, a report's own 40px filter fields
+     * outranked the rule making them 44 on a touch screen.
+     */
+    test('puts a screen’s styles before the shared sheets, not after them', async () => {
+        await load();
+        document.head.innerHTML = '<link rel="stylesheet" href="/assets/css/nav.css"><link rel="stylesheet" href="/build/assets/app.css">';
+
+        vi.stubGlobal('fetch', vi.fn(async () => htmlResponse(page({ style: '<style>.report-filter { height: 40px }</style>' }))));
+
+        const link = document.createElement('a');
+        link.href = 'http://localhost/admin/reports/files';
+        document.body.appendChild(link);
+        link.click();
+
+        await vi.waitFor(() => expect(document.head.innerHTML).toContain('.report-filter'));
+
+        const order = [...document.head.querySelectorAll('style, link')].map((el) => el.tagName === 'STYLE' ? 'screen' : el.getAttribute('href'));
+        expect(order).toEqual(['screen', '/assets/css/nav.css', '/build/assets/app.css']);
+    });
 });
 
 describe('leaving it to the browser', () => {
@@ -133,6 +155,9 @@ describe('leaving it to the browser', () => {
         ['a download', (link) => { link.setAttribute('download', ''); }],
         ['another site', (link) => { link.href = 'https://example.com/x'; }],
         ['an opt-out', (link) => { link.dataset.noSwap = '1'; }],
+        // A control a script handles, like the back-to-top arrow: found in the
+        // mobile audit, a tap on one fetched the page again.
+        ['a control with href="#"', (link) => { link.setAttribute('href', '#'); }],
     ])('does not take over %s', async (_name, prepare) => {
         await load();
 

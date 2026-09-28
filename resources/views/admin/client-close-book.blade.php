@@ -10,7 +10,7 @@
         }
 
         /*
-         * On a phone, a card a client, not a table 777px wide to scroll
+         * On a phone, a card for each client, not a table 777px wide to scroll
          * sideways (found by the mobile audit): the name and balance, then
          * the customer to carry to across the whole card.
          */

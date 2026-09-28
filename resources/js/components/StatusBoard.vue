@@ -705,13 +705,16 @@ function onScreenshot(row, event) {
     }
 }
 
-/* A file number is how a file is opened from the board: on a touch screen its
-   target grows to the tap size, and the row it sits in does not. */
+/* A file number is how a file is opened from the board: on a touch screen it
+   is the tap size, growing sideways into the space beside it, never up into
+   the line above (found in review). */
 @media (pointer: coarse) {
     .board__no {
-        display: inline-block;
-        margin: -14px -11px;
-        padding: 14px 11px;
+        align-items: center;
+        display: inline-flex;
+        margin-inline: -11px;
+        min-height: var(--tap);
+        padding-inline: 11px;
     }
 }
 </style>

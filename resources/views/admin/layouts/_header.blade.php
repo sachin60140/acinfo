@@ -14,11 +14,8 @@
     <nav class="header-nav ms-auto">
       <ul class="d-flex align-items-center">
 
-        <li class="nav-item d-block d-lg-none">
-          <a class="nav-link nav-icon search-bar-toggle " href="#">
-            <i class="bi bi-search"></i>
-          </a>
-        </li><!-- End Search Icon-->
+        {{-- No search icon: the template's opened a search bar this application
+             never had, threw an error, and reloaded the page (mobile audit). --}}
 
         
 
