@@ -1403,6 +1403,84 @@
             }
         }
     },
+    "report-approval-time": {
+        "vue-approval-time": {
+            "columns": [
+                "party_name:text",
+                "file_no:link",
+                "registration_no:text",
+                "work_type:text",
+                "counterparty:text",
+                "dispatched:text",
+                "approved:text",
+                "days:count"
+            ],
+            "emptyText": "string",
+            "groupBy": "string",
+            "groupLabel": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "approved": "string",
+                    "approved_raw": "string",
+                    "counterparty": "string",
+                    "days": "number",
+                    "dispatched": "string",
+                    "dispatched_raw": "string",
+                    "edit_url": "string",
+                    "file_no": "string",
+                    "id": "string",
+                    "party_id": "number",
+                    "party_name": "string",
+                    "registration_no": "string",
+                    "work_type": "string"
+                }
+            },
+            "title": "string",
+            "totals": {
+                "days": "string"
+            }
+        }
+    },
+    "report-approval-time-vendor": {
+        "vue-approval-time": {
+            "columns": [
+                "party_name:text",
+                "file_no:link",
+                "registration_no:text",
+                "work_type:text",
+                "counterparty:text",
+                "dispatched:text",
+                "approved:text",
+                "days:count"
+            ],
+            "emptyText": "string",
+            "groupBy": "string",
+            "groupLabel": "string",
+            "perPage": "number",
+            "rows": {
+                "list_of": {
+                    "approved": "string",
+                    "approved_raw": "string",
+                    "counterparty": "string",
+                    "days": "number",
+                    "dispatched": "string",
+                    "dispatched_raw": "string",
+                    "edit_url": "string",
+                    "file_no": "string",
+                    "id": "string",
+                    "party_id": "number",
+                    "party_name": "string",
+                    "registration_no": "string",
+                    "work_type": "string"
+                }
+            },
+            "title": "string",
+            "totals": {
+                "days": "string"
+            }
+        }
+    },
     "report-collection": {
         "vue-collection-list": {
             "columns": [

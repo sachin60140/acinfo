@@ -197,6 +197,9 @@ Route::group(['middleware' => 'admin'], function () {
     // What the office owes each vendor, bill by bill, the longest-waiting first.
     Route::get('admin/reports/vendor-payments', [ReportController::class, 'payable'])->name('report.payable');
 
+    // How long approval took from dispatch, for approved files.
+    Route::get('admin/reports/approval-time', [ReportController::class, 'approvalTime'])->name('report.approvaltime');
+
     /*
      * JSON for the browser-side screens. Inside the admin group on purpose: a
      * vehicle's history and prices are not public just because they are JSON.

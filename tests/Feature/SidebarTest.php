@@ -92,6 +92,7 @@ class SidebarTest extends TestCase
             'work report' => ['admin/reports/files', 'Work Report'],
             'collection list' => ['admin/reports/collection', 'Collection List'],
             'vendor payments' => ['admin/reports/vendor-payments', 'Vendor Payments'],
+            'approval time' => ['admin/reports/approval-time', 'Approval Time'],
         ];
     }
 

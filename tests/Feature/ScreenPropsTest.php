@@ -148,6 +148,10 @@ class ScreenPropsTest extends TestCase
         $owedItem->vendor_date = '2000-01-01';
         $owedItem->save();
 
+        // The folder takes its work's vendor and dispatch day, as every save
+        // does — so Approval Time, customer-wise, counts it as dispatched.
+        $owed->rollUp();
+        $owed->save();
         $owed->syncLedger();
 
         /*
@@ -321,6 +325,8 @@ class ScreenPropsTest extends TestCase
             'report-vendor' => 'admin/reports/files?party_type=vendor',
             'report-collection' => 'admin/reports/collection',
             'report-vendor-payments' => 'admin/reports/vendor-payments',
+            'report-approval-time' => 'admin/reports/approval-time',
+            'report-approval-time-vendor' => 'admin/reports/approval-time?party_type=vendor',
             // The old book: Add, Receipt and Payment are closed and mount
             // nothing now (see CloseClientLedgerController); its list,
             // statements and logins stay.

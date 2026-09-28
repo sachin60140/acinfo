@@ -1417,4 +1417,198 @@ class ReportController extends Controller
             'unpricedUrl' => route('workfile.index', ['pending' => 'vendor']),
         ])->toResponse($req);
     }
+
+    /**
+     * How long approval took, from the day the work was dispatched, for every
+     * approved file — customer-wise or vendor-wise. Asked for by the owner on
+     * 2026-09-28, one row a file.
+     *
+     * A file is approved on the day its last work was (FINISHED_ON): a folder
+     * of three is not through until the third is. Vendor-wise, a folder split
+     * between two vendors is drawn under each, counted from the day their
+     * works went out to the day theirs were approved — not the other's.
+     *
+     * Two kinds of approved file cannot be counted and are said, not hidden:
+     * one done entirely in-house, which was never dispatched; and one whose
+     * approval is dated before its dispatch, which is a date typed wrong.
+     *
+     * The period is the day it was approved, so "last month" means what was
+     * approved last month however long ago it went out.
+     */
+    public function approvalTime(Request $req)
+    {
+        $req->validate([
+            'party_type' => ['nullable', Rule::in(array_keys(PartyModel::TYPES))],
+            'party_id' => 'nullable|integer|exists:party,id',
+            'from' => 'nullable|date_format:Y-m-d',
+            'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
+        ]);
+
+        $partyType = $req->query('party_type', 'customer');
+        $partyId = $req->query('party_id');
+        $from = $req->query('from');
+        $to = $req->query('to');
+
+        // A party of the other side would silently return nothing.
+        if ($partyId && PartyModel::whereKey($partyId)->value('party_type') !== $partyType) {
+            $partyId = null;
+        }
+
+        $files = WorkFileModel::report($partyType, $partyId, WorkFileModel::APPROVED);
+        $works = WorkFileModel::workBreakdown($files->pluck('id')->unique()->values()->all());
+
+        $inHouse = 0;
+        $undated = 0;
+        $misdated = 0;
+        $rows = collect();
+
+        foreach ($files as $file) {
+            $all = collect($works[$file->id] ?? []);
+            $live = $all->reject(fn ($work) => $work->status === WorkFileModel::CANCELLED);
+
+            /*
+             * Asked of the works, not the folder's own vendor fields. Found in
+             * review: a folder whose only vendor work was cancelled keeps
+             * naming that vendor and its day, and its in-house work, approved
+             * later, was counted as the vendor's time — or, approved earlier
+             * than that day, called a date typed wrong. A file from before
+             * works carried a vendor — none of them ever did — is the folder's
+             * vendor's, all of it.
+             */
+            $older = $all->every(fn ($work) => ! $work->vendor_id);
+
+            if ($partyType === 'vendor') {
+                /*
+                 * The last of this vendor's works to be approved: another
+                 * vendor's, or work done in-house, approved a week later is not
+                 * time they took. Nor is work they gave back before it was
+                 * approved — found in review: taken back on the 5th and
+                 * finished by the office on the 30th, the 25 days in between
+                 * were charged to them.
+                 */
+                $theirs = ($older ? $live : $live->where('vendor_id', $file->party_id))
+                    ->reject(fn ($work) => $work->vendor_returned_on
+                        && (! $work->approved_on || substr((string) $work->vendor_returned_on, 0, 10) < substr((string) $work->approved_on, 0, 10)));
+
+                // Nothing of theirs was approved while they had it.
+                if ($theirs->isEmpty()) {
+                    continue;
+                }
+
+                $given = true;
+                $sent = $older ? $file->vendor_date : $theirs->pluck('vendor_date')->filter()->min();
+                $approved = $theirs->pluck('approved_on')->filter()->max();
+            } else {
+                // The folder's last work, from the first of them to go out.
+                $out = $live->filter(fn ($work) => $work->vendor_id);
+                $given = $older ? $file->vendor_id !== null : $out->isNotEmpty();
+                $sent = $older ? $file->vendor_date : $out->pluck('vendor_date')->filter()->min();
+                $approved = $file->finished_on;
+            }
+
+            $approved = $approved ? date('Y-m-d', strtotime($approved)) : null;
+
+            if (! $approved || ($from && $approved < $from) || ($to && $approved > $to)) {
+                continue;
+            }
+
+            // Approved, and not countable — said on the page, not hidden.
+            if (! $given) {
+                $inHouse++;
+
+                continue;
+            }
+
+            if (! $sent) {
+                $undated++;
+
+                continue;
+            }
+
+            $days = WorkFileModel::turnaround($sent, $approved);
+
+            if ($days === null) {
+                $misdated++;
+
+                continue;
+            }
+
+            $rows->push([
+                'id' => $file->id.'-'.$file->party_id,
+                'party_id' => (int) $file->party_id,
+                'party_name' => (string) $file->party_name,
+                'file_no' => (string) $file->file_no,
+                'edit_url' => route('workfile.edit', $file->id),
+                'registration_no' => (string) $file->registration_no,
+                'work_type' => (string) $file->work_type,
+                'counterparty' => $partyType === 'vendor' ? (string) $file->customer_name : (string) ($file->vendor_name ?: 'Several vendors'),
+                'dispatched' => date('d-m-Y', strtotime($sent)),
+                'dispatched_raw' => date('Y-m-d', strtotime($sent)),
+                'approved' => date('d-m-Y', strtotime($approved)),
+                'approved_raw' => $approved,
+                'days' => $days,
+            ]);
+        }
+
+        // One band a party, as the Work Report bands them; oldest approval first in each.
+        $rows = $rows->sort(fn ($a, $b) => [mb_strtolower($a['party_name']), $a['party_id'], $a['approved_raw'], $a['file_no']]
+            <=> [mb_strtolower($b['party_name']), $b['party_id'], $b['approved_raw'], $b['file_no']])->values();
+
+        $days = $rows->pluck('days');
+        $slowest = $rows->sortByDesc('days')->first();
+        $partyLabel = PartyModel::label($partyType);
+
+        $props = [
+            'title' => 'Approval Time — '.$partyLabel.'-wise'.(($from || $to)
+                ? ' — approved '.($from ? date('d-m-Y', strtotime($from)) : 'from the beginning').' to '.($to ? date('d-m-Y', strtotime($to)) : date('d-m-Y'))
+                : ''),
+            'groupBy' => 'party_id',
+            'groupLabel' => 'party_name',
+            // Each party's average under their files, and everyone's at the foot.
+            'totals' => ['days' => 'avg'],
+            // One page: a party split across two would be averaged twice, on half each time.
+            'perPage' => max($rows->count(), 1),
+            'emptyText' => ($partyId || $from || $to)
+                ? 'No approved file matches. Try widening the dates or clearing the '.strtolower($partyLabel).'.'
+                : 'No file has been approved after being dispatched yet.',
+            'columns' => [
+                // Exported, never drawn: the band says who on screen, and a
+                // spreadsheet has no bands.
+                ['key' => 'party_name', 'label' => $partyLabel, 'exportOnly' => true],
+                ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
+                ['key' => 'registration_no', 'label' => 'Vehicle'],
+                ['key' => 'work_type', 'label' => 'Work'],
+                ['key' => 'counterparty', 'label' => $partyType === 'vendor' ? 'Customer' : 'Given To'],
+                ['key' => 'dispatched', 'label' => 'Dispatched', 'sortBy' => 'dispatched_raw'],
+                ['key' => 'approved', 'label' => 'Approved', 'sortBy' => 'approved_raw'],
+                ['key' => 'days', 'label' => 'Days Taken', 'type' => 'count', 'class' => 'fw-bold', 'sortDesc' => true],
+            ],
+            'rows' => $rows,
+        ];
+
+        return Screen::make('admin.reports.approval-time', 'vue-approval-time', $props, [
+            'partyType' => $partyType,
+            'partyLabel' => $partyLabel,
+            'partyId' => $partyId ? (int) $partyId : null,
+            'parties' => PartyModel::selectList($partyType, $partyId),
+            'from' => $from,
+            'to' => $to,
+            'base' => route('report.approvaltime'),
+            'typeUrls' => collect(PartyModel::TYPES)->map(fn ($label, $type) => route('report.approvaltime', array_filter([
+                'party_type' => $type, 'from' => $from, 'to' => $to,
+            ])))->all(),
+            'totals' => [
+                'files' => $rows->count(),
+                // Rounded from the whole-day total, as the grid rounds its own:
+                // found in review, a mean of 1.15 read 1.2 here and 1.1 below.
+                'average' => $days->isEmpty() ? null : round($days->sum() * 10 / $days->count()) / 10,
+                'fastest' => $days->isEmpty() ? null : (int) $days->min(),
+                'slowest' => $days->isEmpty() ? null : (int) $days->max(),
+                'slowestFile' => $slowest ? $slowest['file_no'] : null,
+            ],
+            'inHouse' => $inHouse,
+            'undated' => $undated,
+            'misdated' => $misdated,
+        ])->toResponse($req);
+    }
 }
