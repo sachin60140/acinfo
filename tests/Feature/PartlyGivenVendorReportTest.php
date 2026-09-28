@@ -152,6 +152,31 @@ class PartlyGivenVendorReportTest extends TestCase
         $expense->save();
     }
 
+    /** Return to Customer, as that screen does it: every standing work goes back. */
+    private function returnToCustomer(WorkFileModel $file, string $on, ?float $refund): WorkFileModel
+    {
+        $file->items()->where('status', '<>', WorkFileModel::CANCELLED)->update(['status' => WorkFileModel::RETURNED]);
+        $file->status = WorkFileModel::RETURNED;
+        $file->returned_on = $on;
+        $file->returned_amount = $refund;
+        $file->save();
+        $file->syncLedger();
+
+        return $file->fresh();
+    }
+
+    /** Moves one work, as the board does, and rolls the folder up after it. */
+    private function move(WorkFileModel $file, WorkTypeModel $type, array $fields): WorkFileModel
+    {
+        $file->items()->where('work_type_id', $type->id)->update($fields);
+        $file->load('items');
+        $file->rollUp();
+        $file->save();
+        $file->syncLedger();
+
+        return $file->fresh();
+    }
+
     /** The Work Report's rows for one file, keyed by the party they are under. */
     private function rowsFor(WorkFileModel $file, array $query = []): array
     {
@@ -247,6 +272,94 @@ class PartlyGivenVendorReportTest extends TestCase
         $this->assertEqualsWithDelta(200.00, $rows[$this->shailendra->id]['expenses'], 0.001);
     }
 
+    /**
+     * Shared by charge, the office weighed first so the rounding falls to a
+     * vendor. Found in review: weighed last, a kept work charged nothing took
+     * -0.01, and the vendors' shares came to more than was spent.
+     */
+    public function test_the_vendors_shares_never_come_to_more_than_was_spent(): void
+    {
+        $file = $this->folder([
+            [$this->hpt, 1000, $this->sharma, 600, '2026-09-01'],
+            [$this->hpa, 1000, $this->shailendra, 600, '2026-09-02'],
+            [$this->tr, 0, null],
+        ]);
+        $this->spend($file, 100.01);
+
+        $rows = collect($this->rowsFor($file));
+
+        $this->assertEqualsWithDelta(100.01, $rows->sum('expenses'), 0.0001);
+    }
+
+    /** Nothing charged yet, a vendor's share is by the works they hold. */
+    public function test_with_nothing_charged_yet_the_expenses_go_by_the_works(): void
+    {
+        $file = $this->folder([
+            [$this->hpt, 0, $this->sharma, 600, '2026-09-01'],
+            [$this->tr, 0, null],
+            [$this->hpa, 0, null],
+        ]);
+        $this->spend($file, 300);
+
+        // One work of three, not one holder of two.
+        $this->assertEqualsWithDelta(100.00, $this->rowsFor($file)[$this->sharma->id]['expenses'], 0.001);
+    }
+
+    // ---------------------------------------------------- returns and hand-backs
+
+    /**
+     * The folder goes back to its customer whole, and the refund is the
+     * folder's — shared by charge, the office's kept work taking its part.
+     */
+    public function test_a_returned_folder_refunds_the_vendors_share_of_it(): void
+    {
+        $file = $this->returnToCustomer($this->partlyGiven(), '2026-09-15', 2500);
+
+        $rows = $this->rowsFor($file, ['status' => WorkFileModel::RETURNED]);
+        $row = $rows[$this->sharma->id];
+
+        $this->assertSame(WorkFileModel::RETURNED, $row['status_key']);
+        // 2000 of the 5000 charged is his: 2/5 of the 2500 refunded.
+        $this->assertEquals(1000, $row['billed']);
+        // Counted to the day the folder went back.
+        $this->assertSame('took 14 days', $row['days_out']);
+    }
+
+    /**
+     * Found in review: a folder returned, then one of its works brought back,
+     * is no longer returned and its refund is gone from it and from the ledger.
+     * The vendor's works still read returned — and his row billed nothing.
+     */
+    public function test_a_work_brought_back_after_a_return_leaves_no_refund_on_the_vendors_row(): void
+    {
+        $file = $this->returnToCustomer($this->partlyGiven(), '2026-09-15', null);
+        $file = $this->move($file, $this->tr, ['status' => WorkFileModel::IN_OFFICE]);
+
+        $this->assertSame(WorkFileModel::IN_OFFICE, $file->status);
+        $this->assertNull($file->returned_amount);
+
+        $row = $this->rowsFor($file)[$this->sharma->id];
+
+        $this->assertNotSame(WorkFileModel::RETURNED, $row['status_key']);
+        $this->assertEquals(2000, $row['billed'], 'a refund the ledger no longer holds');
+    }
+
+    /** He hands his work back: it is in the office, and his booking is reversed in part. */
+    public function test_a_vendor_hand_back_is_theirs(): void
+    {
+        $file = $this->move($this->partlyGiven(), $this->hpt, [
+            'status' => WorkFileModel::IN_OFFICE,
+            'vendor_returned_on' => '2026-09-05',
+        ]);
+        $file->vendor_returned_amount = 500;
+        $file->save();
+
+        $row = $this->rowsFor($file, ['status' => WorkFileModel::IN_OFFICE])[$this->sharma->id];
+
+        $this->assertSame(WorkFileModel::IN_OFFICE, $row['status_key']);
+        $this->assertEquals(750, $row['cost']);
+    }
+
     // ------------------------------------------------------------ the status
 
     public function test_their_row_stands_where_their_work_stands(): void
@@ -290,6 +403,31 @@ class PartlyGivenVendorReportTest extends TestCase
 
         $this->assertSame([], $this->rowsFor($out, ['status' => WorkFileModel::IN_OFFICE]), 'work with him reads as in the office');
         $this->assertArrayHasKey($this->sharma->id, $this->rowsFor($out, ['status' => 'open']));
+    }
+
+    /**
+     * On a folder split between two vendors too, which read the folder's
+     * status before: one vendor's approved work is off the Still pending list
+     * the other's is still on.
+     */
+    public function test_on_a_split_folder_each_vendor_stands_where_their_work_does(): void
+    {
+        $file = $this->folder([
+            [$this->tr, 3000, $this->sharma, 1800, '2026-09-01', WorkFileModel::APPROVED, '2026-09-10'],
+            [$this->hpa, 2000, $this->shailendra, 1200, '2026-09-02'],
+        ]);
+
+        $this->assertSame(WorkFileModel::PARTLY_APPROVED, $file->status);
+
+        $rows = $this->rowsFor($file);
+
+        $this->assertSame(WorkFileModel::APPROVED, $rows[$this->sharma->id]['status_key']);
+        $this->assertSame('took 9 days', $rows[$this->sharma->id]['days_out']);
+        $this->assertSame(WorkFileModel::DISPATCHED, $rows[$this->shailendra->id]['status_key']);
+
+        $this->assertSame([$this->shailendra->id], array_keys($this->rowsFor($file, ['status' => 'open'])));
+        $this->assertSame([$this->sharma->id], array_keys($this->rowsFor($file, ['status' => WorkFileModel::APPROVED])));
+        $this->assertSame([], $this->rowsFor($file, ['status' => WorkFileModel::PARTLY_APPROVED]));
     }
 
     public function test_narrowed_to_the_vendor_it_is_still_theirs(): void
@@ -353,6 +491,27 @@ class PartlyGivenVendorReportTest extends TestCase
         $this->assertEquals(5000, $row['billed']);
         $this->assertEqualsWithDelta(1000.00, $row['expenses'], 0.001);
         $this->assertCount(2, $row['items']);
+    }
+
+    /**
+     * A work struck off is not a work given to nobody: the folder is still its
+     * vendor's, all of it, and drawn so — once, its cancelled work named.
+     */
+    public function test_a_whole_folder_with_a_cancelled_work_is_unchanged(): void
+    {
+        $file = $this->folder([
+            [$this->hpt, 2000, $this->sharma, 1250, '2026-09-01'],
+            [$this->tr, 3000, null, null, null, WorkFileModel::CANCELLED],
+        ]);
+
+        $mine = collect($this->actingAs($this->admin)
+            ->getJson(route('report.files', ['party_type' => 'vendor']))
+            ->assertOk()
+            ->json('props.rows'))->where('id', $file->id)->values();
+
+        $this->assertCount(1, $mine);
+        $this->assertCount(2, $mine[0]['items']);
+        $this->assertStringContainsString($this->tr->name.' cancelled', (string) $mine[0]['works_note']);
     }
 
     public function test_the_customer_report_still_draws_it_whole(): void

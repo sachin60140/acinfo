@@ -4680,11 +4680,22 @@ class WorkFileModel extends Model
                 continue;
             }
 
-            // Each vendor's weight is what the customer is charged for their
-            // works; the office's, for the works it kept.
-            $charged = fn ($some) => $some->sum(fn ($w) => (float) $w->customer_amount);
-            $vendors = $byVendor->map($charged)->all();
-            $weights = $office->isEmpty() ? $vendors : $vendors + ['office' => $charged($office)];
+            /*
+             * Each vendor's weight is what the customer is charged for their
+             * works; the office's, for the works it kept — or, while nothing
+             * is charged yet, how many works each holds. The office is weighed
+             * first, so the rounding falls to a vendor. Found in review: last,
+             * a kept work charged nothing took a share of -0.01, and the
+             * vendors' shares came to a paisa more than was spent.
+             */
+            $holdings = ($office->isEmpty() ? [] : ['office' => $office]) + $byVendor->all();
+            $weights = array_map(fn ($some) => $some->sum(fn ($w) => (float) $w->customer_amount), $holdings);
+
+            if (array_sum($weights) <= 0) {
+                $weights = array_map(fn ($some) => $some->count(), $holdings);
+            }
+
+            $vendors = array_diff_key($weights, ['office' => true]);
 
             $expenses = self::apportion((float) ($folder->expenses ?? 0), $weights);
             $refund = $folder->returned_amount === null ? null : self::apportion((float) $folder->returned_amount, $weights);
@@ -4727,6 +4738,19 @@ class WorkFileModel extends Model
                  * folder's.
                  */
                 $row->status = self::statusFromItems($mine, $folder->status);
+
+                /*
+                 * Returned only while the folder is: the refund is recorded
+                 * on the folder, and cleared from it the moment it is not.
+                 * Found in review: a folder returned, then one of its works
+                 * brought back, left the vendor's works reading returned —
+                 * billed nothing, against a refund the ledger no longer
+                 * holds. Such a row reads as the folder does, as it did.
+                 */
+                if ($row->status === self::RETURNED && $folder->status !== self::RETURNED) {
+                    $row->status = $folder->status;
+                }
+
                 $row->finished_on = match ($row->status) {
                     self::APPROVED => $mine->pluck('approved_on')->filter()->max(),
                     self::RETURNED => $folder->finished_on,
