@@ -343,4 +343,12 @@ const blocked = computed(() => reason.value.trim() === '');
     border-radius: var(--r-md);
     padding: var(--s-2) var(--s-3);
 }
+
+/* Close was 24px; on a touch screen it is a target (mobile audit). */
+@media (pointer: coarse) {
+    .ps-dialog__x {
+        min-height: var(--tap);
+        min-width: var(--tap);
+    }
+}
 </style>

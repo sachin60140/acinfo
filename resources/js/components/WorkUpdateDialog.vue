@@ -535,4 +535,12 @@ onBeforeUnmount(() => {
     color: var(--cr-700);
     margin-bottom: var(--s-2);
 }
+
+/* Close was 24px; on a touch screen it is a target (mobile audit). */
+@media (pointer: coarse) {
+    .wu__x {
+        min-height: var(--tap);
+        min-width: var(--tap);
+    }
+}
 </style>

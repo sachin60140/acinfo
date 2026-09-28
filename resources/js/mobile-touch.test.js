@@ -103,6 +103,27 @@ describe('a tick alone in a cell', () => {
     });
 });
 
+describe('what opens over a page', () => {
+    it('gives a dialog\'s Close the tap size', () => {
+        for (const [file, close] of [['WorkUpdateDialog', '.wu__x'], ['PartyStatement', '.ps-dialog__x']]) {
+            const source = flat(readFileSync(`resources/js/components/${file}.vue`, 'utf8'));
+            const touch = source.split('@media (pointer: coarse) {').slice(1).join(' ');
+
+            expect(ruleFor(touch, [close]), file).toContain('min-width: var(--tap)');
+        }
+    });
+
+    it('gives the calendar room, 44px arrows and 16px month and year boxes', () => {
+        const dp = flat(readFileSync('public/assets/css/datepicker.css', 'utf8'));
+        const touch = dp.split('@media (pointer: coarse) {')[1] ?? '';
+
+        expect(ruleFor(touch, ['.dp-head select'])).toContain('font-size: 16px');
+        expect(ruleFor(touch, ['.dp-nav'])).toContain('width: 44px');
+        expect(ruleFor(touch, ['.dp-action'])).toContain('min-height: 44px');
+        expect(ruleFor(touch, ['.dp-popup'])).toContain('calc(100vw - 1rem)');
+    });
+});
+
 describe('a list as cards on a phone', () => {
     it('puts what a cell says under its value on a line of its own, so nothing runs off the card', () => {
         expect(ruleFor(grid, ['.grid__table tbody td'])).toContain('flex-wrap: wrap');
