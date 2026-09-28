@@ -1558,9 +1558,16 @@ class ReportController extends Controller
             ]);
         }
 
-        // One band a party, as the Work Report bands them; oldest approval first in each.
-        $rows = $rows->sort(fn ($a, $b) => [mb_strtolower($a['party_name']), $a['party_id'], $a['approved_raw'], $a['file_no']]
-            <=> [mb_strtolower($b['party_name']), $b['party_id'], $b['approved_raw'], $b['file_no']])->values();
+        /*
+         * Latest first, always — asked for by the owner on 2026-09-28. One
+         * band a party, the party approved most lately on top; in each, the
+         * file approved most lately first. So the top of the page, either
+         * way round, is what was approved last.
+         */
+        $latest = $rows->groupBy('party_id')->map(fn ($mine) => $mine->max('approved_raw'));
+
+        $rows = $rows->sort(fn ($a, $b) => [$latest[$b['party_id']], mb_strtolower($a['party_name']), $a['party_id'], $b['approved_raw'], $b['file_no']]
+            <=> [$latest[$a['party_id']], mb_strtolower($b['party_name']), $b['party_id'], $a['approved_raw'], $a['file_no']])->values();
 
         $days = $rows->pluck('days');
         $slowest = $rows->sortByDesc('days')->first();
@@ -1574,6 +1581,9 @@ class ReportController extends Controller
             'groupLabel' => 'party_name',
             // Each party's average under their files, and everyone's at the foot.
             'totals' => ['days' => 'avg'],
+            // Already latest first, so the arrow says so and a click turns it round.
+            'sortedBy' => 'approved',
+            'sortedDesc' => true,
             // One page: a party split across two would be averaged twice, on half each time.
             'perPage' => max($rows->count(), 1),
             'emptyText' => ($partyId || $from || $to)
@@ -1589,7 +1599,7 @@ class ReportController extends Controller
                 // Vendor-wise only; see above.
                 $partyType === 'vendor' ? ['key' => 'counterparty', 'label' => 'Customer'] : null,
                 ['key' => 'dispatched', 'label' => 'Dispatched', 'sortBy' => 'dispatched_raw'],
-                ['key' => 'approved', 'label' => 'Approved', 'sortBy' => 'approved_raw'],
+                ['key' => 'approved', 'label' => 'Approved', 'sortBy' => 'approved_raw', 'sortDesc' => true],
                 ['key' => 'days', 'label' => 'Days Taken', 'type' => 'count', 'class' => 'fw-bold', 'sortDesc' => true],
             ])),
             'rows' => $rows,

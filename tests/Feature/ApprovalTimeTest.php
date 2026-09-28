@@ -347,6 +347,46 @@ class ApprovalTimeTest extends TestCase
         $this->actingAs($this->admin)->get(route('report.approvaltime', $query))->assertSee('1.2 days');
     }
 
+    /** Latest first, customer-wise and vendor-wise: asked for by the owner. */
+    public function test_the_latest_approval_comes_first(): void
+    {
+        $vendor = $this->party('vendor');
+
+        // Named to come first by name, so only "latest first" puts them below.
+        $other = $this->party('vendor');
+        $other->name = 'Aaa Other Works '.uniqid();
+        $other->save();
+
+        $quiet = $this->party('customer');
+        $quiet->name = 'Aaa Quiet Customer '.uniqid();
+        $quiet->save();
+
+        $older = $this->file([[$vendor, 60, 30]]);
+        $newest = $this->file([[$vendor, 60, 1]]);
+        $middle = $this->file([[$vendor, 60, 12]]);
+
+        // Another customer and vendor, approved before any of those.
+        $this->file([[$other, 90, 50]], $quiet);
+
+        foreach ([[], ['party_type' => 'vendor']] as $query) {
+            $page = $this->page($query);
+            $rows = collect($page->json('props.rows'));
+            $mine = $rows->where('party_id', $query ? $vendor->id : $this->customer->id)->pluck('file_no')->values();
+
+            $this->assertSame([$newest->file_no, $middle->file_no, $older->file_no], $mine->all(), 'latest first in the band');
+
+            // The band approved most lately above the one approved long ago.
+            $bands = $rows->pluck('party_id')->unique()->values();
+            $this->assertLessThan(
+                $bands->search($query ? $other->id : $quiet->id),
+                $bands->search($query ? $vendor->id : $this->customer->id)
+            );
+
+            $this->assertSame('approved', $page->json('props.sortedBy'));
+            $this->assertTrue($page->json('props.sortedDesc'));
+        }
+    }
+
     public function test_a_party_can_be_picked(): void
     {
         $vendor = $this->party('vendor');

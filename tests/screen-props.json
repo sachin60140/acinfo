@@ -1434,6 +1434,8 @@
                     "work_type": "string"
                 }
             },
+            "sortedBy": "string",
+            "sortedDesc": "bool",
             "title": "string",
             "totals": {
                 "days": "string"
@@ -1473,6 +1475,8 @@
                     "work_type": "string"
                 }
             },
+            "sortedBy": "string",
+            "sortedDesc": "bool",
             "title": "string",
             "totals": {
                 "days": "string"
