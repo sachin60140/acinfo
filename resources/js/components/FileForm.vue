@@ -2381,6 +2381,8 @@ onMounted(() => {
 
 @media (pointer: coarse) {
     .wf-form .input-group > .js-datefield {
+        /* 16px, or an iPhone zooms the page in on the tap. */
+        font-size: 16px;
         min-height: var(--tap);
     }
 }

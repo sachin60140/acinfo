@@ -600,8 +600,14 @@ onMounted(() => {
 
 @media (pointer: coarse) {
     .party-form .input-group > .js-datefield,
-    .pf-side label {
+    .pf-side label,
+    .pf-tick {
         min-height: var(--tap);
+    }
+
+    /* 16px, or an iPhone zooms the page in on the tap. */
+    .party-form .input-group > .js-datefield {
+        font-size: 16px;
     }
 }
 </style>

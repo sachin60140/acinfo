@@ -72,7 +72,8 @@
     .stat-note {
         color: #64748b;
         display: block;
-        font-size: 0.68rem;
+        /* 12px, not 10.9: the smallest the mobile audit left anywhere. */
+        font-size: 0.75rem;
         font-weight: 600;
         line-height: 1.3;
         margin-top: 0.15rem;

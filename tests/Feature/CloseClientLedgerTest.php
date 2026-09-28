@@ -162,6 +162,29 @@ class CloseClientLedgerTest extends TestCase
         $this->assertStringNotContainsString($clear->name, $page);
     }
 
+    /**
+     * On a phone, a card a client rather than a table 777px wide to scroll
+     * sideways (mobile audit, 2026-09-28): the rows say what each cell is,
+     * which the cards print beside it, and the picker is not held to its
+     * narrowest by w-auto, which would outrank the card's full width.
+     */
+    public function test_the_close_screen_stacks_on_a_phone(): void
+    {
+        $this->client('Stacked Client', -900);
+
+        $page = $this->actingAs($this->admin)->get(route('client.closebook'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('class="table align-middle mb-0 cb-table"', $page);
+
+        foreach (['Client', 'Mobile', 'Balance'] as $label) {
+            $this->assertStringContainsString('data-label="'.$label.'"', $page);
+        }
+
+        $this->assertStringContainsString('form-select form-select-sm cb-pick', $page);
+        $this->assertStringNotContainsString('w-auto', $page);
+        $this->assertMatchesRegularExpression('/@media \(max-width: 767\.98px\)\s*\{\s*\.cb-table thead\s*\{\s*display: none;/', $page);
+    }
+
     /** A customer with the client's own mobile is offered first, and not made again. */
     public function test_a_customer_with_the_clients_mobile_is_offered_first(): void
     {

@@ -111,4 +111,12 @@ onBeforeUnmount(() => {
     gap: 0.35rem;
     margin: 0.35rem 0 0;
 }
+
+/* Show was 27px tall under the field; on a touch screen it is a target. */
+@media (pointer: coarse) {
+    .pw-toggle {
+        min-height: var(--tap);
+        padding: 0 0.25rem;
+    }
+}
 </style>

@@ -203,4 +203,12 @@ watch(() => props.forceOpen, (now) => {
 .sect.is-shut .ui-card__head {
     border-bottom: 0;
 }
+
+/* On a touch screen the heading that opens a section is a target, not a
+   line of text: it was 24px tall. */
+@media (pointer: coarse) {
+    .sect__toggle {
+        min-height: var(--tap);
+    }
+}
 </style>

@@ -1187,10 +1187,27 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
     .grid__table tbody td {
         border-bottom: 0;
         display: flex;
-        gap: var(--s-3);
+        flex-wrap: wrap;
+        gap: 0 var(--s-3);
         justify-content: space-between;
         padding: var(--s-1) 0;
         text-align: right;
+    }
+
+    /* A value may wrap rather than push the card wider than the screen. */
+    .grid__table tbody td > * {
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    /*
+     * What a cell says under its value goes on a line of its own, the width
+     * of the card. Found by the mobile audit: beside a badge, "Approval
+     * screenshot on file" had no room and ran off the card's edge, and the
+     * whole list could be swiped sideways.
+     */
+    .grid__table tbody td > .ui-sub {
+        flex-basis: 100%;
     }
 
     .grid__table tbody td::before {
@@ -1216,6 +1233,14 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
 
     .grid__tools .ui-btn {
         flex: 1 1 auto;
+    }
+}
+
+/* On a touch screen the chips that open more columns were 25px. (A link in a
+   cell grows too, by the rule for every table in app.css.) */
+@media (pointer: coarse) {
+    .grid__group {
+        min-height: var(--tap);
     }
 }
 </style>

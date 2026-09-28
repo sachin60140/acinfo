@@ -742,9 +742,114 @@
     .ui-btn,
     .ui-input,
     .ui-select,
-    .chip {
+    .chip,
+    /* Bootstrap's own, on the screens that still use it: 30 to 38px tall.
+       Found by the mobile audit, 2026-09-28. */
+    .btn,
+    .form-control,
+    .form-select {
         min-height: var(--tap);
     }
+
+    /* Its words in the middle of the taller box, not sat at the top of it. */
+    .btn {
+        align-items: center;
+        display: inline-flex;
+        justify-content: center;
+    }
+
+    /*
+     * A field under 16px makes an iPhone zoom the whole page in the moment
+     * it is tapped — and leave it zoomed, a column of figures now wider than
+     * the screen. Every field here was 14px.
+     */
+    .ui-input,
+    .ui-select,
+    .ui-textarea,
+    .form-control,
+    .form-select {
+        font-size: 16px;
+    }
+
+    /* Ticks at 24px, the least WCAG allows a target. Where one sits alone in
+       a cell, the cell around it is the target too; see .tick-hit. */
+    input[type='checkbox']:not(.form-check-input),
+    input[type='radio']:not(.form-check-input) {
+        height: 1.5rem;
+        width: 1.5rem;
+    }
+
+    .ui-btn--icon {
+        min-width: var(--tap);
+    }
+
+    /* The header's logo, search and profile: 26 to 36px. */
+    .header .logo,
+    .header-nav .nav-link {
+        min-height: var(--tap);
+        min-width: var(--tap);
+    }
+
+    .header-nav .nav-icon {
+        align-items: center;
+        display: inline-flex;
+        justify-content: center;
+    }
+
+    .header .toggle-sidebar-btn {
+        min-width: var(--tap);
+    }
+
+    /* The menu's sections, 40px. */
+    .sidebar-nav .nav-heading--toggle {
+        min-height: var(--tap);
+    }
+
+    /*
+     * A link's target grows to the tap size; the line it sits on does not —
+     * the padding and the negative margin cancel. A link in a table cell (a
+     * file number, Edit, Statement) was 21px tall and "Edit" 27px wide.
+     */
+    .breadcrumb a,
+    .ui-table td .ui-link {
+        display: inline-block;
+        margin: -14px -11px;
+        padding: 14px 11px;
+    }
+
+    /* A tick with its words, "Select all": the words are the target too. */
+    label:has(> input[type='checkbox']),
+    label:has(> input[type='radio']) {
+        min-height: var(--tap);
+    }
+
+    /* The report filters hold their fields at 40px, one class more sure of
+       itself than the rule above. */
+    :is(.report-filter, .statement-filter) :is(.form-control, .form-select) {
+        min-height: var(--tap);
+    }
+
+    /* Customer-wise / Vendor-wise, 34px. */
+    .type-switch a {
+        align-items: center;
+        display: inline-flex;
+        min-height: var(--tap);
+    }
+}
+
+/*
+ * A tick alone in a cell: the whole square around it ticks it, so a thumb
+ * need not find a 24px box. The label wraps the box, so tapping it is tapping
+ * the box — change events and all.
+ */
+.tick-hit {
+    align-items: center;
+    cursor: pointer;
+    display: inline-flex;
+    justify-content: center;
+    margin: 0;
+    min-height: var(--tap);
+    min-width: var(--tap);
 }
 
 @media (prefers-reduced-motion: reduce) {
