@@ -118,7 +118,7 @@
                 <div class="statement-summary mb-3">
                     <div class="stat closing">
                         <span class="label">Average</span>
-                        <span class="value">{{ $totals['average'] === null ? '—' : $totals['average'].' days' }}</span>
+                        <span class="value">{{ $totals['average'] === null ? '—' : number_format($totals['average'], 1).' days' }}</span>
                     </div>
                     <div class="stat">
                         <span class="label">Fastest</span>
@@ -144,13 +144,20 @@
                 </div>
 
                 {{-- Approved and not counted, said rather than hidden. --}}
-                @if ($inHouse || $misdated)
+                @if ($inHouse || $undated || $misdated)
                     <div class="alert alert-warning small mb-3 no-print">
                         @if ($inHouse)
                             <div>
                                 <i class="bi bi-house"></i>
                                 {{ $inHouse }} approved {{ Str::plural('file', $inHouse) }} {{ $inHouse === 1 ? 'was' : 'were' }}
                                 done in-house and never dispatched — not counted.
+                            </div>
+                        @endif
+                        @if ($undated)
+                            <div>
+                                <i class="bi bi-calendar"></i>
+                                {{ $undated }} approved {{ Str::plural('file', $undated) }} {{ $undated === 1 ? 'was' : 'were' }}
+                                given to a vendor with no dispatch date entered — not counted until one is.
                             </div>
                         @endif
                         @if ($misdated)

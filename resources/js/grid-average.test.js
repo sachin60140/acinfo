@@ -67,6 +67,17 @@ describe('an averaged column', () => {
         expect(lastCell(host.querySelector('tfoot tr'))).toBe('avg 6.0');
     });
 
+    it('rounds halves up, as the page does above it', async () => {
+        // 23 days over 20 files: 1.15, which toFixed on the float read 1.1.
+        const rows = Array.from({ length: 20 }, (_, i) => ({
+            id: i, party_id: 1, party_name: 'Arman Works', file_no: `F-${i}`, days: i < 3 ? 2 : 1,
+        }));
+
+        const host = await mount(rows);
+
+        expect(lastCell(host.querySelector('tfoot tr'))).toBe('avg 1.2');
+    });
+
     it('says nothing when there is nothing to average', async () => {
         const host = await mount([
             { id: 1, party_id: 1, party_name: 'Arman Works', file_no: 'F-1', days: null },

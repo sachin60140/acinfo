@@ -4190,8 +4190,11 @@ class WorkFileModel extends Model
                 // approval already has a document behind it.
                 'work_file_item.id',
                 'work_file_item.approval_screenshot',
-                // Whose it is, for a report asking one vendor's time.
-                'work_file_item.vendor_id'
+                // Whose it is, when it went and whether it came back, for a
+                // report asking one vendor's time.
+                'work_file_item.vendor_id',
+                'work_file_item.vendor_date',
+                'work_file_item.vendor_returned_on'
             )
             ->get();
 

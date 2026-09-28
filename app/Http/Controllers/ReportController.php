@@ -1458,24 +1458,52 @@ class ReportController extends Controller
         $works = WorkFileModel::workBreakdown($files->pluck('id')->unique()->values()->all());
 
         $inHouse = 0;
+        $undated = 0;
         $misdated = 0;
         $rows = collect();
 
         foreach ($files as $file) {
+            $all = collect($works[$file->id] ?? []);
+            $live = $all->reject(fn ($work) => $work->status === WorkFileModel::CANCELLED);
+
             /*
-             * The day it was approved: the folder's last work. Vendor-wise,
-             * the last of that vendor's — a work done in-house, or another
-             * vendor's in a split folder, approved a week later is not time
-             * this vendor took. A file from before works carried a vendor is
-             * the folder's vendor's, all of it.
+             * Asked of the works, not the folder's own vendor fields. Found in
+             * review: a folder whose only vendor work was cancelled keeps
+             * naming that vendor and its day, and its in-house work, approved
+             * later, was counted as the vendor's time — or, approved earlier
+             * than that day, called a date typed wrong. A file from before
+             * works carried a vendor — none of them ever did — is the folder's
+             * vendor's, all of it.
              */
-            $approved = $file->finished_on;
+            $older = $all->every(fn ($work) => ! $work->vendor_id);
 
             if ($partyType === 'vendor') {
-                $live = collect($works[$file->id] ?? [])->reject(fn ($work) => $work->status === WorkFileModel::CANCELLED);
-                $theirs = $live->where('vendor_id', $file->party_id);
+                /*
+                 * The last of this vendor's works to be approved: another
+                 * vendor's, or work done in-house, approved a week later is not
+                 * time they took. Nor is work they gave back before it was
+                 * approved — found in review: taken back on the 5th and
+                 * finished by the office on the 30th, the 25 days in between
+                 * were charged to them.
+                 */
+                $theirs = ($older ? $live : $live->where('vendor_id', $file->party_id))
+                    ->reject(fn ($work) => $work->vendor_returned_on
+                        && (! $work->approved_on || substr((string) $work->vendor_returned_on, 0, 10) < substr((string) $work->approved_on, 0, 10)));
 
-                $approved = ($theirs->isNotEmpty() ? $theirs : $live)->pluck('approved_on')->filter()->max();
+                // Nothing of theirs was approved while they had it.
+                if ($theirs->isEmpty()) {
+                    continue;
+                }
+
+                $given = true;
+                $sent = $older ? $file->vendor_date : $theirs->pluck('vendor_date')->filter()->min();
+                $approved = $theirs->pluck('approved_on')->filter()->max();
+            } else {
+                // The folder's last work, from the first of them to go out.
+                $out = $live->filter(fn ($work) => $work->vendor_id);
+                $given = $older ? $file->vendor_id !== null : $out->isNotEmpty();
+                $sent = $older ? $file->vendor_date : $out->pluck('vendor_date')->filter()->min();
+                $approved = $file->finished_on;
             }
 
             $approved = $approved ? date('Y-m-d', strtotime($approved)) : null;
@@ -1484,13 +1512,20 @@ class ReportController extends Controller
                 continue;
             }
 
-            if (! $file->vendor_date) {
+            // Approved, and not countable — said on the page, not hidden.
+            if (! $given) {
                 $inHouse++;
 
                 continue;
             }
 
-            $days = WorkFileModel::turnaround($file->vendor_date, $approved);
+            if (! $sent) {
+                $undated++;
+
+                continue;
+            }
+
+            $days = WorkFileModel::turnaround($sent, $approved);
 
             if ($days === null) {
                 $misdated++;
@@ -1507,8 +1542,8 @@ class ReportController extends Controller
                 'registration_no' => (string) $file->registration_no,
                 'work_type' => (string) $file->work_type,
                 'counterparty' => $partyType === 'vendor' ? (string) $file->customer_name : (string) ($file->vendor_name ?: 'Several vendors'),
-                'dispatched' => date('d-m-Y', strtotime($file->vendor_date)),
-                'dispatched_raw' => date('Y-m-d', strtotime($file->vendor_date)),
+                'dispatched' => date('d-m-Y', strtotime($sent)),
+                'dispatched_raw' => date('Y-m-d', strtotime($sent)),
                 'approved' => date('d-m-Y', strtotime($approved)),
                 'approved_raw' => $approved,
                 'days' => $days,
@@ -1564,12 +1599,15 @@ class ReportController extends Controller
             ])))->all(),
             'totals' => [
                 'files' => $rows->count(),
-                'average' => $days->isEmpty() ? null : round($days->avg(), 1),
+                // Rounded from the whole-day total, as the grid rounds its own:
+                // found in review, a mean of 1.15 read 1.2 here and 1.1 below.
+                'average' => $days->isEmpty() ? null : round($days->sum() * 10 / $days->count()) / 10,
                 'fastest' => $days->isEmpty() ? null : (int) $days->min(),
                 'slowest' => $days->isEmpty() ? null : (int) $days->max(),
                 'slowestFile' => $slowest ? $slowest['file_no'] : null,
             ],
             'inHouse' => $inHouse,
+            'undated' => $undated,
             'misdated' => $misdated,
         ])->toResponse($req);
     }

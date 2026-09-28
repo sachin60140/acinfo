@@ -349,7 +349,14 @@ function sum(rows) {
          */
         if (props.totals[key] === 'avg') {
             const figures = rows.map((row) => row[key]).filter((value) => ! blank(value)).map(Number);
-            out[key] = figures.length ? figures.reduce((a, b) => a + b, 0) / figures.length : null;
+            /*
+             * To one place from the exact fraction, halves up — as the server
+             * rounds the average it prints above the grid. toFixed on the
+             * float mean read 1.15 as 1.1 while the page said 1.2.
+             */
+            out[key] = figures.length
+                ? Math.round((figures.reduce((a, b) => a + b, 0) * 10) / figures.length) / 10
+                : null;
 
             continue;
         }

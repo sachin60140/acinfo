@@ -82,7 +82,7 @@ class ApprovalTimeTest extends TestCase
             if ($vendor) {
                 $item->vendor_id = $vendor->id;
                 $item->vendor_amount = 500;
-                $item->vendor_date = now()->subDays($sent)->toDateString();
+                $item->vendor_date = $sent === null ? null : now()->subDays($sent)->toDateString();
             } else {
                 $item->kept_in_house_on = now()->subDays(100)->toDateString();
             }
@@ -212,6 +212,111 @@ class ApprovalTimeTest extends TestCase
 
         // Customer-wise it is one file: from the first dispatch to the last approval.
         $this->assertSame(28, $this->row($file)['days']);
+    }
+
+    /**
+     * Its only vendor work cancelled, the folder still names the vendor and
+     * the day — and the in-house work approved later is no time of theirs.
+     */
+    public function test_a_folder_whose_vendor_work_was_cancelled_is_in_house(): void
+    {
+        $before = $this->page()->json('page');
+
+        $vendor = $this->party('vendor');
+        $vendorPage = ['party_type' => 'vendor', 'party_id' => $vendor->id];
+        $file = $this->file([[$vendor, 15, null], [null, null, 20]]);
+
+        $given = $file->items->firstWhere('vendor_id', $vendor->id);
+        $given->status = WorkFileModel::CANCELLED;
+        $given->save();
+        $file->rollUp();
+        $file->save();
+
+        $this->assertSame($vendor->id, (int) $file->fresh()->vendor_id, 'the folder still names them');
+        $this->assertSame(WorkFileModel::APPROVED, $file->fresh()->status);
+
+        $page = $this->page();
+
+        $this->assertNull($this->row($file));
+        $this->assertSame($before['misdated'], $page->json('page.misdated'), 'no date was typed wrong');
+        $this->assertSame($before['inHouse'] + 1, $page->json('page.inHouse'), 'what is left of it was done here');
+
+        $vendorWise = $this->page($vendorPage);
+        $this->assertSame([], $vendorWise->json('props.rows'), 'not the vendor\'s time');
+
+        // Nor anything about it to say on their page: it is not theirs.
+        foreach (['inHouse', 'undated', 'misdated'] as $note) {
+            $this->assertSame(0, $vendorWise->json("page.$note"), $note);
+        }
+    }
+
+    public function test_a_vendor_file_with_no_dispatch_date_is_not_called_in_house(): void
+    {
+        $vendor = $this->party('vendor');
+        $before = $this->page(['party_type' => 'vendor', 'party_id' => $vendor->id])->json('page');
+
+        $file = $this->file([[$vendor, null, 5]]);
+
+        $page = $this->page(['party_type' => 'vendor', 'party_id' => $vendor->id]);
+
+        $this->assertNull($this->row($file, ['party_type' => 'vendor', 'party_id' => $vendor->id]));
+        $this->assertSame($before['inHouse'], $page->json('page.inHouse'));
+        $this->assertSame($before['undated'] + 1, $page->json('page.undated'));
+
+        $this->actingAs($this->admin)->get(route('report.approvaltime', ['party_type' => 'vendor', 'party_id' => $vendor->id]))
+            ->assertSee('given to a vendor with no dispatch date')
+            ->assertDontSee('done in-house and never dispatched');
+    }
+
+    /** Given back unfinished and done by the office: not the vendor's time. */
+    public function test_work_taken_back_before_approval_is_not_the_vendors_time(): void
+    {
+        $vendor = $this->party('vendor');
+        $file = $this->file([[$vendor, 30, 1]]);
+
+        $work = $file->items->first();
+        $work->vendor_returned_on = now()->subDays(25)->toDateString();
+        $work->save();
+
+        $vendorWise = collect($this->page(['party_type' => 'vendor', 'party_id' => $vendor->id])->json('props.rows'));
+        $this->assertNull($vendorWise->firstWhere('file_no', $file->file_no));
+
+        // The customer's file still took 29 days from going out.
+        $this->assertSame(29, $this->row($file)['days']);
+    }
+
+    /** A file from before works carried a vendor: the folder's vendor has all of it. */
+    public function test_an_older_file_is_the_folders_vendors(): void
+    {
+        $vendor = $this->party('vendor');
+        $file = $this->file([[null, null, 8]]);
+
+        // Written the old way: the folder names the vendor, the work does not.
+        WorkFileItemModel::where('work_file_id', $file->id)->update(['kept_in_house_on' => null]);
+        $file->vendor_id = $vendor->id;
+        $file->vendor_date = now()->subDays(20)->toDateString();
+        $file->save();
+
+        $this->assertSame(12, $this->row($file)['days']);
+
+        $vendorWise = collect($this->page(['party_type' => 'vendor', 'party_id' => $vendor->id])->json('props.rows'));
+        $this->assertSame(12, $vendorWise->firstWhere('file_no', $file->file_no)['days']);
+    }
+
+    /** The card and the grid's foot round alike: a mean of 1.15 is 1.2 on both. */
+    public function test_the_average_rounds_as_the_grid_does(): void
+    {
+        $vendor = $this->party('vendor');
+
+        for ($i = 0; $i < 20; $i++) {
+            $this->file([[$vendor, $i < 3 ? 12 : 11, 10]]);
+        }
+
+        $query = ['party_type' => 'vendor', 'party_id' => $vendor->id];
+
+        $this->assertEquals(1.2, $this->page($query)->json('page.totals.average'));
+
+        $this->actingAs($this->admin)->get(route('report.approvaltime', $query))->assertSee('1.2 days');
     }
 
     public function test_a_party_can_be_picked(): void
