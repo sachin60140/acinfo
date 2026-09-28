@@ -275,14 +275,17 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                             :key="row.id"
                             :class="{ 'is-picked': row.picked, 'is-blocked': invalid(row) }">
                             <td data-label="Return" class="cr-tick">
-                                <input
-                                    type="checkbox"
-                                    class="cr-check"
-                                    name="files[]"
-                                    :value="row.id"
-                                    v-model="row.picked"
-                                    @change="prefill(row)"
-                                    :aria-label="`Return file ${row.file_no}`">
+                                <!-- The square around the box ticks it too; see .tick-hit. -->
+                                <label class="tick-hit">
+                                    <input
+                                        type="checkbox"
+                                        class="cr-check"
+                                        name="files[]"
+                                        :value="row.id"
+                                        v-model="row.picked"
+                                        @change="prefill(row)"
+                                        :aria-label="`Return file ${row.file_no}`">
+                                </label>
                             </td>
 
                             <td data-label="File No."><span class="ui-lead">{{ row.file_no }}</span></td>

@@ -486,4 +486,29 @@ const STATE_ICONS = { received: 'bi-check2', pending: 'bi-hourglass-split', not_
         flex: 1 1 auto;
     }
 }
+
+/*
+ * The narrowest phones: "Not needed" was cut off at 320px, the three answers
+ * together wider than the line. Their words may wrap, and the icons go —
+ * the words alone say which is which (found in review).
+ */
+@media (max-width: 359.98px) {
+    .pck-choice__opt {
+        text-align: center;
+        white-space: normal;
+    }
+
+    .pck-choice__opt .bi {
+        display: none;
+    }
+}
+
+/* On a touch screen: Add a note was 17px tall, and it is the only way to the
+   note fields (found in review). */
+@media (pointer: coarse) {
+    .pck-addnote {
+        min-height: var(--tap);
+        padding: 0 var(--s-2);
+    }
+}
 </style>

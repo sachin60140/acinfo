@@ -230,13 +230,16 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                             :key="file.id"
                             :class="{ 'is-picked': isPicked(file) }">
                             <td data-label="Hand Over" class="hov-tick">
-                                <input
-                                    type="checkbox"
-                                    class="hov-check"
-                                    name="files[]"
-                                    :value="file.id"
-                                    v-model="picked"
-                                    :aria-label="`Hand over the papers for ${file.file_no}`">
+                                <!-- The square around the box ticks it too; see .tick-hit. -->
+                                <label class="tick-hit">
+                                    <input
+                                        type="checkbox"
+                                        class="hov-check"
+                                        name="files[]"
+                                        :value="file.id"
+                                        v-model="picked"
+                                        :aria-label="`Hand over the papers for ${file.file_no}`">
+                                </label>
                             </td>
                             <td data-label="File No."><span class="ui-lead">{{ file.file_no }}</span></td>
                             <td data-label="Vehicle">{{ file.registration_no || '—' }}</td>

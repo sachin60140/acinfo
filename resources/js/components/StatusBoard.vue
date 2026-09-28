@@ -704,4 +704,17 @@ function onScreenshot(row, event) {
         grid-template-columns: 1fr;
     }
 }
+
+/* A file number is how a file is opened from the board: on a touch screen it
+   is the tap size, growing sideways into the space beside it, never up into
+   the line above (found in review). */
+@media (pointer: coarse) {
+    .board__no {
+        align-items: center;
+        display: inline-flex;
+        margin-inline: -11px;
+        min-height: var(--tap);
+        padding-inline: 11px;
+    }
+}
 </style>

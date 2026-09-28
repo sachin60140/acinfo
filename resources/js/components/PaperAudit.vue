@@ -323,13 +323,16 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                                 :key="row.id"
                                 :class="{ 'is-picked': isPicked(row) }">
                                 <td data-label="Received" class="pau-tick">
-                                    <input
-                                        type="checkbox"
-                                        class="pau-check"
-                                        name="received[]"
-                                        :value="row.id"
-                                        v-model="picked"
-                                        :aria-label="`${row.paper} received for ${row.file_no}`">
+                                    <!-- The square around the box ticks it too; see .tick-hit. -->
+                                    <label class="tick-hit">
+                                        <input
+                                            type="checkbox"
+                                            class="pau-check"
+                                            name="received[]"
+                                            :value="row.id"
+                                            v-model="picked"
+                                            :aria-label="`${row.paper} received for ${row.file_no}`">
+                                    </label>
                                 </td>
                                 <td data-label="Paper"><strong>{{ row.paper }}</strong></td>
                                 <td data-label="File No.">
@@ -383,7 +386,9 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
             </div>
 
             <div class="ui-table-wrap">
-                <table class="ui-table">
+                <!-- pau-table: cards on a phone, as the two lists above are (found
+                     in review: this one stayed a table seven columns wide). -->
+                <table class="ui-table pau-table">
                     <thead>
                         <tr>
                             <th>File</th>
@@ -403,7 +408,7 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                             <td data-label="Work">{{ file.work_type || '—' }}</td>
                             <td data-label="Received">{{ file.received_date }}</td>
                             <td data-label="Why" class="pau-why">{{ file.why }}</td>
-                            <td data-label="">
+                            <td data-label="" class="pau-go">
                                 <a :href="file.work_type_url" class="ui-btn ui-btn--sm">Paper lists</a>
                                 <a :href="file.board_url" class="ui-btn ui-btn--sm">Status board</a>
                             </td>

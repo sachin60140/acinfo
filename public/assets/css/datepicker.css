@@ -144,6 +144,36 @@
     font-variant-numeric: tabular-nums;
 }
 
+/*
+ * On a touch screen (mobile audit, 2026-09-28): the arrows were 30px and
+ * Today / Clear 31px, and the month and year boxes 13px, which makes an
+ * iPhone zoom the page in on the tap. The calendar widens to give the days
+ * room — the script keeps it inside the screen.
+ */
+@media (pointer: coarse) {
+    .dp-popup {
+        width: min(20rem, calc(100vw - 1rem));
+    }
+
+    .dp-head select {
+        font-size: 16px;
+        min-height: 44px;
+    }
+
+    .dp-nav {
+        height: 44px;
+        width: 44px;
+    }
+
+    .dp-day {
+        min-height: 40px;
+    }
+
+    .dp-action {
+        min-height: 44px;
+    }
+}
+
 @media print {
     .dp-popup {
         display: none !important;

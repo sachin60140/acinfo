@@ -276,13 +276,17 @@ const summary = computed(() => {
                                     :key="row.id"
                                     :class="{ 'is-picked': row.picked, 'is-blocked': problem(row) !== null }">
                                     <td data-label="Take back" class="vr-pick">
-                                        <input
-                                            type="checkbox"
-                                            class="vr-tick"
-                                            name="files[]"
-                                            :value="row.id"
-                                            v-model="row.picked"
-                                            @change="prefill(row)">
+                                        <!-- The square around the box ticks it too; see .tick-hit. -->
+                                        <label class="tick-hit">
+                                            <input
+                                                type="checkbox"
+                                                class="vr-tick"
+                                                name="files[]"
+                                                :value="row.id"
+                                                v-model="row.picked"
+                                                :aria-label="`Take back file ${row.file_no}`"
+                                                @change="prefill(row)">
+                                        </label>
                                     </td>
 
                                     <td data-label="File No."><span class="ui-lead">{{ row.file_no }}</span></td>

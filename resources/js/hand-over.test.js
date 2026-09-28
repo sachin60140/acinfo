@@ -57,6 +57,21 @@ const visible = (host) =>
         .filter((tr) => tr.querySelector('input[name="files[]"]') && tr.style.display !== 'none')
         .map((tr) => tr.querySelector('.ui-lead').textContent);
 
+describe('on a phone', () => {
+    // The square around the box is the target, not just the 24px box.
+    it('ticks a file from anywhere in the square around its box', async () => {
+        const host = mount();
+        const box = tick(host, 'F-00050');
+
+        expect(box.closest('label.tick-hit')).not.toBe(null);
+
+        box.closest('label.tick-hit').click();
+        await nextTick();
+
+        expect(box.checked).toBe(true);
+    });
+});
+
 const posted = (host) =>
     [...host.querySelectorAll('input[name="files[]"]')].filter((box) => box.checked).map((box) => Number(box.value));
 

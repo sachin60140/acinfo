@@ -2,6 +2,61 @@
 
 @section('title', 'Close Old Book | Ac Info')
 
+@section('style')
+    <style>
+        .cb-pick {
+            min-width: 14rem;
+            width: auto;
+        }
+
+        /*
+         * On a phone, a card for each client, not a table 777px wide to scroll
+         * sideways (found by the mobile audit): the name and balance, then
+         * the customer to carry to across the whole card.
+         */
+        @media (max-width: 767.98px) {
+            .cb-table thead {
+                display: none;
+            }
+
+            .cb-table,
+            .cb-table tbody,
+            .cb-table tr,
+            .cb-table td {
+                display: block;
+                width: 100%;
+            }
+
+            .cb-table tr {
+                border: 1px solid #dee2e6;
+                border-radius: 8px;
+                margin-bottom: 0.75rem;
+                padding: 0.5rem 0.75rem;
+            }
+
+            .cb-table td {
+                border: 0;
+                padding: 0.25rem 0;
+                text-align: left !important;
+            }
+
+            .cb-table td[data-label]::before {
+                color: #6c757d;
+                content: attr(data-label) ' ';
+                font-size: 0.75rem;
+                font-weight: 700;
+                text-transform: uppercase;
+            }
+
+            .cb-pick,
+            .cb-table form .btn {
+                min-width: 0;
+                width: 100%;
+            }
+        }
+    </style>
+@endsection
+
 @section('content')
     <div class="pagetitle">
         <h1>Close the Old Client Ledger</h1>
@@ -35,7 +90,7 @@
                     </p>
 
                     <div class="table-responsive">
-                        <table class="table align-middle mb-0">
+                        <table class="table align-middle mb-0 cb-table">
                             <thead>
                                 <tr>
                                     <th>Client</th>
@@ -47,13 +102,13 @@
                             <tbody>
                                 @foreach ($rows as $row)
                                     <tr>
-                                        <td><a href="{{ route('clientstatement', $row['id']) }}">{{ $row['name'] }}</a></td>
-                                        <td>{{ $row['mobile'] }}</td>
-                                        <td class="text-end text-nowrap">{{ $row['balance'] }}</td>
+                                        <td data-label="Client"><a href="{{ route('clientstatement', $row['id']) }}">{{ $row['name'] }}</a></td>
+                                        <td data-label="Mobile">{{ $row['mobile'] }}</td>
+                                        <td class="text-end text-nowrap" data-label="Balance">{{ $row['balance'] }}</td>
                                         <td>
                                             <form method="POST" action="{{ route('client.carry', $row['id']) }}" class="d-flex flex-wrap gap-2">
                                                 @csrf
-                                                <select name="customer" class="form-select form-select-sm w-auto" required aria-label="Customer for {{ $row['name'] }}">
+                                                <select name="customer" class="form-select form-select-sm cb-pick" required aria-label="Customer for {{ $row['name'] }}">
                                                     <option value="">Pick a customer…</option>
                                                     @if ($row['canCreate'])
                                                         <option value="new">New customer: {{ $row['name'] }} ({{ $row['mobile'] }})</option>
