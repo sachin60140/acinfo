@@ -1156,6 +1156,15 @@ class WorkFileItemTest extends TestCase
 
         $file = $this->twoWorkFile('BR01ZZ0126');
 
+        // Given to a vendor, no rate agreed for either work. A work nobody
+        // was given waits on no vendor's rate; see VENDOR_WORK_UNPRICED.
+        $this->post(route('workfile.assign'), [
+            'vendor_id' => $this->vendor()->id,
+            'vendor_date' => now()->toDateString(),
+            'files' => [$file->id],
+            'amounts' => [],
+        ])->assertRedirect();
+
         $listed = WorkFileModel::listing()->firstWhere('id', $file->id);
         $reported = WorkFileModel::report('customer')->firstWhere('id', $file->id);
 
@@ -1170,7 +1179,7 @@ class WorkFileItemTest extends TestCase
             }
         }
 
-        // Two works received, neither priced by a vendor yet.
+        // Two works given out, neither priced by the vendor yet.
         $this->assertSame(2, (int) $listed->unpriced_works);
         $this->assertSame(0, (int) $listed->unbilled_works);
     }
