@@ -236,11 +236,12 @@ class ExpenseByVendorTest extends TestCase
         $file = $this->file([[$this->tr, $this->vendor, 3000], [$this->hpa, $this->vendor, 1200]]);
         $this->spend($file, $this->challan, 450);
 
-        $file->items()->update(['vendor_returned_on' => '2026-09-20', 'status' => WorkFileModel::IN_OFFICE]);
-        $file->vendor_returned_amount = 1000;
-        $file->rollUp();
-        $file->save();
-        $file->syncLedger();
+        $this->actingAs($this->admin)->post(route('workfile.vendorreturn'), [
+            'returned_on' => '2026-09-20',
+            'files' => [$file->id],
+            'amounts' => [$file->id => 1000],
+            'remark' => 'Handed back undone',
+        ])->assertRedirect(route('workfile.index'));
 
         $rows = $this->rows(['vendor_id' => $this->vendor->id]);
 

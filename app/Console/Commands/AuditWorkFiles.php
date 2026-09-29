@@ -423,6 +423,12 @@ class AuditWorkFiles extends Command
                 .' — files:resync-vendors puts this right');
         }
 
+        // And what it says came back of its vendors' rates.
+        if ($reversal = ResyncVendors::reversalDrift($file)) {
+            $note($id, 'says '.$reversal[0].' of its vendors\' rates came back but its works say '.$reversal[1]
+                .' — files:resync-vendors puts this right');
+        }
+
         // The wording, which files:relabel-ledger is what puts right.
         $customer = $entries->get('customer');
 

@@ -313,7 +313,14 @@ class WorkFileModel extends Model
              * customer who owed 3,000 came back owing nothing, from an undo.
              */
 
-            if (! $file->vendor_returned_on) {
+            /*
+             * A folder not back has nothing reversed — unless its works say
+             * part of it is: one vendor's handed back and another's still
+             * out. That figure is the works', rolled up; see rollUp().
+             */
+            if (! $file->vendor_returned_on && $file->vendor_returned_amount !== null
+                && ! (WorkFileItemModel::partReversals() && $file->exists
+                    && $file->items()->whereNotNull('vendor_id')->exists())) {
                 $file->vendor_returned_amount = null;
             }
         });
@@ -1724,6 +1731,11 @@ class WorkFileModel extends Model
             return (float) $amount - self::returnedPortion($reversedAmount, $amount);
         }
 
+        // Part of it back and the rest still out: what has come back so far.
+        if ($reversedAmount !== null && $reversedAmount !== '') {
+            return (float) $amount - min((float) $reversedAmount, (float) $amount);
+        }
+
         return (float) $amount;
     }
 
@@ -2109,7 +2121,13 @@ class WorkFileModel extends Model
      * for two of them, dated from the day those two went out. Cancelled work
      * counts for nobody, exactly as it counts for nothing on the customer side.
      *
-     * @return array<int, array{amount: float, date: ?string, works: array<int, string>, all: bool, returned_on: ?string}>
+     * Where their works have come back: the day the last of them did, how
+     * much of their rates came back with them, and whether all of theirs is
+     * back. A vendor who handed back one work and still has another is owed
+     * for the one they still have — not, as when a part could only be written
+     * on the folder, for both until the second came back too.
+     *
+     * @return array<int, array{amount: float, date: ?string, works: array<int, string>, all: bool, returned_on: ?string, reversed: float, all_back: bool}>
      */
     public function vendorShares(): array
     {
@@ -2124,7 +2142,7 @@ class WorkFileModel extends Model
             }
 
             $vendor = (int) $item->vendor_id;
-            $shares[$vendor] ??= ['amount' => 0.0, 'date' => null, 'works' => [], 'all' => false, 'returned_on' => null];
+            $shares[$vendor] ??= ['amount' => 0.0, 'date' => null, 'works' => [], 'all' => false, 'returned_on' => null, 'reversed' => 0.0, 'all_back' => false];
 
             $shares[$vendor]['amount'] += (float) $item->vendor_amount;
             $shares[$vendor]['works'][] = $item->workType?->name ?? 'work';
@@ -2135,8 +2153,15 @@ class WorkFileModel extends Model
                 $shares[$vendor]['date'] = $item->vendor_date;
             }
 
-            if ($item->vendor_returned_on && $item->vendor_returned_on > (string) $shares[$vendor]['returned_on']) {
-                $shares[$vendor]['returned_on'] = $item->vendor_returned_on;
+            if ($item->vendor_returned_on) {
+                if ($item->vendor_returned_on > (string) $shares[$vendor]['returned_on']) {
+                    $shares[$vendor]['returned_on'] = $item->vendor_returned_on;
+                }
+
+                $shares[$vendor]['reversed'] += self::returnedPortion(
+                    WorkFileItemModel::partReversals() ? $item->vendor_returned_amount : null,
+                    $item->vendor_amount
+                );
             }
         }
 
@@ -2145,11 +2170,8 @@ class WorkFileModel extends Model
 
             $shares[$vendor]['all'] = $theirs->count() === $live->count();
             $shares[$vendor]['works'] = array_values(array_unique($share['works']));
-
-            // Any of their work still out means it has not come back.
-            if ($theirs->contains(fn ($item) => ! $item->vendor_returned_on)) {
-                $shares[$vendor]['returned_on'] = null;
-            }
+            $shares[$vendor]['all_back'] = $theirs->every(fn ($item) => (bool) $item->vendor_returned_on);
+            $shares[$vendor]['reversed'] = round($share['reversed'], 2);
         }
 
         return $shares;
@@ -2215,11 +2237,14 @@ class WorkFileModel extends Model
          * holding part of it was credited, under his own work's name, the rate
          * typed on a work the office kept.
          */
+        $fromFolder = false;
+
         if (count($shares) === 1) {
             $only = array_key_first($shares);
 
             if ($shares[$only]['all'] && $shares[$only]['amount'] <= 0 && (float) $this->vendor_amount > 0) {
                 $shares[$only]['amount'] = (float) $this->vendor_amount;
+                $fromFolder = true;
             }
         }
 
@@ -2241,13 +2266,23 @@ class WorkFileModel extends Model
             }
 
             /*
-             * A part reversal is the folder's own figure, and it belongs to a
-             * vendor who has the whole folder. Where the folder is split, each
-             * vendor's own amount comes back in full — splitting a part
-             * reversal waits for the return screen to be asked work by work.
+             * What came back of their works' rates, work by work — a part
+             * reversal typed on the take-back screen is written on the works
+             * it was for. A rate agreed on the folder alone comes back as the
+             * folder's figure, once all of theirs is back.
+             *
+             * Until the works can carry a part (the migration has not run), as
+             * before: the folder's figure for a vendor with all of it, their
+             * whole share for one with part, once all of theirs is back.
              */
             if ($share['returned_on']) {
-                $reversed = $share['all'] ? $this->reversedToVendor() : (float) $share['amount'];
+                $reversed = match (true) {
+                    ! WorkFileItemModel::partReversals() => $share['all_back']
+                        ? ($share['all'] ? $this->reversedToVendor() : (float) $share['amount'])
+                        : 0.0,
+                    $fromFolder => $share['all_back'] ? $this->reversedToVendor() : 0.0,
+                    default => $share['reversed'],
+                };
 
                 if ($reversed > 0) {
                     $lines['vendor_return'][$vendor] = [
@@ -2320,6 +2355,131 @@ class WorkFileModel extends Model
     }
 
     /**
+     * A return amount worth storing, or null for "all of it": the forms
+     * pre-fill the whole figure, and storing it would be a change where
+     * nothing changed.
+     */
+    public static function partOrAll($value, $whole): ?float
+    {
+        if ($value === null || $value === '' || (float) $value >= (float) $whole) {
+            return null;
+        }
+
+        return round((float) $value, 2);
+    }
+
+    /**
+     * A part reversal typed for one vendor's works, shared over them: the
+     * works not yet approved first — the ones that came back undone — then
+     * the rest, each up to its own rate. Null on a work is all of its rate.
+     *
+     * @return array<int, ?float> work id => the part of its rate reversed
+     */
+    public static function reversalOnWorks($works, $typed): array
+    {
+        $works = collect($works);
+        $booked = $works->sum(fn ($work) => (float) $work->vendor_amount);
+
+        if ($typed === null || $typed === '' || (float) $typed >= $booked) {
+            return $works->mapWithKeys(fn ($work) => [(int) $work->id => null])->all();
+        }
+
+        $left = round((float) $typed, 2);
+        $parts = [];
+
+        foreach ($works->sortBy(fn ($work) => [$work->status === self::APPROVED ? 1 : 0, (int) $work->id]) as $work) {
+            $rate = max(0.0, (float) $work->vendor_amount);
+            $take = round(min($left, $rate), 2);
+            $left = round($left - $take, 2);
+
+            $parts[(int) $work->id] = abs($take - $rate) < 0.005 ? null : $take;
+        }
+
+        return $parts;
+    }
+
+    /**
+     * The folder's own part reversal, as its works say it: what came back of
+     * the rates of its given works that were handed back.
+     *
+     * Once the folder is back, null is all of its rate and a figure is that
+     * much — a rate typed on work the office kept is not the vendor's, and is
+     * not reversed with theirs. While some of it is still out, a figure is
+     * what has come back so far, and null is nothing yet.
+     *
+     * A rate agreed on the folder alone, its works carrying none, keeps the
+     * folder's own figure; see vendorLines().
+     */
+    public function reversalFromWorks($items = null): ?float
+    {
+        $back = collect($items ?? $this->items()->get())
+            ->reject(fn ($work) => $work->status === self::CANCELLED)
+            ->filter(fn ($work) => $work->vendor_id && $work->vendor_returned_on);
+
+        if ($back->isEmpty()) {
+            return null;
+        }
+
+        $reversed = round($back->sum(fn ($work) => self::returnedPortion($work->vendor_returned_amount, $work->vendor_amount)), 2);
+
+        if ($this->vendor_returned_on) {
+            if ($back->sum(fn ($work) => (float) $work->vendor_amount) <= 0) {
+                return $this->vendor_returned_amount === null ? null : (float) $this->vendor_returned_amount;
+            }
+
+            return self::partOrAll($reversed, $this->vendor_amount);
+        }
+
+        return $reversed > 0 ? $reversed : null;
+    }
+
+    /**
+     * What each vendor still has of this folder: their live works not yet
+     * handed back, nor gone back to the customer. On an older folder, the
+     * folder's vendor has all of it until the folder is back.
+     *
+     * @return array<int, \Illuminate\Support\Collection> vendor id => works
+     */
+    public function heldByVendor(): array
+    {
+        $live = $this->items->reject(fn ($work) => $work->status === self::CANCELLED)->values();
+
+        if (self::isOlderFolder($this->items)) {
+            return $this->vendor_id && ! $this->vendor_returned_on ? [(int) $this->vendor_id => $live] : [];
+        }
+
+        return $live
+            ->filter(fn ($work) => $work->vendor_id && ! $work->vendor_returned_on && $work->status !== self::RETURNED)
+            ->groupBy(fn ($work) => (int) $work->vendor_id)
+            ->map(fn ($works) => $works->values())
+            ->all();
+    }
+
+    /**
+     * The most a take-back of these works can reverse: their rates — or the
+     * folder's, on an older folder, or where the rate was agreed on the
+     * folder alone and they are all of it; see vendorLines().
+     */
+    public function bookedFor(int $vendorId, $works): ?float
+    {
+        $works = collect($works);
+
+        if (self::isOlderFolder($this->items)) {
+            return $this->vendor_amount === null ? null : (float) $this->vendor_amount;
+        }
+
+        $priced = $works->filter(fn ($work) => $work->vendor_amount !== null);
+        $rates = round($priced->sum(fn ($work) => (float) $work->vendor_amount), 2);
+        $live = $this->items->reject(fn ($work) => $work->status === self::CANCELLED);
+
+        if ($rates <= 0 && (float) $this->vendor_amount > 0 && $live->every(fn ($work) => (int) $work->vendor_id === $vendorId)) {
+            return (float) $this->vendor_amount;
+        }
+
+        return $priced->isEmpty() ? null : $rates;
+    }
+
+    /**
      * A part return, or the whole amount when none was specified. Never more
      * than was charged in the first place — the forms reject that, and this
      * makes a stale or hand-edited row safe too.
@@ -2346,10 +2506,11 @@ class WorkFileModel extends Model
      * screen offers, and the same conditions are re-applied on save so a stale
      * page cannot return a file twice.
      */
-    public static function withVendor()
+    public static function withVendor(?array $ids = null)
     {
         return self::query()
             ->with('workType', 'customer', 'vendor', 'items.workType', 'items.vendor')
+            ->when($ids !== null, fn ($q) => $q->whereIn('id', $ids))
             /*
              * A folder with any work still out, rather than a folder with a
              * vendor. A folder split between two of them has no vendor of its
@@ -2366,7 +2527,7 @@ class WorkFileModel extends Model
             ->where(fn ($outer) => $outer
                 ->whereHas('items', fn ($q) => $q->whereNotNull('vendor_id')
                     ->whereNull('vendor_returned_on')
-                    ->whereNotIn('status', [self::CANCELLED]))
+                    ->whereNotIn('status', [self::CANCELLED, self::RETURNED]))
                 ->orWhere(fn ($own) => $own->whereNotNull('vendor_id')
                     ->whereNull('vendor_returned_on')
                     ->whereRaw(self::OLDER_FOLDER)))
@@ -2494,6 +2655,9 @@ class WorkFileModel extends Model
             THEN COALESCE(work_file.vendor_amount, 0)
                  - LEAST(COALESCE(work_file.vendor_returned_amount, COALESCE(work_file.vendor_amount, 0)),
                          COALESCE(work_file.vendor_amount, 0))
+        WHEN work_file.vendor_returned_amount IS NOT NULL
+            THEN COALESCE(work_file.vendor_amount, 0)
+                 - LEAST(work_file.vendor_returned_amount, COALESCE(work_file.vendor_amount, 0))
         ELSE COALESCE(work_file.vendor_amount, 0) END
         + ".self::PAID_OUT.')';
 
@@ -2514,9 +2678,14 @@ class WorkFileModel extends Model
      * The older file is asked of every work, cancelled ones included; see
      * isOlderFolder(). Asked of the live ones, a folder whose one given work
      * was cancelled was chased for a vendor's rate on the work the office kept.
+     *
+     * Not a work its vendor handed back: nothing was agreed for it, and
+     * nothing will be (found in review, 2026-09-29) — it sat under Awaiting
+     * Price for good, with no margin.
      */
     public const VENDOR_WORK_UNPRICED = "vrs.work_file_id = work_file.id
         AND vrs.status <> 'cancelled'
+        AND vrs.vendor_returned_on IS NULL
         AND (vrs.vendor_amount IS NULL OR vrs.vendor_amount <= 0)
         AND (vrs.vendor_id IS NOT NULL
              OR (work_file.vendor_id IS NOT NULL AND ".self::OLDER_FOLDER.'))';
@@ -4786,6 +4955,7 @@ class WorkFileModel extends Model
             ->get([
                 'i.id', 'i.work_file_id', 'i.vendor_id', 'i.customer_amount', 'i.vendor_amount',
                 'i.vendor_date', 'i.vendor_returned_on', 'i.status', 'i.approved_on',
+                WorkFileItemModel::partReversals() ? 'i.vendor_returned_amount' : DB::raw('NULL as vendor_returned_amount'),
                 't.name as work', 'v.name as vendor_name', 'v.mobile as vendor_mobile', 'v.whatsapp as vendor_whatsapp',
             ])
             ->groupBy('work_file_id');
@@ -4878,13 +5048,28 @@ class WorkFileModel extends Model
                     default => null,
                 };
 
-                // So awaitingPrice() asks about these works, not the whole folder's.
-                $row->unpriced_works = $mine->filter(fn ($w) => $w->vendor_amount === null || (float) $w->vendor_amount <= 0)->count();
+                // So awaitingPrice() asks about these works, not the whole
+                // folder's — and not one handed back, which will never have a rate.
+                $row->unpriced_works = $mine->filter(fn ($w) => ! $w->vendor_returned_on
+                    && ($w->vendor_amount === null || (float) $w->vendor_amount <= 0))->count();
                 $row->unbilled_works = $mine->filter(fn ($w) => $w->customer_amount === null || (float) $w->customer_amount <= 0)->count();
 
                 $row->expenses = $expenses[$vendorId];
                 $row->returned_amount = $refund === null ? null : $refund[$vendorId];
-                $row->vendor_returned_amount = $sentBack === null ? null : $sentBack[$vendorId];
+
+                /*
+                 * What came back of their rates, from their own works: found
+                 * in review, a part typed for one vendor was shared by charge
+                 * over both, and the other's cost dropped for work they still
+                 * had. Before the works could carry a part, the folder's
+                 * figure, shared as it was.
+                 */
+                $back = $mine->filter(fn ($w) => $w->vendor_returned_on);
+                $row->vendor_returned_amount = match (true) {
+                    ! WorkFileItemModel::partReversals() => $sentBack === null ? null : $sentBack[$vendorId],
+                    $back->isEmpty() => null,
+                    default => round($back->sum(fn ($w) => self::returnedPortion($w->vendor_returned_amount, $w->vendor_amount)), 2),
+                };
 
                 $row->split_item_ids = $mine->pluck('id')->map(fn ($id) => (int) $id)->all();
 
@@ -5229,6 +5414,12 @@ class WorkFileModel extends Model
             $this->vendor_id = $from['vendor_id'];
             $this->vendor_date = $from['vendor_date'];
             $this->vendor_returned_on = $from['vendor_returned_on'];
+        }
+
+        // And what came back of their rates, as the works say it: the figure
+        // is theirs now, and the folder's is the sum; see reversalFromWorks().
+        if (WorkFileItemModel::partReversals() && ! self::isOlderFolder($items)) {
+            $this->vendor_returned_amount = $this->reversalFromWorks($items);
         }
 
         // What it is now, so a return is kept; see statusFromItems().

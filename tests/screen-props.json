@@ -556,10 +556,12 @@
                     "description": "string",
                     "file_no": "string",
                     "id": "number",
+                    "key": "string",
                     "registration_no": "string",
                     "vendor": "string",
                     "vendor_amount": "number",
                     "vendor_date": "string",
+                    "vendor_id": "number",
                     "work_type": "string"
                 }
             },
