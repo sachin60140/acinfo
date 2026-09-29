@@ -504,6 +504,7 @@
                             "id": "number",
                             "screenshot_url": "null",
                             "status": "string",
+                            "vendor": "string",
                             "work_type": "string"
                         }
                     },

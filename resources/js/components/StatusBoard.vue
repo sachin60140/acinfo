@@ -92,7 +92,10 @@ const haystack = (row) => [
     row.file.file_no,
     row.file.registration_no,
     row.file.customer,
-    row.file.vendor,
+    // The work's own vendor, where the server says it: the folder's heading
+    // names every vendor on it, and "sharma tr" found the office's TR on a
+    // folder Sharma had part of.
+    row.vendor !== undefined ? row.vendor : row.file.vendor,
     row.file.status_label,
     row.file.last_remark,
     row.work_type,

@@ -2593,6 +2593,15 @@ class WorkFileController extends Controller
         $vendorId = $req->query('vendor');
         $files = WorkFileModel::forStatusBoard($filter, $workTypeId, $vendorId);
 
+        /*
+         * With a vendor chosen, or In-house, each folder is their part of it:
+         * their works as its rows, and its heading where those works stand,
+         * when they went out and who has them. The job choices stay the
+         * folder's — a return is refused for one work of several whoever is
+         * looking. See WorkFileModel::forStatusBoard().
+         */
+        $holder = WorkFileModel::holderKey($vendorId);
+
         // Fetched for the whole board in one query rather than per row.
         $lastRemarks = WorkFileModel::latestRemarks($files->pluck('id')->all());
         $pendingPapers = WorkFileModel::pendingPaperNames($files->pluck('id')->all());
@@ -2622,77 +2631,7 @@ class WorkFileController extends Controller
 
             'approvedKey' => WorkFileModel::APPROVED,
             'cancelledKey' => WorkFileModel::CANCELLED,
-            'files' => $files->map(fn ($file) => [
-                'id' => $file->id,
-                'file_no' => $file->file_no,
-                'received_date' => date('d-m-Y', strtotime($file->received_date)),
-                // When it went to the vendor, and how long it has been there.
-                'dispatched' => $file->vendor_date ? date('d-m-Y', strtotime($file->vendor_date)) : null,
-                'days_out' => WorkFileModel::daysOutText($file->vendor_date, $file->status, $file->finishedOn()),
-                'registration_no' => $file->registration_no,
-                'description' => $file->description,
-                'customer' => $file->customer?->name,
-                'vendor' => $file->vendorLabel(),
-                'customer_amount' => (float) $file->customer_amount,
-                // The folder's own state, derived from the jobs below it. Shown,
-                // never chosen: it is an answer, not a question.
-                'status' => $file->status,
-                'status_label' => WorkFileModel::STATUSES[$file->status] ?? $file->status,
-                'edit_url' => route('workfile.edit', $file->id),
-                // Where a paper still to come is marked in.
-                'papers_url' => route('workfile.papers', ['id' => $file->id, 'return_to' => route('workfile.status')]),
-                /*
-                 * Which papers are still missing, whatever the work is doing.
-                 *
-                 * The board used to read this off the status, so a file given
-                 * to a vendor on an override — which no longer sits in Paper
-                 * Pendency, because it is not on the desk any more — would have
-                 * stopped saying anything at all. It is the checklist's answer,
-                 * and it is worth having on a file that is out: it is what the
-                 * office owes the RTO.
-                 */
-                'pending_papers' => $pendingPapers[$file->id] ?? null,
-                'last_remark' => $lastRemarks[$file->id] ?? null,
-                'statuses' => WorkFileModel::jobStatusesFor($file->items->count()),
-
-                // How much of the folder is finished, since the board only
-                // lists what is left of it.
-                'works' => $file->items->count(),
-                'settled' => $file->items->filter(fn ($item) => $item->isSettled())->count(),
-
-                /*
-                 * The jobs. Each is approved on its own, days apart, with its own
-                 * evidence — which is the whole reason the board moved onto them.
-                 *
-                 * On the 'in hand' view only the work still in hand is listed. Work
-                 * that is through is done with: leaving it on the board asked the
-                 * operator to read past a finished job every time they came back to
-                 * the one that was not, on a screen whose whole purpose is what is
-                 * still outstanding. Every other tab shows the whole folder.
-                 */
-                'items' => $file->items
-                    ->filter(fn ($item) => $filter !== 'open' || ! $item->isSettled())
-                    ->map(fn ($item) => [
-                        'id' => $item->id,
-                        'work_type' => $item->workType?->name,
-                        'customer_amount' => (float) $item->customer_amount,
-                        'status' => $item->status,
-                        'has_screenshot' => (bool) $item->approval_screenshot,
-                        'screenshot_url' => $item->approval_screenshot ? route('workfile.approval', ['id' => $item->work_file_id, 'item' => $item->id]) : null,
-                        'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
-                        // The box is filled with today, which is right far more
-                        // often than it is wrong, and can be typed over.
-                        'approved_on_value' => $item->approved_on
-                            ? date('Y-m-d', strtotime($item->approved_on))
-                            : date('Y-m-d'),
-                        // What is actually stored, which the box above is not
-                        // when there is none. Posted back so the save can tell
-                        // a date changed since from one being entered now.
-                        'approved_on_iso' => $item->approved_on
-                            ? date('Y-m-d', strtotime($item->approved_on))
-                            : null,
-                    ])->values(),
-            ])->values(),
+            'files' => $files->map(fn ($file) => self::boardFile($file, $holder, $filter, $lastRemarks, $pendingPapers))->values(),
         ];
         $statuses = WorkFileModel::STATUSES;
 
@@ -2711,6 +2650,89 @@ class WorkFileController extends Controller
             // strip is assembled here rather than in the template.
             'tabs' => ['open' => 'In Hand'] + $statuses + ['all' => 'All'],
         ])->toResponse($req);
+    }
+
+    /** One folder on the status board — or, with a holder chosen, their part of it. */
+    private static function boardFile(WorkFileModel $file, ?int $holder, string $filter, $lastRemarks, $pendingPapers): array
+    {
+        $works = $holder === null ? $file->items : $file->worksHeldBy($holder);
+        $part = $file->partFor($holder);
+        $older = WorkFileModel::isOlderFolder($file->items);
+
+        return [
+            'id' => $file->id,
+            'file_no' => $file->file_no,
+            'received_date' => date('d-m-Y', strtotime($file->received_date)),
+            // When it went to the vendor, and how long it has been there.
+            'dispatched' => $part['given_on'] ? date('d-m-Y', strtotime($part['given_on'])) : null,
+            'days_out' => WorkFileModel::daysOutText($part['given_on'], $part['status'], $part['finished_on']),
+            'registration_no' => $file->registration_no,
+            'description' => $file->description,
+            'customer' => $file->customer?->name,
+            'vendor' => $part['vendor'],
+            'customer_amount' => (float) $file->customer_amount,
+            // The folder's own state, derived from the jobs below it. Shown,
+            // never chosen: it is an answer, not a question.
+            'status' => $part['status'],
+            'status_label' => WorkFileModel::STATUSES[$part['status']] ?? $part['status'],
+            'edit_url' => route('workfile.edit', $file->id),
+            // Where a paper still to come is marked in.
+            'papers_url' => route('workfile.papers', ['id' => $file->id, 'return_to' => route('workfile.status')]),
+            /*
+             * Which papers are still missing, whatever the work is doing.
+             *
+             * The board used to read this off the status, so a file given
+             * to a vendor on an override — which no longer sits in Paper
+             * Pendency, because it is not on the desk any more — would have
+             * stopped saying anything at all. It is the checklist's answer,
+             * and it is worth having on a file that is out: it is what the
+             * office owes the RTO.
+             */
+            'pending_papers' => $pendingPapers[$file->id] ?? null,
+            'last_remark' => $lastRemarks[$file->id] ?? null,
+            'statuses' => WorkFileModel::jobStatusesFor($file->items->count()),
+
+            // How much of the folder is finished — of their part of it,
+            // with a holder chosen — since the board only lists what is left.
+            'works' => $works->count(),
+            'settled' => $works->filter(fn ($item) => $item->isSettled())->count(),
+
+            /*
+             * The jobs. Each is approved on its own, days apart, with its own
+             * evidence — which is the whole reason the board moved onto them.
+             *
+             * On the 'in hand' view only the work still in hand is listed. Work
+             * that is through is done with: leaving it on the board asked the
+             * operator to read past a finished job every time they came back to
+             * the one that was not, on a screen whose whole purpose is what is
+             * still outstanding. Every other tab shows the whole folder.
+             */
+            'items' => $works
+                ->filter(fn ($item) => $filter !== 'open' || ! $item->isSettled())
+                ->map(fn ($item) => [
+                    'id' => $item->id,
+                    'work_type' => $item->workType?->name,
+                    // Whose it is, so a search for a vendor finds their
+                    // work and not the office's beside it on the folder.
+                    'vendor' => $item->vendor?->name ?? ($older ? $file->vendor?->name : null),
+                    'customer_amount' => (float) $item->customer_amount,
+                    'status' => $item->status,
+                    'has_screenshot' => (bool) $item->approval_screenshot,
+                    'screenshot_url' => $item->approval_screenshot ? route('workfile.approval', ['id' => $item->work_file_id, 'item' => $item->id]) : null,
+                    'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
+                    // The box is filled with today, which is right far more
+                    // often than it is wrong, and can be typed over.
+                    'approved_on_value' => $item->approved_on
+                        ? date('Y-m-d', strtotime($item->approved_on))
+                        : date('Y-m-d'),
+                    // What is actually stored, which the box above is not
+                    // when there is none. Posted back so the save can tell
+                    // a date changed since from one being entered now.
+                    'approved_on_iso' => $item->approved_on
+                        ? date('Y-m-d', strtotime($item->approved_on))
+                        : null,
+                ])->values(),
+        ];
     }
 
     public function edit(Request $req, $id)
