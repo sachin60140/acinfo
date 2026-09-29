@@ -1142,6 +1142,10 @@ class ReportTest extends TestCase
         WorkFileModel::vendorCounts('all');
         WorkFileModel::workTypeCounts('all');
         WorkFileModel::statusCounts();
+        // And the board with a holder chosen: counted by parts.
+        WorkFileModel::workTypeCounts('open', WorkFileModel::IN_HOUSE);
+        WorkFileModel::statusCounts(null, WorkFileModel::IN_HOUSE);
+        WorkFileModel::forStatusBoard('open', null, WorkFileModel::IN_HOUSE);
         WorkFileModel::summary();
         // The dashboard's Money by month chart, grouped by month.
         WorkFileModel::monthlyMoney(12);
