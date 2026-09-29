@@ -1917,7 +1917,9 @@ class WorkFileController extends Controller
                 'remark.required' => 'Taking a file back changes the vendor\'s balance, so it needs a reason.',
             ]);
 
-            $amounts = $req->input('amounts', []);
+            // An array, whatever came: a hand-made post with an empty value
+            // arrives as null (found in review).
+            $amounts = (array) ($req->input('amounts') ?? []);
             $picks = self::takeBackPicks($req->input('files'));
 
             /*
@@ -1930,13 +1932,26 @@ class WorkFileController extends Controller
 
             foreach (WorkFileModel::withVendor(array_keys($picks)) as $file) {
                 $held = $file->heldByVendor();
+                $taking = self::takingFrom($picks[$file->id], $held);
 
-                foreach (self::takingFrom($picks[$file->id], $held) as $vendorId => $works) {
+                /*
+                 * Before the migration has run, a part is kept on the folder,
+                 * and a folder not back yet keeps none: typed for one vendor
+                 * while another still has work on it, it would be dropped, and
+                 * all of theirs reversed (found in review). Refused, rather.
+                 */
+                $partKept = WorkFileItemModel::partReversals()
+                    || WorkFileModel::isOlderFolder($file->items)
+                    || ! array_diff_key($held, $taking);
+
+                foreach ($taking as $vendorId => $works) {
                     $typed = self::typedReversal($amounts, $file->id, $vendorId, count($held));
                     $name = $file->file_no.' ('.(self::holderName($file, $vendorId, $works) ?? 'its vendor').')';
 
                     if ($typed === false) {
                         $refused[] = $name.' — tick each vendor\'s row';
+                    } elseif ($typed !== null && ! $partKept) {
+                        $refused[] = $name.' — a part can be typed here once the update is finished; leave it blank to reverse all of it';
                     } elseif ($typed !== null && (float) $typed > (float) $file->bookedFor($vendorId, $works)) {
                         $refused[] = $name;
                     }
@@ -2007,9 +2022,11 @@ class WorkFileController extends Controller
                             foreach (WorkFileModel::reversalOnWorks($works, $typed) as $workId => $part) {
                                 $works->firstWhere('id', $workId)->forceFill(['vendor_returned_amount' => $part])->save();
                             }
-                        } else {
+                        } elseif (! WorkFileItemModel::partReversals() || $booked > 0) {
                             // A rate agreed on the folder alone, or works that
                             // cannot carry a part yet: on the folder, as before.
+                            // Never "all of it" for work nobody priced, though:
+                            // the office's own rate is not theirs to take back.
                             $file->vendor_returned_amount = WorkFileModel::partOrAll($typed, $booked);
                         }
 
@@ -2037,7 +2054,7 @@ class WorkFileController extends Controller
             }
 
             return redirect()->route('workfile.index')
-                ->with('success', count($returned).' taken back from '.Str::plural('vendor', count($returned)).': '.implode(', ', $returned));
+                ->with('success', 'Taken back: '.implode(', ', $returned));
         }
 
         $files = WorkFileModel::withVendor();
@@ -2068,7 +2085,9 @@ class WorkFileController extends Controller
             'returnedOnDisplay' => $returnedOnDisplay,
             'remark' => old('remark', ''),
             // A bounced batch comes back ticked and filled in as it was sent.
-            'pickedIds' => array_map('strval', (array) old('files', [])),
+            // Only what a row could have posted: a hand-made nested value
+            // would not survive being read as text (found in review).
+            'pickedIds' => array_values(array_map('strval', array_filter((array) old('files', []), 'is_scalar'))),
             'oldAmounts' => (object) (array) old('amounts', []),
             'files' => $rows,
         ];

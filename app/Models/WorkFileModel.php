@@ -2142,7 +2142,7 @@ class WorkFileModel extends Model
             }
 
             $vendor = (int) $item->vendor_id;
-            $shares[$vendor] ??= ['amount' => 0.0, 'date' => null, 'works' => [], 'all' => false, 'returned_on' => null, 'reversed' => 0.0, 'all_back' => false];
+            $shares[$vendor] ??= ['amount' => 0.0, 'date' => null, 'works' => [], 'all' => false, 'returned_on' => null, 'reversed' => 0.0, 'all_back' => false, 'back_works' => []];
 
             $shares[$vendor]['amount'] += (float) $item->vendor_amount;
             $shares[$vendor]['works'][] = $item->workType?->name ?? 'work';
@@ -2162,6 +2162,7 @@ class WorkFileModel extends Model
                     WorkFileItemModel::partReversals() ? $item->vendor_returned_amount : null,
                     $item->vendor_amount
                 );
+                $shares[$vendor]['back_works'][] = $item->workType?->name ?? 'work';
             }
         }
 
@@ -2172,6 +2173,7 @@ class WorkFileModel extends Model
             $shares[$vendor]['works'] = array_values(array_unique($share['works']));
             $shares[$vendor]['all_back'] = $theirs->every(fn ($item) => (bool) $item->vendor_returned_on);
             $shares[$vendor]['reversed'] = round($share['reversed'], 2);
+            $shares[$vendor]['back_works'] = array_values(array_unique($share['back_works']));
         }
 
         return $shares;
@@ -2288,7 +2290,10 @@ class WorkFileModel extends Model
                     $lines['vendor_return'][$vendor] = [
                         'amount' => $reversed,
                         'date' => $share['returned_on'],
-                        'says' => $says.' - returned by vendor',
+                        // Naming the works that came back, where some of
+                        // theirs has not: found in review, a statement read
+                        // as though work they still had was handed back.
+                        'says' => ($share['all_back'] ? $says : $this->vendorParticular($share['back_works'])).' - returned by vendor',
                     ];
                 }
             }
@@ -2423,7 +2428,19 @@ class WorkFileModel extends Model
         $reversed = round($back->sum(fn ($work) => self::returnedPortion($work->vendor_returned_amount, $work->vendor_amount)), 2);
 
         if ($this->vendor_returned_on) {
-            if ($back->sum(fn ($work) => (float) $work->vendor_amount) <= 0) {
+            /*
+             * Only where the rate lives on the folder alone: one vendor has
+             * every live work and none of them carries a rate. Found in review:
+             * a vendor handing back work nobody had priced took the rate typed
+             * on the office's own work back with it — the folder read all of
+             * its rate reversed, and a file that cost 800 cost nothing.
+             */
+            $live = collect($items ?? $this->items()->get())->reject(fn ($work) => $work->status === self::CANCELLED);
+            $folderRate = $live->isNotEmpty()
+                && $live->every(fn ($work) => $work->vendor_id && (int) $work->vendor_id === (int) $live->first()->vendor_id)
+                && $live->sum(fn ($work) => (float) $work->vendor_amount) <= 0;
+
+            if ($folderRate) {
                 return $this->vendor_returned_amount === null ? null : (float) $this->vendor_returned_amount;
             }
 
@@ -2692,9 +2709,11 @@ class WorkFileModel extends Model
 
     /**
      * Whether the file is still waiting on a vendor's rate, as SQL: the
-     * folder names a vendor and has no figure, or a work given to one has none.
+     * folder names a vendor and has no figure — and is not back from them —
+     * or a work given to one has none.
      */
     public const VENDOR_UNPRICED = "((work_file.vendor_id IS NOT NULL
+            AND work_file.vendor_returned_on IS NULL
             AND (work_file.vendor_amount IS NULL OR work_file.vendor_amount <= 0))
         OR EXISTS (SELECT 1 FROM work_file_item AS vrs WHERE ".self::VENDOR_WORK_UNPRICED."))";
 
@@ -5169,7 +5188,10 @@ class WorkFileModel extends Model
          * asked for a rate, and a folder split between two vendors, naming
          * neither, still is for the one it lacks.
          */
-        $unpriced = (($row->vendor_id ?? null) !== null && (float) ($row->vendor_amount ?? 0) <= 0)
+        // Not once it is back from its vendor: nothing was agreed for work
+        // handed back, and nothing will be (found in review, 2026-09-29).
+        $unpriced = (($row->vendor_id ?? null) !== null && ($row->vendor_returned_on ?? null) === null
+                && (float) ($row->vendor_amount ?? 0) <= 0)
             || (int) ($row->unpriced_works ?? 0) > 0;
 
         return $unbilled || $unpriced;

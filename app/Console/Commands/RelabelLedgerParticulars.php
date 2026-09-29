@@ -36,6 +36,7 @@ class RelabelLedgerParticulars extends Command
         WorkFileModel::with('items.workType')->chunkById(100, function ($files) use (&$changes) {
             foreach ($files as $file) {
                 $wanted = $file->ledgerParticular();
+                $lines = null;
 
                 /*
                  * The two return entries carry a suffix saying which way the
@@ -62,7 +63,13 @@ class RelabelLedgerParticulars extends Command
                         ? $file->vendorParticularFor((int) $entry->party_id)
                         : $wanted;
 
-                    $should = $base.($suffixes[$entry->file_role] ?? '');
+                    // Exactly as syncVendors() writes it, where the file still
+                    // calls for the line: a reversal names the works that came
+                    // back, where some of theirs has not.
+                    $lines ??= in_array($entry->file_role, ['vendor', 'vendor_return'], true) ? $file->vendorLines() : null;
+
+                    $should = $lines[$entry->file_role][(int) $entry->party_id]['says']
+                        ?? $base.($suffixes[$entry->file_role] ?? '');
 
                     if ($entry->particular === $should) {
                         continue;

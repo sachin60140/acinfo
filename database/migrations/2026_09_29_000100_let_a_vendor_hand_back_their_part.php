@@ -42,16 +42,26 @@ return new class extends Migration
             ->get(['id', 'vendor_returned_amount']);
 
         foreach ($folders as $folder) {
+            /*
+             * Cancelled works too: a folder cancelled whole keeps its figure
+             * frozen, and un-cancelled it must come back as the part agreed,
+             * not all of it (found in review).
+             */
             $back = DB::table('work_file_item')
                 ->where('work_file_id', $folder->id)
-                ->where('status', '<>', 'cancelled')
                 ->whereNotNull('vendor_id')
                 ->whereNotNull('vendor_returned_on')
-                ->whereNull('vendor_returned_amount')
                 ->orderByRaw("CASE WHEN status = 'approval_done' THEN 1 ELSE 0 END")
                 ->orderBy('id')
-                ->get(['id', 'vendor_id', 'vendor_amount']);
+                ->get(['id', 'vendor_id', 'vendor_amount', 'vendor_returned_amount']);
 
+            /*
+             * Shared again from the folder's own figure, over every work that
+             * came back, whatever a run before wrote on them — and each folder
+             * in one go. Found in review: a run cut off part-way through a
+             * folder and run again gave the whole part a second time to the
+             * works it had not reached. Or not one vendor's to carry.
+             */
             if ($back->isEmpty() || $back->pluck('vendor_id')->unique()->count() > 1) {
                 continue;
             }
@@ -63,14 +73,16 @@ return new class extends Migration
                 continue;
             }
 
-            foreach ($back as $work) {
-                $rate = max(0.0, (float) $work->vendor_amount);
-                $take = round(min($left, $rate), 2);
-                $left = round($left - $take, 2);
+            DB::transaction(function () use ($back, $left) {
+                foreach ($back as $work) {
+                    $rate = max(0.0, (float) $work->vendor_amount);
+                    $take = round(min($left, $rate), 2);
+                    $left = round($left - $take, 2);
 
-                DB::table('work_file_item')->where('id', $work->id)
-                    ->update(['vendor_returned_amount' => abs($take - $rate) < 0.005 ? null : $take]);
-            }
+                    DB::table('work_file_item')->where('id', $work->id)
+                        ->update(['vendor_returned_amount' => abs($take - $rate) < 0.005 ? null : $take]);
+                }
+            });
         }
     }
 

@@ -441,7 +441,223 @@ class TakeBackPerVendorTest extends TestCase
         Artisan::call('files:resync-vendors');
         $this->assertMatchesRegularExpression('/'.preg_quote($file->file_no, '/').'.*rates back 999\.00 → 400\.00/', Artisan::output());
 
+        // The audit names it too.
+        Artisan::call('files:audit');
+        $this->assertMatchesRegularExpression('/'.preg_quote($file->file_no, '/').'.*says 999\.00 of its vendors\' rates came back but its works say 400\.00/', Artisan::output());
+
         Artisan::call('files:resync-vendors', ['--write' => true]);
         $this->assertEquals(400, $file->fresh()->vendor_returned_amount);
+    }
+
+    protected function tearDown(): void
+    {
+        WorkFileItemModel::assumePartReversals(null);
+
+        parent::tearDown();
+    }
+
+    // ------------------------------------------------------ found in review
+
+    /**
+     * Their work handed back before anyone priced it: nothing of theirs is
+     * reversed, and the rate typed on the office's own work stays the file's
+     * cost. It read "all of it" reversed, the office's 800 with it.
+     */
+    public function test_an_unpriced_hand_back_leaves_the_offices_rate_a_cost(): void
+    {
+        $file = $this->folder([
+            [$this->hpt, 2000, $this->sharma, null],
+            [$this->tr, 3000, null, 800],
+        ]);
+
+        $this->takeBack([$this->key($file, $this->sharma)])->assertRedirect(route('workfile.index'));
+
+        $this->assertEqualsWithDelta(800, $this->spent($file), 0.005);
+        $this->assertEqualsWithDelta(4200, $file->fresh()->margin(), 0.005);
+
+        $plate = collect($this->actingAs($this->admin)
+            ->getJson(route('report.expenses', ['vehicle' => $file->registration_no]))->assertOk()->json('props.rows'))
+            ->where('file_id', $file->id);
+
+        $this->assertEqualsWithDelta($this->spent($file), $plate->sum('amount'), 0.005);
+    }
+
+    /** Handed back unpriced, it waits on no rate: not on its own, nor beside another vendor's. */
+    public function test_work_handed_back_unpriced_is_not_awaiting_a_price(): void
+    {
+        $whole = $this->folder([[$this->hpt, 2000, $this->sharma, null]]);
+        $split = $this->folder([
+            [$this->hpt, 2000, $this->sharma, null],
+            [$this->tr, 3000, $this->shailendra, 1500],
+        ]);
+
+        $before = WorkFileModel::pendingCounts()['vendor'];
+
+        $this->takeBack([$this->key($whole, $this->sharma), $this->key($split, $this->sharma)]);
+
+        $this->assertSame($before - 2, WorkFileModel::pendingCounts()['vendor']);
+
+        foreach ([$whole, $split] as $file) {
+            $this->assertFalse(WorkFileModel::query()->whereKey($file->id)->whereRaw(WorkFileModel::OUTSTANDING)->exists());
+        }
+
+        $rows = collect($this->actingAs($this->admin)
+            ->getJson(route('report.files', ['party_type' => 'vendor']))->assertOk()->json('props.rows'));
+
+        $this->assertNotNull($rows->where('id', $whole->id)->firstWhere('party_id', $this->sharma->id)['margin']);
+        $this->assertNotNull($rows->where('id', $split->id)->firstWhere('party_id', $this->sharma->id)['margin']);
+    }
+
+    /**
+     * Before the migration has run, a part is kept on the folder, and a
+     * folder not back keeps none: typed for one vendor while another still has
+     * work, it was dropped and all of theirs reversed. Refused, rather — and a
+     * folder that comes back whole takes a part as it always did.
+     */
+    public function test_before_the_migration_a_part_is_refused_where_it_would_be_lost(): void
+    {
+        WorkFileItemModel::assumePartReversals(false);
+
+        $split = $this->split();
+
+        $this->takeBack([$this->key($split, $this->sharma)], [$this->key($split, $this->sharma) => 400])
+            ->assertSessionHas('error', fn ($said) => str_contains($said, 'once the update is finished'));
+        $this->assertSame([], $this->lines($split, 'vendor_return'));
+
+        $whole = $this->folder([[$this->hpt, 2000, $this->sharma, 1000]]);
+
+        $this->takeBack([$this->key($whole, $this->sharma)], [$this->key($whole, $this->sharma) => 400])
+            ->assertRedirect(route('workfile.index'));
+
+        $this->assertEquals(400, $whole->fresh()->vendor_returned_amount);
+        $this->assertSame([$this->sharma->id => 400.0], $this->lines($whole, 'vendor_return'));
+    }
+
+    /** A stale page posting a vendor already back moves nothing — not the other vendor's work. */
+    public function test_a_stale_page_moves_nothing_the_second_time(): void
+    {
+        $file = $this->split();
+        $this->takeBack([$this->key($file, $this->sharma)]);
+
+        $this->takeBack([$this->key($file, $this->sharma)], [], '2026-09-20')->assertSessionHas('error');
+
+        $this->assertSame([$this->sharma->id => 1000.0], $this->lines($file, 'vendor_return'));
+        $this->assertSame('2026-09-10', (string) $file->items()->where('work_type_id', $this->hpt->id)->value('vendor_returned_on'));
+        $this->assertSame(WorkFileModel::DISPATCHED, $this->workStatus($file, $this->tr));
+    }
+
+    /**
+     * One work of theirs back and another given to them since: the list offers
+     * the one they have, their statement reverses the one that came back —
+     * and says which.
+     */
+    public function test_one_work_back_and_another_still_out_with_them(): void
+    {
+        $file = $this->folder([
+            [$this->hpt, 2000, $this->sharma, 1000],
+            [$this->tr, 3000, null, null],
+        ]);
+        $this->takeBack([$this->key($file, $this->sharma)]);
+
+        $file->items()->where('work_type_id', $this->tr->id)->update([
+            'vendor_id' => $this->sharma->id, 'vendor_amount' => 500, 'vendor_date' => '2026-09-12',
+            'status' => WorkFileModel::DISPATCHED,
+        ]);
+        $file->load('items');
+        $file->rollUp();
+        $file->save();
+        $file->syncLedger();
+
+        $row = $this->listed($file)->sole();
+        $this->assertSame($this->key($file, $this->sharma), $row['key']);
+        $this->assertSame($this->tr->name, $row['work_type']);
+        $this->assertEquals(500, $row['vendor_amount']);
+
+        $this->assertSame([$this->sharma->id => 1500.0], $this->lines($file, 'vendor'));
+        $this->assertSame([$this->sharma->id => 1000.0], $this->lines($file, 'vendor_return'));
+
+        $says = PartyLedgerModel::where('work_file_id', $file->id)->where('file_role', 'vendor_return')->value('particular');
+        $this->assertStringContainsString($this->hpt->name, $says);
+        $this->assertStringNotContainsString($this->tr->name, $says, 'the work they still have read as handed back');
+
+        $this->assertEqualsWithDelta(500, $this->spent($file), 0.005);
+    }
+
+    /** On a split folder, each vendor's Expenses page carries their own hand-back only. */
+    public function test_the_expenses_report_splits_a_hand_back_by_vendor(): void
+    {
+        $file = $this->split();
+        $this->takeBack([$this->key($file, $this->sharma)], [$this->key($file, $this->sharma) => 400]);
+
+        $for = fn (PartyModel $vendor) => collect($this->actingAs($this->admin)
+            ->getJson(route('report.expenses', ['vendor_id' => $vendor->id]))->assertOk()->json('props.rows'))
+            ->where('file_id', $file->id);
+
+        $this->assertEqualsWithDelta(600, $for($this->sharma)->sum('amount'), 0.005);
+        $this->assertCount(0, $for($this->shailendra)->where('amount', '<', 0));
+
+        $plate = collect($this->actingAs($this->admin)
+            ->getJson(route('report.expenses', ['vehicle' => $file->registration_no]))->assertOk()->json('props.rows'))
+            ->where('file_id', $file->id);
+        $this->assertEqualsWithDelta($this->spent($file), $plate->sum('amount'), 0.005);
+    }
+
+    /** A folder cancelled at deploy keeps its part, carried down with its works. */
+    public function test_the_migration_carries_a_cancelled_folders_part_and_runs_twice_safely(): void
+    {
+        $file = $this->folder([[$this->hpt, 2000, $this->sharma, 1000], [$this->tr, 3000, $this->sharma, 500]]);
+        $file->items()->update(['vendor_returned_on' => '2026-09-10', 'status' => WorkFileModel::CANCELLED]);
+        DB::table('work_file')->where('id', $file->id)->update([
+            'status' => WorkFileModel::CANCELLED, 'vendor_returned_on' => '2026-09-10', 'vendor_returned_amount' => 600,
+        ]);
+
+        // As a run cut off part-way through it would have left it: 50 on one.
+        $file->items()->where('work_type_id', $this->hpt->id)->update(['vendor_returned_amount' => 50]);
+
+        $migration = require database_path('migrations/2026_09_29_000100_let_a_vendor_hand_back_their_part.php');
+        $migration->up();
+        $migration->up();
+
+        $parts = $file->items()->pluck('vendor_returned_amount', 'work_type_id');
+
+        // The HPT's 1000 takes all 600, the TR none: shared once, whole.
+        $this->assertEquals(600, $parts[$this->hpt->id]);
+        $this->assertEquals(0, $parts[$this->tr->id]);
+    }
+
+    /** A hand-made post: an empty amounts, or a nested tick, is refused or read — never a crash. */
+    public function test_odd_posts_do_not_crash_the_screen(): void
+    {
+        $file = $this->partlyGiven();
+
+        $this->actingAs($this->admin)->post(route('workfile.vendorreturn'), [
+            'returned_on' => '2026-09-10', 'files' => [$this->key($file, $this->sharma)], 'amounts' => '', 'remark' => 'Odd',
+        ])->assertRedirect(route('workfile.index'));
+
+        $other = $this->partlyGiven();
+
+        $this->actingAs($this->admin)->from(route('workfile.vendorreturn'))->post(route('workfile.vendorreturn'), [
+            'returned_on' => '2026-09-10', 'files' => [['1']], 'remark' => 'Odd',
+        ])->assertRedirect(route('workfile.vendorreturn'));
+
+        $this->actingAs($this->admin)->get(route('workfile.vendorreturn'))->assertOk();
+        $this->assertCount(1, $this->listed($other));
+    }
+
+    /** A batch refused comes back with its rows ticked and its figures typed, by row. */
+    public function test_a_refused_batch_comes_back_ticked_by_row(): void
+    {
+        $file = $this->partlyGiven();
+        $key = $this->key($file, $this->sharma);
+
+        $this->actingAs($this->admin)->from(route('workfile.vendorreturn'))
+            ->post(route('workfile.vendorreturn'), [
+                'returned_on' => '2026-09-10', 'files' => [$key], 'amounts' => [$key => 5000], 'remark' => 'Too much',
+            ])->assertRedirect(route('workfile.vendorreturn'));
+
+        $props = $this->actingAs($this->admin)->getJson(route('workfile.vendorreturn'))->assertOk()->json('props');
+
+        $this->assertContains($key, $props['pickedIds']);
+        $this->assertEquals(5000, $props['oldAmounts'][$key]);
     }
 }

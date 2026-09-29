@@ -130,8 +130,18 @@ class WorkFileItemModel extends Model
      */
     public static function partReversals(): bool
     {
-        static $known = null;
+        return self::$partReversals ??= Schema::hasColumn('work_file_item', 'vendor_returned_amount');
+    }
 
-        return $known ??= Schema::hasColumn('work_file_item', 'vendor_returned_amount');
+    private static ?bool $partReversals = null;
+
+    /**
+     * For the tests: behave as though the migration has or has not run, or
+     * (null) ask the database again. The path between a pull and a migrate
+     * is the one a deploy here always takes, so it is tested.
+     */
+    public static function assumePartReversals(?bool $known): void
+    {
+        self::$partReversals = $known;
     }
 }

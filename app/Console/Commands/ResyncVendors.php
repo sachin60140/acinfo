@@ -216,7 +216,9 @@ class ResyncVendors extends Command
      */
     public static function reversalDrift(WorkFileModel $file): ?array
     {
-        if (! WorkFileItemModel::partReversals() || WorkFileModel::isOlderFolder($file->items)) {
+        // A cancelled folder's figure is frozen until it is un-cancelled,
+        // when roll-up works it out again from the works.
+        if (! WorkFileItemModel::partReversals() || WorkFileModel::isOlderFolder($file->items) || $file->isCancelled()) {
             return null;
         }
 
