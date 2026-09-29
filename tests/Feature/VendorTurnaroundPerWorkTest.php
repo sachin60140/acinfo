@@ -242,6 +242,26 @@ class VendorTurnaroundPerWorkTest extends TestCase
         $this->assertSame(9, $row['average_days'], 'timed to the office\'s approval of the work they handed back');
     }
 
+    /**
+     * And from the first work they finished, not the first they were given:
+     * the HPT they handed back undone is no time of theirs (found in review).
+     */
+    public function test_they_took_from_the_first_work_they_finished(): void
+    {
+        $file = $this->folder([
+            [$this->hpt, $this->sharma, 30],
+            [$this->tr, $this->sharma, 10, WorkFileModel::APPROVED, 4],
+        ]);
+        $file->items()->where('work_type_id', $this->hpt->id)
+            ->update(['vendor_returned_on' => $this->daysAgo(25), 'status' => WorkFileModel::APPROVED, 'approved_on' => $this->daysAgo(3)]);
+
+        $row = $this->row($this->sharma);
+
+        $this->assertSame(1, $row['finished']);
+        $this->assertSame(6, $row['average_days'], 'counted from the work they handed back');
+        $this->assertSame(6, $row['slowest']);
+    }
+
     /** Their one given work cancelled: in their files, and nowhere else. */
     public function test_a_cancelled_given_work_is_in_their_files_only(): void
     {
