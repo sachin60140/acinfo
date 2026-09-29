@@ -2764,9 +2764,12 @@ class WorkFileModel extends Model
             return self::profitByWorkType($from, $to);
         }
 
+        if ($group === 'vendor') {
+            return self::profitByVendor($from, $to);
+        }
+
         [$key, $label, $order] = match ($group) {
             'year' => ["DATE_FORMAT(work_file.received_date, '%Y')", "DATE_FORMAT(work_file.received_date, '%Y')", 'group_key desc'],
-            'vendor' => ['COALESCE(vendor.id, 0)', "COALESCE(vendor.name, 'In-house')", 'billed desc'],
             'customer' => ['customer.id', 'customer.name', 'billed desc'],
             default => ["DATE_FORMAT(work_file.received_date, '%Y-%m')", "DATE_FORMAT(work_file.received_date, '%b %Y')", 'group_key desc'],
         };
@@ -2788,10 +2791,6 @@ class WorkFileModel extends Model
             ->selectRaw('CASE WHEN '.self::OUTSTANDING.' THEN 0 ELSE '.self::EARNED.' - ('.self::SPENT.') END as margin')
             ->selectRaw('CASE WHEN '.self::OUTSTANDING.' THEN 1 ELSE 0 END as unpriced');
 
-        if ($group === 'vendor') {
-            $each->leftJoin('party as vendor', 'vendor.id', '=', 'work_file.vendor_id');
-        }
-
         if ($group === 'customer') {
             $each->join('party as customer', 'customer.id', '=', 'work_file.customer_id');
         }
@@ -2811,6 +2810,228 @@ class WorkFileModel extends Model
             ->get();
 
         return self::withGivenUp($rows, $from, $to, $group);
+    }
+
+    /**
+     * A folder whose live works more than one holder has — two vendors, or a
+     * vendor and the office — as SQL, for a WHERE. The office, work given to
+     * nobody, counts as one holder; an older folder, whose works carry no
+     * vendor, is the folder's vendor's alone.
+     */
+    private const SHARED_HOLDERS = "(SELECT COUNT(DISTINCT COALESCE(sh.vendor_id, 0))
+        FROM work_file_item AS sh
+        WHERE sh.work_file_id = work_file.id AND sh.status <> 'cancelled') > 1";
+
+    /**
+     * Who has all of a folder that is not shared, as SQL: the folder's own
+     * vendor on an older folder, or on one struck off whole — who had it —
+     * and otherwise the one vendor on its live works, or nobody (In-house).
+     */
+    private const SOLE_HOLDER = 'CASE
+        WHEN '.self::OLDER_FOLDER.' THEN work_file.vendor_id
+        WHEN NOT EXISTS (SELECT 1 FROM work_file_item AS hs
+            WHERE hs.work_file_id = work_file.id AND hs.status <> \'cancelled\') THEN work_file.vendor_id
+        ELSE (SELECT MAX(hl.vendor_id) FROM work_file_item AS hl
+            WHERE hl.work_file_id = work_file.id AND hl.status <> \'cancelled\')
+        END';
+
+    /**
+     * The vendor cut: each vendor's own works, and the office's under
+     * In-house.
+     *
+     * Asked for by the owner on 2026-09-28, with the rule that anything
+     * vendor-wise counts only the works given to that vendor. Grouped by the
+     * folder's own vendor, a folder a vendor held part of put its whole charge,
+     * cost and margin under them — the office's work with it — and a folder
+     * split between two vendors, which names neither, went under In-house.
+     *
+     * A folder one holder has all of is worked out in SQL, as every other cut
+     * is. A shared one is taken apart in PHP, holder by holder, by the same
+     * arithmetic the vendor-wise Work Report draws its rows with — see
+     * holderRows() — so a vendor's line here is the sum of their rows there.
+     * What a folder's parts do not come to of its own figures, if its works
+     * and its totals have drifted apart, goes under In-house: every cut of a
+     * period still accounts for the same billed and cost.
+     *
+     * Each holder's margin is kept out only while their own works wait on a
+     * price, as the owner chose: a vendor's priced work shows its margin
+     * beside the office's unpriced part.
+     *
+     * @return \Illuminate\Support\Collection<int, object>
+     */
+    private static function profitByVendor(?string $from, ?string $to)
+    {
+        // Ungrouped, each folder alone: the correlated tests sit where
+        // MariaDB allows them. Then named, then grouped over plain columns.
+        $each = DB::table('work_file')
+            ->whereRaw('NOT ('.self::SHARED_HOLDERS.')')
+            ->selectRaw(self::SOLE_HOLDER.' as holder_id')
+            ->selectRaw(self::EARNED.' as billed')
+            ->selectRaw(self::SPENT.' as cost')
+            ->selectRaw('CASE WHEN '.self::OUTSTANDING.' THEN 0 ELSE '.self::EARNED.' - ('.self::SPENT.') END as margin')
+            ->selectRaw('CASE WHEN '.self::OUTSTANDING.' THEN 1 ELSE 0 END as unpriced');
+
+        self::betweenDates($each, $from, $to);
+
+        $named = DB::query()
+            ->fromSub($each, 'each_file')
+            ->leftJoin('party as vendor', 'vendor.id', '=', 'each_file.holder_id')
+            ->selectRaw('COALESCE(vendor.id, 0) as group_key')
+            ->selectRaw("COALESCE(vendor.name, 'In-house') as group_label")
+            ->addSelect('each_file.billed', 'each_file.cost', 'each_file.margin', 'each_file.unpriced');
+
+        $rows = DB::query()
+            ->fromSub($named, 'each_holder')
+            ->select('group_key', 'group_label')
+            ->selectRaw('COUNT(*) as files')
+            ->selectRaw('COALESCE(SUM(billed), 0) as billed')
+            ->selectRaw('COALESCE(SUM(cost), 0) as cost')
+            ->selectRaw('COALESCE(SUM(margin), 0) as margin')
+            ->selectRaw('COALESCE(SUM(unpriced), 0) as unpriced')
+            ->groupBy('group_key', 'group_label')
+            ->get()
+            ->keyBy(fn ($row) => (int) $row->group_key);
+
+        foreach (self::sharedProfit($from, $to) as $key => $part) {
+            $row = $rows->get($key) ?? (object) ['group_key' => $key, 'group_label' => null,
+                'files' => 0, 'billed' => 0, 'cost' => 0, 'margin' => 0, 'unpriced' => 0];
+
+            foreach (['files', 'billed', 'cost', 'margin', 'unpriced'] as $figure) {
+                $row->$figure = round((float) $row->$figure + $part[$figure], 2);
+            }
+
+            $rows->put($key, $row);
+        }
+
+        // Vendors who appear only on shared folders, named in one go.
+        $unnamed = $rows->filter(fn ($row) => $row->group_label === null)->keys()->filter()->all();
+        $names = $unnamed ? DB::table('party')->whereIn('id', $unnamed)->pluck('name', 'id') : collect();
+
+        $rows = $rows->map(function ($row) use ($names) {
+            $row->group_label ??= (int) $row->group_key === 0 ? 'In-house' : ($names[(int) $row->group_key] ?? 'Unknown vendor');
+            $row->files = (int) $row->files;
+            $row->unpriced = (int) $row->unpriced;
+
+            return $row;
+        });
+
+        return self::withGivenUp($rows->sortByDesc(fn ($row) => (float) $row->billed)->values(), $from, $to, 'vendor');
+    }
+
+    /**
+     * The folders a period's vendor cut takes apart, holder by holder: each
+     * holder's billed, cost, margin, and whether its own works wait on a
+     * price, keyed by vendor id and 0 for the office.
+     *
+     * @return array<int, array{files: int, billed: float, cost: float, margin: float, unpriced: int}>
+     */
+    private static function sharedProfit(?string $from, ?string $to): array
+    {
+        $query = DB::table('work_file')
+            ->whereRaw(self::SHARED_HOLDERS)
+            ->select(
+                'work_file.id', 'work_file.status', 'work_file.customer_amount', 'work_file.returned_amount',
+                'work_file.vendor_id', 'work_file.vendor_amount', 'work_file.vendor_date',
+                'work_file.vendor_returned_on', 'work_file.vendor_returned_amount'
+            )
+            ->selectRaw(self::FINISHED_ON.' as finished_on')
+            ->selectRaw(self::PAID_OUT.' as expenses')
+            ->selectRaw(self::EARNED.' as earned')
+            ->selectRaw(self::SPENT.' as spent');
+
+        self::betweenDates($query, $from, $to);
+
+        $folders = $query->get();
+
+        if ($folders->isEmpty()) {
+            return [];
+        }
+
+        $works = self::liveWorks($folders->pluck('id')->all());
+        $out = [];
+
+        $add = function (int $key, array $figures) use (&$out) {
+            $out[$key] ??= ['files' => 0, 'billed' => 0.0, 'cost' => 0.0, 'margin' => 0.0, 'unpriced' => 0];
+
+            foreach ($figures as $figure => $amount) {
+                $out[$key][$figure] += $amount;
+            }
+        };
+
+        foreach ($folders as $folder) {
+            $billed = 0.0;
+            $cost = 0.0;
+
+            foreach (self::holderRows($folder, $works[$folder->id] ?? collect(), true) as $holder => $part) {
+                $totals = self::rowTotals($part);
+
+                $add($holder === 'office' ? 0 : (int) $holder, [
+                    'files' => 1,
+                    'billed' => $totals['billed'],
+                    'cost' => $totals['cost'],
+                    'margin' => $totals['margin'] ?? 0.0,
+                    'unpriced' => $totals['margin'] === null ? 1 : 0,
+                ]);
+
+                $billed += $totals['billed'];
+                $cost += $totals['cost'];
+            }
+
+            // What the parts do not come to of the folder's own figures.
+            $left = ['billed' => round((float) $folder->earned - $billed, 2), 'cost' => round((float) $folder->spent - $cost, 2)];
+
+            if (abs($left['billed']) >= 0.005 || abs($left['cost']) >= 0.005) {
+                $add(0, $left + ['margin' => $left['billed'] - $left['cost']]);
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * The live works of some folders, as the vendor-wise report and the
+     * vendor cut read them: charge, rate, vendor, dates, standing and what
+     * came back of the rate.
+     *
+     * @param  array<int, int>  $folderIds
+     * @return \Illuminate\Support\Collection<int, \Illuminate\Support\Collection>
+     */
+    private static function liveWorks(array $folderIds)
+    {
+        return DB::table('work_file_item as i')
+            ->join('work_type as t', 't.id', '=', 'i.work_type_id')
+            ->leftJoin('party as v', 'v.id', '=', 'i.vendor_id')
+            ->whereIn('i.work_file_id', $folderIds)
+            ->where('i.status', '<>', self::CANCELLED)
+            ->orderBy('i.id')
+            ->get([
+                'i.id', 'i.work_file_id', 'i.vendor_id', 'i.customer_amount', 'i.vendor_amount',
+                'i.vendor_date', 'i.vendor_returned_on', 'i.status', 'i.approved_on',
+                WorkFileItemModel::partReversals() ? 'i.vendor_returned_amount' : DB::raw('NULL as vendor_returned_amount'),
+                't.name as work', 'v.name as vendor_name', 'v.mobile as vendor_mobile', 'v.whatsapp as vendor_whatsapp',
+            ])
+            ->groupBy('work_file_id');
+    }
+
+    /**
+     * A period's files, and how many wait on a price: counted once each, for
+     * the vendor cut's heading, whose rows count a shared folder under each
+     * holder of it.
+     *
+     * @return array{files: int, unpriced: int}
+     */
+    public static function profitFiles(?string $from, ?string $to): array
+    {
+        $each = DB::table('work_file')->selectRaw('CASE WHEN '.self::OUTSTANDING.' THEN 1 ELSE 0 END as unpriced');
+
+        self::betweenDates($each, $from, $to);
+
+        $count = DB::query()->fromSub($each, 'each_file')
+            ->selectRaw('COUNT(*) as files')
+            ->selectRaw('COALESCE(SUM(unpriced), 0) as unpriced')
+            ->first();
+
+        return ['files' => (int) $count->files, 'unpriced' => (int) $count->unpriced];
     }
 
     /**
@@ -2930,6 +3151,21 @@ class WorkFileModel extends Model
                 WHERE vrs.id = work_file_item.id AND ".self::VENDOR_WORK_UNPRICED."))";
 
         /*
+         * What a work cost: its rate, less what came back of it when its
+         * vendor handed it back — each work's own, as SPENT adds them up for
+         * the folder. Found on 2026-09-29: the rate was counted whole, and a
+         * work handed back cost here what it cost nowhere else. Before the
+         * works could carry a part, all of it.
+         */
+        $reversed = WorkFileItemModel::partReversals()
+            ? 'COALESCE(work_file_item.vendor_returned_amount, work_file_item.vendor_amount, 0)'
+            : 'COALESCE(work_file_item.vendor_amount, 0)';
+        $cost = "COALESCE(work_file_item.vendor_amount, 0) - CASE
+            WHEN work_file_item.vendor_id IS NOT NULL AND work_file_item.vendor_returned_on IS NOT NULL
+                THEN LEAST($reversed, COALESCE(work_file_item.vendor_amount, 0))
+            ELSE 0 END";
+
+        /*
          * Every work worked out on its own, before anything is grouped — as
          * profitBy() does each file, for the same reason: the outstanding test
          * is a correlated subquery, which MariaDB refuses inside an aggregate
@@ -2943,9 +3179,9 @@ class WorkFileModel extends Model
             ->selectRaw('work_type.id as group_key')
             ->selectRaw('work_type.name as group_label')
             ->selectRaw('COALESCE(work_file_item.customer_amount, 0) as billed')
-            ->selectRaw('COALESCE(work_file_item.vendor_amount, 0) as cost')
+            ->selectRaw("$cost as cost")
             ->selectRaw("CASE WHEN $outstanding THEN 0
-                ELSE work_file_item.customer_amount - COALESCE(work_file_item.vendor_amount, 0) END as margin")
+                ELSE work_file_item.customer_amount - ($cost) END as margin")
             ->selectRaw("CASE WHEN $outstanding THEN 1 ELSE 0 END as unpriced");
 
         self::betweenDates($each, $from, $to);
@@ -4965,135 +5201,169 @@ class WorkFileModel extends Model
             return collect();
         }
 
-        $works = DB::table('work_file_item as i')
-            ->join('work_type as t', 't.id', '=', 'i.work_type_id')
-            ->leftJoin('party as v', 'v.id', '=', 'i.vendor_id')
-            ->whereIn('i.work_file_id', $folders->pluck('id')->all())
-            ->where('i.status', '<>', self::CANCELLED)
-            ->orderBy('i.id')
-            ->get([
-                'i.id', 'i.work_file_id', 'i.vendor_id', 'i.customer_amount', 'i.vendor_amount',
-                'i.vendor_date', 'i.vendor_returned_on', 'i.status', 'i.approved_on',
-                WorkFileItemModel::partReversals() ? 'i.vendor_returned_amount' : DB::raw('NULL as vendor_returned_amount'),
-                't.name as work', 'v.name as vendor_name', 'v.mobile as vendor_mobile', 'v.whatsapp as vendor_whatsapp',
-            ])
-            ->groupBy('work_file_id');
+        $works = self::liveWorks($folders->pluck('id')->all());
 
         $out = collect();
 
         foreach ($folders as $folder) {
-            $live = $works[$folder->id] ?? collect();
-            $byVendor = $live->filter(fn ($w) => $w->vendor_id)->groupBy('vendor_id');
-            $office = $live->reject(fn ($w) => $w->vendor_id);
+            foreach (self::holderRows($folder, $works[$folder->id] ?? collect()) as $vendorId => $row) {
+                if (! $onlyVendor || (int) $vendorId === (int) $onlyVendor) {
+                    $out->push($row);
+                }
+            }
+        }
 
-            if ($byVendor->isEmpty()) {
+        return $out;
+    }
+
+    /**
+     * A folder's parts, one per holder: each vendor with live works on it,
+     * and — asked for — the office, for the live works given to nobody.
+     *
+     * Each part is the folder narrowed to that holder's works, in the shape a
+     * report row has, so rowTotals() reads it as it reads a whole folder:
+     * their charge and rates, their dates and standing, their share of the
+     * office's expenses and of a refund, what came back of their rates. The
+     * vendor-wise Work Report draws the vendors' parts; the Profit report's
+     * vendor cut adds up every holder's, the office's under In-house — one
+     * arithmetic, so the two cannot disagree about a vendor.
+     *
+     * @param  object  $folder  a row of report()'s select, or one with the same money columns
+     * @param  \Illuminate\Support\Collection  $live  the folder's live works, as splitByVendor() reads them
+     * @return array<int|string, object> vendor id => part, and 'office' => part when asked
+     */
+    private static function holderRows(object $folder, $live, bool $withOffice = false): array
+    {
+        $byVendor = $live->filter(fn ($w) => $w->vendor_id)->groupBy('vendor_id');
+        $office = $live->reject(fn ($w) => $w->vendor_id);
+
+        if ($byVendor->isEmpty() && ! $withOffice) {
+            return [];
+        }
+
+        /*
+         * Each vendor's weight is what the customer is charged for their
+         * works; the office's, for the works it kept — or, while nothing
+         * is charged yet, how many works each holds. The office is weighed
+         * first, so the rounding falls to a vendor. Found in review: last,
+         * a kept work charged nothing took a share of -0.01, and the
+         * vendors' shares came to a paisa more than was spent.
+         */
+        $holdings = ($office->isEmpty() ? [] : ['office' => $office]) + $byVendor->all();
+
+        if (! $holdings) {
+            return [];
+        }
+
+        $weights = array_map(fn ($some) => $some->sum(fn ($w) => (float) $w->customer_amount), $holdings);
+
+        if (array_sum($weights) <= 0) {
+            $weights = array_map(fn ($some) => $some->count(), $holdings);
+        }
+
+        $vendors = array_diff_key($weights, ['office' => true]);
+
+        $expenses = self::apportion((float) ($folder->expenses ?? 0), $weights);
+        $refund = $folder->returned_amount === null ? null : self::apportion((float) $folder->returned_amount, $weights);
+        $sentBack = ($folder->vendor_returned_amount === null || ! $vendors) ? null : self::apportion((float) $folder->vendor_returned_amount, $vendors);
+
+        $out = [];
+
+        foreach ($holdings as $holder => $mine) {
+            if ($holder === 'office' && ! $withOffice) {
                 continue;
             }
 
-            /*
-             * Each vendor's weight is what the customer is charged for their
-             * works; the office's, for the works it kept — or, while nothing
-             * is charged yet, how many works each holds. The office is weighed
-             * first, so the rounding falls to a vendor. Found in review: last,
-             * a kept work charged nothing took a share of -0.01, and the
-             * vendors' shares came to a paisa more than was spent.
-             */
-            $holdings = ($office->isEmpty() ? [] : ['office' => $office]) + $byVendor->all();
-            $weights = array_map(fn ($some) => $some->sum(fn ($w) => (float) $w->customer_amount), $holdings);
+            $first = $mine->first();
+            $priced = $mine->filter(fn ($w) => $w->vendor_amount !== null);
 
-            if (array_sum($weights) <= 0) {
-                $weights = array_map(fn ($some) => $some->count(), $holdings);
-            }
+            $row = clone $folder;
 
-            $vendors = array_diff_key($weights, ['office' => true]);
-
-            $expenses = self::apportion((float) ($folder->expenses ?? 0), $weights);
-            $refund = $folder->returned_amount === null ? null : self::apportion((float) $folder->returned_amount, $weights);
-            $sentBack = $folder->vendor_returned_amount === null ? null : self::apportion((float) $folder->vendor_returned_amount, $vendors);
-
-            foreach ($byVendor as $vendorId => $mine) {
-                if ($onlyVendor && (int) $vendorId !== (int) $onlyVendor) {
-                    continue;
-                }
-
-                $first = $mine->first();
-                $priced = $mine->filter(fn ($w) => $w->vendor_amount !== null);
-
-                $row = clone $folder;
-
-                $row->vendor_id = (int) $vendorId;
+            if ($holder === 'office') {
+                // Work nobody was given: no vendor, nothing handed back, and no
+                // vendor's rate to wait on — a rate typed on it is the office's cost.
+                $row->vendor_id = null;
+                $row->vendor_name = null;
+                $row->party_id = 0;
+                $row->party_name = 'In-house';
+                $row->party_mobile = null;
+            } else {
+                $row->vendor_id = (int) $holder;
                 $row->vendor_name = $first->vendor_name;
-                $row->party_id = (int) $vendorId;
+                $row->party_id = (int) $holder;
                 $row->party_name = $first->vendor_name;
                 // As the query above says it for every other folder.
                 $row->party_mobile = $first->vendor_whatsapp ?: $first->vendor_mobile;
-
-                $row->customer_amount = round($mine->sum(fn ($w) => (float) $w->customer_amount), 2);
-                $row->vendor_amount = $priced->isEmpty() ? null : round($priced->sum(fn ($w) => (float) $w->vendor_amount), 2);
-
-                // Out since the first of these went; back once all of them are.
-                $row->vendor_date = $mine->pluck('vendor_date')->filter()->min();
-                $row->vendor_returned_on = $mine->contains(fn ($w) => ! $w->vendor_returned_on)
-                    ? null
-                    : $mine->pluck('vendor_returned_on')->filter()->max();
-
-                $row->work_type = $mine->pluck('work')->filter()->implode(', ');
-
-                /*
-                 * Where these works stand, and the day they were through —
-                 * which the days under the dispatch date count to, on the
-                 * screen and on the list the vendor is sent. The folder's
-                 * status is passed so a returned folder stays returned; a
-                 * return is always of the whole folder, so its day is the
-                 * folder's.
-                 */
-                $row->status = self::statusFromItems($mine, $folder->status);
-
-                /*
-                 * Returned only while the folder is: the refund is recorded
-                 * on the folder, and cleared from it the moment it is not.
-                 * Found in review: a folder returned, then one of its works
-                 * brought back, left the vendor's works reading returned —
-                 * billed nothing, against a refund the ledger no longer
-                 * holds. Such a row reads as the folder does, as it did.
-                 */
-                if ($row->status === self::RETURNED && $folder->status !== self::RETURNED) {
-                    $row->status = $folder->status;
-                }
-
-                $row->finished_on = match ($row->status) {
-                    self::APPROVED => $mine->pluck('approved_on')->filter()->max(),
-                    self::RETURNED => $folder->finished_on,
-                    default => null,
-                };
-
-                // So awaitingPrice() asks about these works, not the whole
-                // folder's — and not one handed back, which will never have a rate.
-                $row->unpriced_works = $mine->filter(fn ($w) => ! $w->vendor_returned_on
-                    && ($w->vendor_amount === null || (float) $w->vendor_amount <= 0))->count();
-                $row->unbilled_works = $mine->filter(fn ($w) => $w->customer_amount === null || (float) $w->customer_amount <= 0)->count();
-
-                $row->expenses = $expenses[$vendorId];
-                $row->returned_amount = $refund === null ? null : $refund[$vendorId];
-
-                /*
-                 * What came back of their rates, from their own works: found
-                 * in review, a part typed for one vendor was shared by charge
-                 * over both, and the other's cost dropped for work they still
-                 * had. Before the works could carry a part, the folder's
-                 * figure, shared as it was.
-                 */
-                $back = $mine->filter(fn ($w) => $w->vendor_returned_on);
-                $row->vendor_returned_amount = match (true) {
-                    ! WorkFileItemModel::partReversals() => $sentBack === null ? null : $sentBack[$vendorId],
-                    $back->isEmpty() => null,
-                    default => round($back->sum(fn ($w) => self::returnedPortion($w->vendor_returned_amount, $w->vendor_amount)), 2),
-                };
-
-                $row->split_item_ids = $mine->pluck('id')->map(fn ($id) => (int) $id)->all();
-
-                $out->push($row);
             }
+
+            $row->customer_amount = round($mine->sum(fn ($w) => (float) $w->customer_amount), 2);
+            $row->vendor_amount = $priced->isEmpty() ? null : round($priced->sum(fn ($w) => (float) $w->vendor_amount), 2);
+
+            // Out since the first of these went; back once all of them are.
+            $row->vendor_date = $mine->pluck('vendor_date')->filter()->min();
+            $row->vendor_returned_on = $mine->contains(fn ($w) => ! $w->vendor_returned_on)
+                ? null
+                : $mine->pluck('vendor_returned_on')->filter()->max();
+
+            $row->work_type = $mine->pluck('work')->filter()->implode(', ');
+
+            /*
+             * Where these works stand, and the day they were through —
+             * which the days under the dispatch date count to, on the
+             * screen and on the list the vendor is sent. The folder's
+             * status is passed so a returned folder stays returned; a
+             * return is always of the whole folder, so its day is the
+             * folder's.
+             */
+            $row->status = self::statusFromItems($mine, $folder->status);
+
+            /*
+             * Returned only while the folder is: the refund is recorded
+             * on the folder, and cleared from it the moment it is not.
+             * Found in review: a folder returned, then one of its works
+             * brought back, left the vendor's works reading returned —
+             * billed nothing, against a refund the ledger no longer
+             * holds. Such a row reads as the folder does, as it did.
+             */
+            if ($row->status === self::RETURNED && $folder->status !== self::RETURNED) {
+                $row->status = $folder->status;
+            }
+
+            $row->finished_on = match ($row->status) {
+                self::APPROVED => $mine->pluck('approved_on')->filter()->max(),
+                self::RETURNED => $folder->finished_on,
+                default => null,
+            };
+
+            // So awaitingPrice() asks about these works, not the whole
+            // folder's — and not one handed back, which will never have a
+            // rate, nor one nobody was given, which has none to agree.
+            $row->unpriced_works = $holder === 'office' ? 0 : $mine->filter(fn ($w) => ! $w->vendor_returned_on
+                && ($w->vendor_amount === null || (float) $w->vendor_amount <= 0))->count();
+            $row->unbilled_works = $mine->filter(fn ($w) => $w->customer_amount === null || (float) $w->customer_amount <= 0)->count();
+
+            $row->expenses = $expenses[$holder];
+            $row->returned_amount = $refund === null ? null : $refund[$holder];
+
+            /*
+             * What came back of their rates, from their own works: found
+             * in review, a part typed for one vendor was shared by charge
+             * over both, and the other's cost dropped for work they still
+             * had. Before the works could carry a part, the folder's
+             * figure, shared as it was. The office's own rates are never
+             * handed back.
+             */
+            $back = $mine->filter(fn ($w) => $w->vendor_id && $w->vendor_returned_on);
+            $row->vendor_returned_amount = match (true) {
+                $holder === 'office' => null,
+                ! WorkFileItemModel::partReversals() => $sentBack === null ? null : $sentBack[$holder],
+                $back->isEmpty() => null,
+                default => round($back->sum(fn ($w) => self::returnedPortion($w->vendor_returned_amount, $w->vendor_amount)), 2),
+            };
+
+            $row->split_item_ids = $mine->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+            $out[$holder] = $row;
         }
 
         return $out;
