@@ -325,6 +325,8 @@ describe('searching for a vendor on a folder shared with the office', () => {
         id: 3,
         file_no: 'F-00077',
         vendor: 'Sharma + in-house',
+        // What Give to Vendor writes: it names the vendor on the folder's history.
+        last_remark: 'HPT given to Sharma',
         items: [
             { ...FILES[1].items[0], id: 31, work_type: 'HPT', vendor: 'Sharma' },
             { ...FILES[1].items[1], id: 32, work_type: 'TR', vendor: null },
@@ -338,6 +340,6 @@ describe('searching for a vendor on a folder shared with the office', () => {
         expect(host.querySelector('.board__search .ui-hint').textContent.trim()).toBe('1 of 2 works.');
 
         await search(host, 'sharma tr');
-        expect(host.querySelector('.board__search .ui-hint').textContent.trim()).not.toBe('1 of 2 works.');
+        expect(host.querySelector('.board__search .ui-hint').textContent.trim()).toBe('Nothing here matches that.');
     });
 });

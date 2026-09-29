@@ -1626,7 +1626,7 @@ class WorkFileModel extends Model
         }
 
         $mine = $this->worksHeldBy($holder);
-        $status = self::holderStatus($mine, $this->status);
+        $status = self::boardStatus($mine, $this->status);
 
         return [
             'status' => $status,
@@ -3892,17 +3892,21 @@ class WorkFileModel extends Model
      * folder, the folder's — and 0 for nobody. Ungrouped: grouped over, it is
      * MariaDB-safe, having nothing correlated in it.
      */
-    private static function worksByHolder()
+    private static function worksByHolder(bool $openFolders = false)
     {
         return DB::table('work_file_item as i')
             ->join('work_file', 'work_file.id', '=', 'i.work_file_id')
+            // A part can only stand open on a folder that is open: asked of an
+            // open tab — In Hand, the board's default — the rest is not read
+            // (found in review: every work ever entered was grouped, every load).
+            ->when($openFolders, fn ($q) => $q->whereIn('work_file.status', self::OPEN_STATUSES))
             ->leftJoinSub(self::everGiven(), 'given', 'given.work_file_id', '=', 'i.work_file_id')
             ->select('i.id', 'i.work_file_id', 'i.work_type_id', 'i.status', 'work_file.status as folder_status')
             ->selectRaw('COALESCE(i.vendor_id, CASE WHEN given.work_file_id IS NULL THEN work_file.vendor_id END, 0) AS holder');
     }
 
-    /** holderStatus(), as SQL over a holder's works (as $h, grouped). */
-    private static function holderStatusSql(string $h): string
+    /** boardStatus(), as SQL over a holder's works (as $h, grouped). */
+    private static function boardStatusSql(string $h): string
     {
         $open = "'".implode("','", self::OPEN_STATUSES)."'";
         [$approved, $partly, $cancelled, $returned] = [self::APPROVED, self::PARTLY_APPROVED, self::CANCELLED, self::RETURNED];
@@ -3912,8 +3916,7 @@ class WorkFileModel extends Model
                 CASE WHEN SUM($h.status = '$approved') > 0 THEN '$partly'
                      ELSE ELT(MIN(NULLIF(FIELD($h.status, $open), 0)), $open) END
             WHEN SUM($h.status <> '$cancelled') = 0 THEN '$cancelled'
-            WHEN $h.folder_status = '$returned' AND SUM($h.status NOT IN ('$returned', '$cancelled')) = 0 THEN '$returned'
-            WHEN SUM($h.status <> '$returned') = 0 THEN $h.folder_status
+            WHEN SUM($h.status NOT IN ('$returned', '$cancelled')) = 0 THEN '$returned'
             ELSE '$approved' END";
     }
 
@@ -3921,12 +3924,12 @@ class WorkFileModel extends Model
      * Each folder's parts, one per holder, standing where that holder's
      * works stand — narrowed to parts with a work of one type when asked.
      */
-    private static function holdings($workTypeId = null)
+    private static function holdings($workTypeId = null, ?string $filter = null)
     {
-        $parts = DB::query()->fromSub(self::worksByHolder(), 'h')
+        $parts = DB::query()->fromSub(self::worksByHolder(self::isOpenTab($filter)), 'h')
             ->select('h.work_file_id', 'h.holder')
-            ->selectRaw(self::holderStatusSql('h').' AS status')
-            ->groupBy('h.work_file_id', 'h.holder', 'h.folder_status');
+            ->selectRaw(self::boardStatusSql('h').' AS status')
+            ->groupBy('h.work_file_id', 'h.holder');
 
         if ($workTypeId) {
             $parts->havingRaw('SUM(h.work_type_id = ?) > 0', [(int) $workTypeId]);
@@ -3935,10 +3938,16 @@ class WorkFileModel extends Model
         return $parts;
     }
 
+    /** Whether a tab shows only work still in hand: In Hand, or one of its stages. */
+    private static function isOpenTab(?string $filter): bool
+    {
+        return $filter === 'open' || in_array($filter, self::OPEN_STATUSES, true);
+    }
+
     /** One holder's parts under a tab. */
     private static function heldBy(int $holder, string $filter, $workTypeId = null)
     {
-        $query = DB::query()->fromSub(self::holdings($workTypeId), 'p')->where('p.holder', $holder);
+        $query = DB::query()->fromSub(self::holdings($workTypeId, $filter), 'p')->where('p.holder', $holder);
 
         self::applyStatusFilter($query, $filter, 'p.status');
 
@@ -3972,7 +3981,7 @@ class WorkFileModel extends Model
      */
     public static function vendorCounts(string $filter, $workTypeId = null)
     {
-        $query = DB::query()->fromSub(self::holdings($workTypeId), 'p')
+        $query = DB::query()->fromSub(self::holdings($workTypeId, $filter), 'p')
             ->leftJoin('party as vendor', 'vendor.id', '=', 'p.holder');
 
         self::applyStatusFilter($query, $filter, 'p.status');
@@ -4055,7 +4064,7 @@ class WorkFileModel extends Model
          * board shows them under this tab.
          */
         if ($holder !== null) {
-            return DB::query()->fromSub(self::worksByHolder(), 'w')
+            return DB::query()->fromSub(self::worksByHolder(self::isOpenTab($filter)), 'w')
                 ->joinSub(self::heldBy($holder, $filter)->select('p.work_file_id', 'p.holder'), 'p',
                     fn ($join) => $join->on('p.work_file_id', '=', 'w.work_file_id')->on('p.holder', '=', 'w.holder'))
                 ->join('work_type', 'work_type.id', '=', 'w.work_type_id')
@@ -5649,6 +5658,22 @@ class WorkFileModel extends Model
         $status = self::statusFromItems(collect($works), $folderStatus);
 
         return $status === self::RETURNED && $folderStatus !== self::RETURNED ? $folderStatus : $status;
+    }
+
+    /**
+     * Where one holder's works stand, as the status board shows them: what the
+     * works say — a part all of whose standing works went back to the customer
+     * reads Returned, whatever the folder does since.
+     *
+     * Not holderStatus(), whose "as the folder does" keeps a report from
+     * billing a refund the ledger no longer holds. Found in review: on the
+     * board, a vendor's returned work on a folder partly brought back read as
+     * In Office — counted under In Hand, where the board then had no row of
+     * theirs to show. The board's own mirror is boardStatusSql().
+     */
+    public static function boardStatus($works, string $folderStatus): string
+    {
+        return self::statusFromItems(collect($works), self::RETURNED);
     }
 
     /**

@@ -257,6 +257,110 @@ class BoardByHolderTest extends TestCase
         $this->assertNotNull($this->onBoard($file, ['vendor' => WorkFileModel::IN_HOUSE, 'status' => 'open']));
     }
 
+    // ------------------------------------------------------------ found in review
+
+    /**
+     * A folder returned to its customer, then the office's work brought back:
+     * the vendor's part is still with the customer — Returned, not In Hand,
+     * where the board had no row of theirs to show.
+     */
+    public function test_a_vendors_returned_part_on_a_folder_brought_back_reads_returned(): void
+    {
+        $file = $this->partlyGiven();
+        $file->items()->update(['status' => WorkFileModel::RETURNED]);
+        $file->status = WorkFileModel::RETURNED;
+        $file->returned_on = '2026-09-15';
+        $file->save();
+        $file->items()->where('work_type_id', $this->tr->id)->update(['status' => WorkFileModel::IN_OFFICE]);
+        $file->load('items');
+        $file->rollUp();
+        $file->save();
+
+        $this->assertSame(WorkFileModel::IN_OFFICE, $file->fresh()->status);
+
+        $mine = ['vendor' => $this->sharma->id];
+        $this->assertNull($this->onBoard($file, $mine + ['status' => 'open']), 'In Hand, with no row of theirs');
+        $this->assertSame(WorkFileModel::RETURNED, $this->onBoard($file, $mine + ['status' => WorkFileModel::RETURNED])['status']);
+
+        $counts = WorkFileModel::statusCounts(null, (string) $this->sharma->id);
+        $listed = WorkFileModel::forStatusBoard('open', null, (string) $this->sharma->id)->count();
+        $this->assertSame($listed, $counts['open'], 'the tab promises what the board then shows');
+    }
+
+    /**
+     * The tab a part is counted under is the one it shows under: the SQL that
+     * counts and the PHP that badges agree, for every mix of where its works
+     * stand, beside the office's work.
+     */
+    public function test_the_counted_tab_is_the_shown_tab_for_every_mix(): void
+    {
+        $stages = [
+            WorkFileModel::IN_OFFICE, 'paper_pendency', WorkFileModel::DISPATCHED, 'under_verification',
+            WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED,
+        ];
+
+        foreach ($stages as $one) {
+            foreach ($stages as $two) {
+                $file = $this->folder([
+                    [$this->hpt, $this->sharma, 1000, '2026-09-05', $one, $one === WorkFileModel::APPROVED ? '2026-09-10' : null],
+                    [$this->tr, $this->sharma, 900, '2026-09-06', $two, $two === WorkFileModel::APPROVED ? '2026-09-11' : null],
+                    [$this->hpt, null, null],
+                ]);
+
+                $shown = $file->load('items.vendor', 'vendor')->partFor($this->sharma->id)['status'];
+
+                $this->assertTrue(
+                    WorkFileModel::forStatusBoard($shown, null, (string) $this->sharma->id)->contains('id', $file->id),
+                    "[$one, $two] shows as $shown and is not counted under it"
+                );
+            }
+        }
+    }
+
+    /** Each vendor's own day out, and their own finish, on the heading. */
+    public function test_each_part_is_dated_from_its_own_works(): void
+    {
+        $split = $this->folder([[$this->hpt, $this->sharma, 1000, '2026-09-02'], [$this->tr, $this->shailendra, 1500, '2026-09-08']]);
+
+        $this->assertSame('02-09-2026', $this->onBoard($split, ['vendor' => $this->sharma->id, 'status' => 'all'])['dispatched']);
+        $this->assertSame('08-09-2026', $this->onBoard($split, ['vendor' => $this->shailendra->id, 'status' => 'all'])['dispatched']);
+
+        // Sharma's part approved on a folder still at work: through, and how long it took.
+        $partly = $this->folder([
+            [$this->hpt, $this->sharma, 1000, '2026-09-05', WorkFileModel::APPROVED, '2026-09-10'],
+            [$this->tr, null, 800],
+        ]);
+
+        $this->assertSame('took 5 days', $this->onBoard($partly, ['vendor' => $this->sharma->id, 'status' => WorkFileModel::APPROVED])['days_out']);
+    }
+
+    /** The chips and the types under In Hand, and under one stage, count what the board lists. */
+    public function test_the_chips_and_types_count_what_the_board_lists_under_each_tab(): void
+    {
+        $this->folder([
+            [$this->hpt, $this->sharma, 1000, '2026-09-05', WorkFileModel::APPROVED, '2026-09-10'],
+            [$this->tr, null, 800],
+        ]);
+        $this->partlyGiven();
+
+        foreach (['open', WorkFileModel::DISPATCHED, WorkFileModel::APPROVED] as $tab) {
+            foreach ([(string) $this->sharma->id, WorkFileModel::IN_HOUSE] as $who) {
+                $holder = WorkFileModel::holderKey($who);
+                $chip = collect(WorkFileModel::vendorCounts($tab))->firstWhere('id', $holder);
+
+                $this->assertSame(WorkFileModel::forStatusBoard($tab, null, $who)->count(), (int) ($chip->total ?? 0), "chip $who on $tab");
+
+                foreach (WorkFileModel::workTypeCounts($tab, $who) as $type) {
+                    $this->assertSame(
+                        WorkFileModel::forStatusBoard($tab, $type->id, $who)->count(),
+                        (int) $type->total,
+                        "type {$type->id} for $who on $tab"
+                    );
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------ the rate hints
 
     public function test_a_rate_the_office_kept_is_not_offered_as_paid_to_a_vendor(): void
@@ -278,6 +382,21 @@ class BoardByHolderTest extends TestCase
         $this->assertSame($this->shailendra->name, $rate->vendor);
         $this->assertEquals(1500, $rate->amount);
         $this->assertSame('2026-09-08', substr((string) $rate->vendor_date, 0, 10));
+    }
+
+    /** An older folder's rate is its vendor's, on the folder's day; and the newest work first. */
+    public function test_an_older_folders_rate_and_the_newest_first(): void
+    {
+        $older = $this->folder([[$this->hpt, null, 700]], 'BR81RH'.random_int(1000, 9999));
+        DB::table('work_file')->where('id', $older->id)->update(['vendor_id' => $this->shailendra->id, 'vendor_date' => '2026-09-20']);
+
+        // A later folder, given out earlier.
+        $this->folder([[$this->hpt, $this->sharma, 900, '2026-09-01']], 'BR81RH'.random_int(1000, 9999));
+
+        $rates = WorkFileModel::recentVendorRates([[$this->hpt->id, 'BR81']])[0]['rates'];
+
+        $this->assertSame([$this->shailendra->name, $this->sharma->name], array_column($rates, 'vendor'));
+        $this->assertSame('2026-09-20', substr((string) $rates[0]->vendor_date, 0, 10));
     }
 
     public function test_a_cancelled_works_rate_is_not_offered(): void
