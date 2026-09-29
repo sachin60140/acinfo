@@ -66,11 +66,18 @@ class ReportController extends Controller
             'unpriced' => (int) $rows->sum('unpriced'),
         ];
 
-        // A folder shared between holders is a file under each of them, so
-        // the vendor cut's rows add up to more files than there are: the
-        // heading counts each once, as every other cut does.
+        /*
+         * A folder shared between holders is a file under each of them, so
+         * the vendor cut's rows add up to more files than there are: the
+         * heading counts each once, as every other cut does. Its margin is
+         * each holder's part, kept out only while that part waits on a price
+         * (as the owner chose), so what it covers is said in parts. Found in
+         * review: said in files, it read "on 0 of 1 files" over a margin that
+         * had a vendor's priced part in it.
+         */
         if ($group === 'vendor') {
-            $totals = array_merge($totals, WorkFileModel::profitFiles($from, $to));
+            $totals['parts'] = $totals['files'];
+            $totals['files'] = WorkFileModel::profitFiles($from, $to)['files'];
         }
 
         $periodText = ($from || $to)

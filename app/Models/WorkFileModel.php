@@ -3157,13 +3157,23 @@ class WorkFileModel extends Model
          * work handed back cost here what it cost nowhere else. Before the
          * works could carry a part, all of it.
          */
-        $reversed = WorkFileItemModel::partReversals()
-            ? 'COALESCE(work_file_item.vendor_returned_amount, work_file_item.vendor_amount, 0)'
+        /*
+         * On an older folder the hand-back is the folder's: its figure is
+         * shared over its works by their rates (found in review). Before the
+         * works could carry a part, as before: the rate whole.
+         */
+        $cost = WorkFileItemModel::partReversals()
+            ? "COALESCE(work_file_item.vendor_amount, 0) - CASE
+                WHEN work_file_item.vendor_id IS NOT NULL AND work_file_item.vendor_returned_on IS NOT NULL
+                    THEN LEAST(COALESCE(work_file_item.vendor_returned_amount, work_file_item.vendor_amount, 0),
+                               COALESCE(work_file_item.vendor_amount, 0))
+                WHEN work_file_item.vendor_id IS NULL AND work_file.vendor_returned_on IS NOT NULL
+                    AND work_file.vendor_amount > 0 AND ".self::OLDER_FOLDER."
+                    THEN ROUND(COALESCE(work_file_item.vendor_amount, 0)
+                        * LEAST(COALESCE(work_file.vendor_returned_amount, work_file.vendor_amount), work_file.vendor_amount)
+                        / work_file.vendor_amount, 2)
+                ELSE 0 END"
             : 'COALESCE(work_file_item.vendor_amount, 0)';
-        $cost = "COALESCE(work_file_item.vendor_amount, 0) - CASE
-            WHEN work_file_item.vendor_id IS NOT NULL AND work_file_item.vendor_returned_on IS NOT NULL
-                THEN LEAST($reversed, COALESCE(work_file_item.vendor_amount, 0))
-            ELSE 0 END";
 
         /*
          * Every work worked out on its own, before anything is grouped — as

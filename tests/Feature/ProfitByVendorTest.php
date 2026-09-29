@@ -338,4 +338,84 @@ class ProfitByVendorTest extends TestCase
         $month = WorkFileModel::profitBy('month', ...self::PERIOD)->firstWhere('group_key', '2031-03');
         $this->assertEqualsWithDelta($month->cost, $rows[$this->hpt->id]->cost + $rows[$this->tr->id]->cost, 0.005);
     }
+
+    /** An older folder's hand-back is the folder's, shared over its works by rate: all of it. */
+    public function test_the_work_type_cut_takes_off_an_older_folders_hand_back(): void
+    {
+        [$cost, $month] = $this->olderHandedBack(null);
+
+        $this->assertEqualsWithDelta(0, $cost, 0.005, 'the rate counted whole');
+        $this->assertEqualsWithDelta($month, $cost, 0.005);
+    }
+
+    /** And a part of it. */
+    public function test_the_work_type_cut_takes_off_an_older_folders_part(): void
+    {
+        [$cost, $month] = $this->olderHandedBack(400);
+
+        $this->assertEqualsWithDelta(800, $cost, 0.005);
+        $this->assertEqualsWithDelta($month, $cost, 0.005);
+    }
+
+    /** @return array{0: float, 1: float} the Work Type cut's cost of it, and the month's */
+    private function olderHandedBack(?float $typed): array
+    {
+        $file = $this->folder([[$this->tr, 3000, null, 1200]]);
+        $file->vendor_id = $this->sharma->id;
+        $file->vendor_date = '2031-03-02';
+        $file->save();
+
+        $this->actingAs($this->admin)->post(route('workfile.vendorreturn'), [
+            'returned_on' => '2031-03-10',
+            'files' => [$file->id.':'.$this->sharma->id],
+            'amounts' => $typed ? [$file->id.':'.$this->sharma->id => $typed] : [],
+            'remark' => 'Could not do it',
+        ])->assertRedirect(route('workfile.index'));
+
+        return [
+            (float) WorkFileModel::profitBy('work_type', ...self::PERIOD)->firstWhere('group_key', $this->tr->id)->cost,
+            (float) WorkFileModel::profitBy('month', ...self::PERIOD)->firstWhere('group_key', '2031-03')->cost,
+        ];
+    }
+
+    /**
+     * The vendor tab's margin is each holder's part, so the note beside it
+     * counts parts. Found in review: in files, it read "on 0 of 1 files" over
+     * a margin that had the vendor's priced part in it.
+     */
+    public function test_the_heading_says_the_margin_covers_parts(): void
+    {
+        $this->folder([
+            [$this->hpt, 2000, $this->sharma, 1250],
+            [$this->tr, 0, null, null],
+        ]);
+
+        $query = ['group' => 'vendor', 'from' => self::PERIOD[0], 'to' => self::PERIOD[1]];
+
+        $totals = $this->actingAs($this->admin)->getJson(route('report.profit', $query))->assertOk()->json('page.totals');
+
+        $this->assertSame(1, $totals['files']);
+        $this->assertSame(2, $totals['parts']);
+        $this->assertSame(1, $totals['unpriced']);
+        $this->assertEquals(750, $totals['margin']);
+
+        $this->actingAs($this->admin)->get(route('report.profit', $query))
+            ->assertOk()->assertSee('on 1 of 2 parts', false);
+    }
+
+    /** A vendor found only on shared folders is named, and sorted by what they billed. */
+    public function test_a_vendor_only_on_shared_folders_is_named_and_sorted(): void
+    {
+        $this->folder([[$this->hpt, 1000, $this->sharma, 500]]);
+        $this->folder([[$this->hpt, 2000, $this->sharma, 900], [$this->tr, 9000, $this->shailendra, 4000]]);
+
+        $rows = WorkFileModel::profitBy('vendor', ...self::PERIOD)->values();
+
+        $this->assertSame($this->shailendra->name, $rows->firstWhere('group_key', $this->shailendra->id)->group_label);
+        $this->assertSame($this->sharma->name, $rows->firstWhere('group_key', $this->sharma->id)->group_label);
+
+        // Shailendra's 9000 on top, above Sharma's 3000.
+        $order = $rows->pluck('group_key')->map(fn ($key) => (int) $key)->all();
+        $this->assertLessThan(array_search($this->sharma->id, $order), array_search($this->shailendra->id, $order));
+    }
 }

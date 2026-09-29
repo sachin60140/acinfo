@@ -119,7 +119,10 @@
                             because a total that quietly covers fewer files than
                             the two beside it reads as the whole answer.
                         --}}
-                        @if ($totals['unpriced'])
+                        @if ($totals['unpriced'] && isset($totals['parts']))
+                            {{-- The vendor cut: a file shared between holders is a part under each. --}}
+                            <span class="stat-note">on {{ $totals['parts'] - $totals['unpriced'] }} of {{ $totals['parts'] }} {{ Str::plural('part', $totals['parts']) }} &mdash; {{ $totals['unpriced'] }} awaiting a price</span>
+                        @elseif ($totals['unpriced'])
                             <span class="stat-note">on {{ $totals['files'] - $totals['unpriced'] }} of {{ $totals['files'] }} files &mdash; {{ $totals['unpriced'] }} awaiting a price</span>
                         @endif
                     </div>
