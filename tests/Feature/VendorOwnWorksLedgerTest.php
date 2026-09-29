@@ -375,20 +375,253 @@ class VendorOwnWorksLedgerTest extends TestCase
         $payment->party_id = $this->sharma->id;
         $payment->entry_type = 'debit';
         $payment->txn_date = '2026-09-10';
-        $payment->amount = 800;
+        $payment->amount = 300;
         $payment->payment_mode = 'Cash';
         $payment->particular = 'Paid';
         $payment->save();
 
         DB::table('party_ledger_allocation')->insert([
             'entry_id' => $payment->id, 'party_id' => $this->sharma->id, 'work_file_id' => $file->id,
-            'amount' => 800, 'created_at' => now(), 'updated_at' => now(),
+            'amount' => 300, 'created_at' => now(), 'updated_at' => now(),
         ]);
 
         Artisan::call('files:resync-vendors', ['--write' => true]);
         $said = Artisan::output();
 
-        $this->assertStringContainsString('payment #'.$payment->id.' adjusted 800.00 to vendor #'.$this->sharma->id, $said);
+        $this->assertStringContainsString('payment #'.$payment->id.' adjusted 300.00 to vendor #'.$this->sharma->id, $said);
         $this->assertSame([$this->sharma->id => 800.0], $this->lines($file), 'moved under a payment adjusted against it');
+        $this->assertSame($this->sharma->id, (int) $file->fresh()->vendor_id, 'the folder moved under it too');
+
+        // And Vendor Payments says the line is not theirs, rather than Finished over nothing.
+        $row = collect($this->actingAs($this->admin)->getJson(route('report.payable'))->assertOk()->json('props.rows'))
+            ->firstWhere('bill', $file->file_no);
+
+        $this->assertSame('Not their work — see files:resync-vendors', $row['state']);
+    }
+
+    /** A payment adjusted and since released holds nothing. */
+    public function test_a_released_adjustment_does_not_hold_the_repair(): void
+    {
+        $file = $this->staleTrap();
+        $this->adjust($file, $this->sharma, 800, released: true);
+
+        Artisan::call('files:resync-vendors', ['--write' => true]);
+
+        $this->assertSame([], $this->lines($file));
+    }
+
+    /** Nor does one to another vendor on the file, or one to a vendor owed more. */
+    public function test_only_a_vendor_owed_less_is_held_by_their_own_payment(): void
+    {
+        // Split: Sharma's line is stale at 900, Shailendra's right at 700 and paid.
+        $split = $this->folder([
+            [$this->hpt, 2000, $this->sharma, 500],
+            [$this->tr, 3000, $this->shailendra, 700],
+        ]);
+        PartyLedgerModel::where('work_file_id', $split->id)->where('party_id', $this->sharma->id)->update(['amount' => 900]);
+        $this->adjust($split, $this->shailendra, 700);
+
+        // Owed more: Sharma's line stale at 300, and paid against.
+        $more = $this->partlyGiven();
+        PartyLedgerModel::where('work_file_id', $more->id)->where('party_id', $this->sharma->id)->update(['amount' => 300]);
+        $this->adjust($more, $this->sharma, 300);
+
+        Artisan::call('files:resync-vendors', ['--write' => true]);
+
+        $this->assertSame([$this->sharma->id => 500.0, $this->shailendra->id => 700.0], $this->lines($split));
+        $this->assertSame([$this->sharma->id => 500.0], $this->lines($more));
+    }
+
+    private function adjust(WorkFileModel $file, PartyModel $vendor, float $amount, bool $released = false): void
+    {
+        $payment = new PartyLedgerModel;
+        $payment->party_id = $vendor->id;
+        $payment->entry_type = 'debit';
+        $payment->txn_date = '2026-09-10';
+        $payment->amount = $amount;
+        $payment->payment_mode = 'Cash';
+        $payment->particular = 'Paid';
+        $payment->save();
+
+        DB::table('party_ledger_allocation')->insert([
+            'entry_id' => $payment->id, 'party_id' => $vendor->id, 'work_file_id' => $file->id, 'amount' => $amount,
+            'released_at' => $released ? now() : null, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+    }
+
+    /** The folder's vendor alone, with no line to change: named, and put right with its dates. */
+    public function test_the_repair_puts_right_a_folder_vendor_with_no_line(): void
+    {
+        $file = $this->folder([
+            [$this->hpt, 2000, $this->sharma, 500],
+            [$this->tr, 3000, null, null],
+        ]);
+        $file->items()->where('vendor_id', $this->sharma->id)->update(['status' => WorkFileModel::CANCELLED, 'vendor_returned_on' => '2026-09-05']);
+        $file = $this->rolledUp($file);
+        DB::table('work_file')->where('id', $file->id)
+            ->update(['vendor_id' => $this->sharma->id, 'vendor_date' => '2026-09-02', 'vendor_returned_on' => '2026-09-05']);
+
+        Artisan::call('files:resync-vendors');
+        $this->assertMatchesRegularExpression('/'.preg_quote($file->file_no, '/').'.*names vendor #'.$this->sharma->id.' → #none/', Artisan::output());
+
+        Artisan::call('files:resync-vendors', ['--write' => true]);
+        $file = $file->fresh();
+
+        $this->assertNull($file->vendor_id);
+        $this->assertNull($file->vendor_date);
+        $this->assertNull($file->vendor_returned_on);
+    }
+
+    /** Vendor side only: the customer's line is not touched, however it reads. */
+    public function test_the_repair_leaves_the_customers_line_exactly_as_it_is(): void
+    {
+        $file = $this->staleTrap();
+        $customer = PartyLedgerModel::where('work_file_id', $file->id)->where('file_role', 'customer')->first();
+        $customer->amount = 2999;
+        $customer->particular = 'stale words';
+        $customer->save();
+        $before = $customer->fresh()->getAttributes();
+
+        Artisan::call('files:resync-vendors', ['--write' => true]);
+
+        $this->assertSame($before, PartyLedgerModel::find($customer->id)->getAttributes());
+    }
+
+    public function test_the_repair_lists_work_out_with_nobody_at_file_dispatch(): void
+    {
+        $file = $this->partlyGiven();
+        $file->items()->whereNull('vendor_id')->update(['status' => WorkFileModel::DISPATCHED]);
+
+        // And work its vendor handed back, left there too.
+        $back = $this->folder([[$this->hpt, 2000, $this->sharma, 500], [$this->tr, 3000, $this->sharma, 700]]);
+        $back->items()->where('work_type_id', $this->hpt->id)->update(['vendor_returned_on' => '2026-09-05']);
+
+        Artisan::call('files:resync-vendors');
+        $said = Artisan::output();
+
+        $this->assertMatchesRegularExpression('/'.preg_quote($file->file_no, '/').'\s+1 work/', $said);
+        $this->assertMatchesRegularExpression('/'.preg_quote($back->file_no, '/').'\s+1 work/', $said);
+    }
+
+    // --------------------------------------------- an older folder, handed back
+
+    /**
+     * No work ever named a vendor: its own is owed the folder's rate, and a
+     * part handed back is reversed from the folder's figure, on the day.
+     */
+    public function test_an_older_folder_handed_back_in_part_reverses_the_part(): void
+    {
+        foreach ([true, false] as $withWorks) {
+            $file = $withWorks
+                ? $this->folder([[$this->hpt, 2000, null, null], [$this->tr, 3000, null, null]])
+                : $this->bareFolder();
+
+            $file->vendor_id = $this->sharma->id;
+            $file->vendor_amount = 2500;
+            $file->vendor_date = '2026-09-02';
+            $file->vendor_returned_on = '2026-09-10';
+            $file->vendor_returned_amount = 1000;
+            $file->save();
+            $file->syncLedger();
+
+            $return = PartyLedgerModel::where('work_file_id', $file->id)->where('file_role', 'vendor_return')->sole();
+            $this->assertSame([$this->sharma->id => 2500.0], $this->lines($file));
+            $this->assertEquals(1000, $return->amount);
+            $this->assertSame('2026-09-10', date('Y-m-d', strtotime($return->txn_date)));
+
+            // All of it.
+            $file->vendor_returned_amount = null;
+            $file->save();
+            $file->syncLedger();
+            $this->assertSame([$this->sharma->id => 2500.0], $this->lines($file, 'vendor_return'));
+
+            // Not back after all.
+            $file->vendor_returned_on = null;
+            $file->save();
+            $file->syncLedger();
+            $this->assertSame([], $this->lines($file, 'vendor_return'));
+
+            // To another vendor: only theirs.
+            $file->vendor_id = $this->shailendra->id;
+            $file->save();
+            $file->syncLedger();
+            $this->assertSame([$this->shailendra->id => 2500.0], $this->lines($file));
+        }
+    }
+
+    /** A folder with no works at all, handed over whole on the folder. */
+    private function bareFolder(): WorkFileModel
+    {
+        $file = new WorkFileModel;
+        $file->file_no = 'F-OWN-'.uniqid();
+        $file->received_date = '2026-09-01';
+        $file->registration_no = 'BR06OW'.random_int(1000, 9999);
+        $file->work_type_id = $this->hpt->id;
+        $file->customer_id = $this->customer->id;
+        $file->customer_amount = 5000;
+        $file->status = WorkFileModel::DISPATCHED;
+        $file->save();
+
+        return $file;
+    }
+
+    // ------------------------------------------------------ the audit, closely
+
+    public function test_the_audit_names_a_wrong_amount_and_a_missing_line_for_each_vendor(): void
+    {
+        $file = $this->folder([
+            [$this->hpt, 2000, $this->sharma, 500],
+            [$this->tr, 3000, $this->shailendra, 700],
+        ]);
+        $file->items()->where('vendor_id', $this->sharma->id)->update(['vendor_returned_on' => '2026-09-05', 'status' => WorkFileModel::IN_OFFICE]);
+        $file = $this->rolledUp($file);
+
+        PartyLedgerModel::where('work_file_id', $file->id)->where('file_role', 'vendor')->where('party_id', $this->sharma->id)->update(['amount' => 450]);
+        PartyLedgerModel::where('work_file_id', $file->id)->where('file_role', 'vendor')->where('party_id', $this->shailendra->id)->delete();
+        PartyLedgerModel::where('work_file_id', $file->id)->where('file_role', 'vendor_return')->update(['amount' => 100]);
+
+        Artisan::call('files:audit');
+        $said = Artisan::output();
+        $at = preg_quote($file->file_no, '/');
+
+        $this->assertMatchesRegularExpression("/$at.*owes vendor {$this->sharma->id} 500\.00 but the entry says 450/", $said);
+        $this->assertMatchesRegularExpression("/$at.*owes vendor {$this->shailendra->id} 700\.00 but has no entry for it/", $said);
+        $this->assertMatchesRegularExpression("/$at.*takes back from vendor {$this->sharma->id} 500\.00 but the entry says 100/", $said);
+    }
+
+    // ------------------------------------------------- the rate chase, whole
+
+    /** Fresh from roll-up, nothing about the trap is awaiting a vendor's rate. */
+    public function test_a_trap_folder_is_not_awaiting_a_vendors_rate(): void
+    {
+        $file = $this->folder([
+            [$this->hpt, 2000, $this->sharma, 500],
+            [$this->tr, 3000, null, null],
+        ]);
+        $file->items()->where('vendor_id', $this->sharma->id)->update(['status' => WorkFileModel::CANCELLED]);
+        $file = $this->rolledUp($file);
+
+        $this->assertFalse(WorkFileModel::query()->whereKey($file->id)->whereRaw(WorkFileModel::VENDOR_UNPRICED)->exists());
+    }
+
+    // --------------------------------------------- handed back, papers come in
+
+    /** Work its vendor handed back, its papers in, is the office's — not File Dispatch. */
+    public function test_handed_back_work_leaves_paper_pendency_for_the_office(): void
+    {
+        $paper = new PaperTypeModel;
+        $paper->name = 'Form '.uniqid();
+        $paper->is_active = 1;
+        $paper->save();
+        DB::table('work_type_paper')->insert(['work_type_id' => $this->hpt->id, 'paper_type_id' => $paper->id]);
+
+        $file = $this->folder([[$this->hpt, 2000, $this->sharma, 500]]);
+        $file->items()->update(['vendor_returned_on' => '2026-09-05', 'status' => WorkFileModel::IN_OFFICE]);
+        $file = $this->rolledUp($file);
+
+        $file->savePaperChecklist([$paper->id => ['state' => WorkFilePaperModel::PENDING, 'note' => null]]);
+        $file->fresh()->savePaperChecklist([$paper->id => ['state' => WorkFilePaperModel::RECEIVED, 'note' => null]]);
+
+        $this->assertSame(WorkFileModel::IN_OFFICE, $file->items()->value('status'), 'sent to File Dispatch, which nobody had it for');
     }
 }

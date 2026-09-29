@@ -914,13 +914,16 @@ class WorkFileModel extends Model
         $items = $this->items()->get();
 
         /*
-         * Where a work goes when its papers are in: to File Dispatch if it was
-         * given out — its own vendor, or on an older folder the folder's — and
-         * back to the office if not. Found on 2026-09-28: asked of the folder's
-         * vendor, work the office kept on a folder a vendor had part of went
-         * to File Dispatch, which nobody had it for.
+         * Where a work goes when its papers are in: to File Dispatch if it is
+         * out with a vendor — its own, or on an older folder the folder's —
+         * and back to the office if not. Found on 2026-09-28: asked of the
+         * folder's vendor, work the office kept on a folder a vendor had part
+         * of went to File Dispatch, which nobody had it for; and so did work
+         * the vendor had already handed back (found in review).
          */
         $older = self::isOlderFolder($items);
+        $isOut = fn ($item) => ($item->vendor_id && ! $item->vendor_returned_on)
+            || ($older && $this->vendor_id && ! $this->vendor_returned_on);
 
         foreach ($items as $item) {
             if ($item->isSettled()) {
@@ -943,7 +946,7 @@ class WorkFileModel extends Model
             if ($pending && $item->status === self::IN_OFFICE) {
                 $item->status = self::PAPER_PENDENCY;
             } elseif (! $pending && $item->status === self::PAPER_PENDENCY) {
-                $item->status = ($item->vendor_id || ($older && $this->vendor_id)) ? self::DISPATCHED : self::IN_OFFICE;
+                $item->status = $isOut($item) ? self::DISPATCHED : self::IN_OFFICE;
             } else {
                 continue;
             }

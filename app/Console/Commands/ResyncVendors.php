@@ -75,7 +75,7 @@ class ResyncVendors extends Command
 
         if ($stranded) {
             $this->newLine();
-            $this->warn('Work nobody was given, standing at File Dispatch — move it on the board:');
+            $this->warn('Work out with nobody, standing at File Dispatch — move it on the board:');
 
             foreach ($stranded as [$fileNo, $count]) {
                 $this->line(sprintf('  %-12s %d %s', $fileNo, $count, $count === 1 ? 'work' : 'works'));
@@ -179,9 +179,11 @@ class ResyncVendors extends Command
             }
         }
 
-        // Work nobody was given, left at File Dispatch by the old paper rule.
+        // Work out with nobody — never given, or handed back — left at File
+        // Dispatch by the old paper rule.
         $officeDispatched = WorkFileModel::isOlderFolder($file->items) ? 0 : $file->items
-            ->filter(fn ($item) => ! $item->vendor_id && $item->status === WorkFileModel::DISPATCHED)
+            ->filter(fn ($item) => $item->status === WorkFileModel::DISPATCHED
+                && (! $item->vendor_id || $item->vendor_returned_on))
             ->count();
 
         return ['says' => $says, 'folder' => $folder, 'held' => $held, 'office_dispatched' => $officeDispatched];
