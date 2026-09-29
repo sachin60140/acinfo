@@ -86,6 +86,9 @@
                             {{ $periodText }}
                             &nbsp;&middot;&nbsp; {{ $totals['vendors'] }} {{ Str::plural('vendor', $totals['vendors']) }}
                         </div>
+                        {{-- Counted per work since 2026-09-28: said, because the
+                             counts above then add up to more than there are files. --}}
+                        <div class="ui-hint">A file shared between vendors counts under each, for their own works.</div>
                     </div>
                 </div>
 

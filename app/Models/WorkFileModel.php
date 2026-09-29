@@ -1436,56 +1436,94 @@ class WorkFileModel extends Model
      * Cancelled work is in the file count and in neither of the others: it
      * never finished, and it is not waiting either. In-house work has no vendor
      * to judge and is left out altogether.
+     *
+     * Counted per work, a vendor's part of each folder at a time. Asked for by
+     * the owner on 2026-09-28, with the rule that anything vendor-wise counts
+     * only the works given to that vendor: counted by the folder, a folder a
+     * vendor held part of stayed "out" with them while the office finished its
+     * own work, and took them until the office's last approval; a folder split
+     * between two, naming neither, was nobody's. Now:
+     *
+     *  - a folder counts once under each vendor with work on it (their "part");
+     *  - it is out with them while any work of theirs is still at a stage, sent,
+     *    and not handed back — the oldest such work is how long they are waiting;
+     *  - it is finished when nothing of theirs is out and some of it ended while
+     *    they had it: approved, or back to the customer with the folder;
+     *  - a work handed back undone is not their finish, as on Approval Time — nor
+     *    is a given work later cancelled; both count in their files only;
+     *  - they took from the first of those works going out to the last ending;
+     *  - the period is the day the first of their works on it went out;
+     *  - on a folder none of whose works ever named a vendor, the folder's own
+     *    vendor has all of it, dated from the folder.
+     *
+     * Nothing correlated: the older test is a derived table joined in, so the
+     * grouping is MariaDB-safe at every level.
      */
     public static function vendorPerformance(?string $from = null, ?string $to = null)
     {
-        $files = DB::table('work_file')
-            ->join('party as vendor', 'vendor.id', '=', 'work_file.vendor_id')
-            ->whereNotNull('work_file.vendor_date')
-            ->select(
-                'work_file.vendor_id',
-                'vendor.name as vendor_name',
-                'work_file.status',
-                'work_file.vendor_date',
-                DB::raw(self::FINISHED_ON.' as finished_on')
-            );
-
-        if ($from) {
-            $files->whereDate('work_file.vendor_date', '>=', $from);
-        }
-
-        if ($to) {
-            $files->whereDate('work_file.vendor_date', '<=', $to);
-        }
-
         $open = "'".implode("','", self::OPEN_STATUSES)."'";
+        $approved = self::APPROVED;
+        $returned = self::RETURNED;
+
+        // Folders on which some work, cancelled included, names a vendor.
+        $carrying = DB::table('work_file_item')->whereNotNull('vendor_id')->distinct()->select('work_file_id');
+        $older = 'carrying.work_file_id IS NULL';
+        // A folder with no works stands for itself.
+        $status = 'COALESCE(i.status, work_file.status)';
+
+        // One row per work given to a vendor, and per work of an older folder.
+        $works = DB::table('work_file')
+            ->leftJoin('work_file_item as i', 'i.work_file_id', '=', 'work_file.id')
+            ->leftJoinSub($carrying, 'carrying', 'carrying.work_file_id', '=', 'work_file.id')
+            ->where(fn ($q) => $q->whereNotNull('i.vendor_id')
+                ->orWhere(fn ($old) => $old->whereNull('carrying.work_file_id')->whereNotNull('work_file.vendor_id')))
+            ->selectRaw("CASE WHEN $older THEN work_file.vendor_id ELSE i.vendor_id END as vendor_id")
+            ->selectRaw('work_file.id as work_file_id')
+            ->selectRaw("$status as status")
+            ->selectRaw("CASE WHEN $older THEN work_file.vendor_date ELSE i.vendor_date END as vendor_date")
+            ->selectRaw("CASE WHEN $older THEN work_file.vendor_returned_on ELSE i.vendor_returned_on END as vendor_returned_on")
+            ->selectRaw("CASE WHEN $status = '$approved' THEN i.approved_on
+                              WHEN $status = '$returned' AND work_file.status = '$returned' THEN work_file.returned_on END as ended_on");
+
+        $out = "w.status IN ($open) AND w.vendor_date IS NOT NULL AND w.vendor_returned_on IS NULL";
+        $done = 'w.ended_on IS NOT NULL AND (w.vendor_returned_on IS NULL OR w.vendor_returned_on >= w.ended_on)';
+
+        // One row per vendor per folder: their part of it.
+        $shares = DB::query()->fromSub($works, 'w')
+            ->select('w.vendor_id', 'w.work_file_id')
+            ->selectRaw('MIN(w.vendor_date) as first_sent')
+            ->selectRaw("MAX(CASE WHEN $out THEN 1 ELSE 0 END) as is_out")
+            ->selectRaw("MIN(CASE WHEN $out THEN w.vendor_date END) as out_since")
+            ->selectRaw("MIN(CASE WHEN $done THEN w.vendor_date END) as sent")
+            ->selectRaw("MAX(CASE WHEN $done THEN w.ended_on END) as ended")
+            ->groupBy('w.vendor_id', 'w.work_file_id');
 
         /*
          * Counted from the finishing day where there is one, and never where it
-         * falls before the day the file went out — papers dated backwards are a
+         * falls before the day the work went out — papers dated backwards are a
          * typo, and averaging one in would quietly drag a vendor's figure down.
          */
-        $took = 'CASE WHEN f.finished_on IS NOT NULL AND DATEDIFF(f.finished_on, f.vendor_date) >= 0
-            THEN DATEDIFF(f.finished_on, f.vendor_date) END';
+        $took = 'CASE WHEN s.is_out = 0 AND DATEDIFF(s.ended, s.sent) >= 0 THEN DATEDIFF(s.ended, s.sent) END';
+        $stillOut = 'CASE WHEN s.is_out = 1 THEN DATEDIFF(CURDATE(), s.out_since) END';
 
-        $stillOut = "CASE WHEN f.status IN ($open) THEN DATEDIFF(CURDATE(), f.vendor_date) END";
-
-        return DB::query()
-            ->fromSub($files, 'f')
-            ->select(
-                'f.vendor_id',
-                'f.vendor_name',
-                DB::raw('COUNT(*) as files'),
-                DB::raw("SUM(CASE WHEN f.status IN ($open) THEN 1 ELSE 0 END) as out_now"),
-                DB::raw("MAX($stillOut) as longest_out"),
-                DB::raw("COUNT($took) as finished"),
-                DB::raw("ROUND(AVG($took)) as average_days"),
-                DB::raw("MAX($took) as slowest")
-            )
-            ->groupBy('f.vendor_id', 'f.vendor_name')
+        // One row per vendor.
+        return DB::query()->fromSub($shares, 's')
+            ->join('party as vendor', 'vendor.id', '=', 's.vendor_id')
+            // Booked but never sent is not out with anybody.
+            ->whereNotNull('s.first_sent')
+            ->when($from, fn ($q) => $q->whereDate('s.first_sent', '>=', $from))
+            ->when($to, fn ($q) => $q->whereDate('s.first_sent', '<=', $to))
+            ->select('s.vendor_id', 'vendor.name as vendor_name')
+            ->selectRaw('COUNT(*) as files')
+            ->selectRaw('SUM(s.is_out) as out_now')
+            ->selectRaw("MAX($stillOut) as longest_out")
+            ->selectRaw("COUNT($took) as finished")
+            ->selectRaw("ROUND(AVG($took)) as average_days")
+            ->selectRaw("MAX($took) as slowest")
+            ->groupBy('s.vendor_id', 'vendor.name')
             // Whoever has most still out is who the office is waiting on.
-            ->orderByDesc(DB::raw('MAX('.$stillOut.')'))
-            ->orderBy('f.vendor_name')
+            ->orderByDesc(DB::raw("MAX($stillOut)"))
+            ->orderBy('vendor.name')
             ->get();
     }
     /**
