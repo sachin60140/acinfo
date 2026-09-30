@@ -84,6 +84,36 @@ class WorkFileItemModel extends Model
             && ! in_array($this->status, [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED], true);
     }
 
+    /**
+     * Handed back by its vendor with all of its rate reversed, and still to
+     * be done: nothing of it is owed to them, so it can go out again.
+     *
+     * Asked for by the owner on 2026-09-28: work that came back kept its
+     * vendor, so Give to Vendor never offered it again and the office typed a
+     * new file — charging the customer twice — to send the papers out. Given
+     * again, the first vendor's credit and its reversal, which net to nothing,
+     * leave their statement. A work with part of its rate still owed to them
+     * is not offered: their statement would lose what they are owed.
+     *
+     * An in-house mark is not asked about: on a work with a vendor it is one
+     * the edit screen left behind when the folder was given out, and the
+     * vendor is what decides it (see inHouseWork()).
+     */
+    public function cameBackWhole(): bool
+    {
+        return $this->vendor_id
+            && $this->vendor_returned_on
+            && self::partReversals()
+            && $this->vendor_returned_amount === null
+            && ! in_array($this->status, [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED], true);
+    }
+
+    /** What Give to Vendor offers: work waiting for a vendor, or back whole from one. */
+    public function canBeGivenOut(): bool
+    {
+        return $this->isWaitingForAVendor() || $this->cameBackWhole();
+    }
+
     public function isApproved(): bool
     {
         return $this->status === WorkFileModel::APPROVED;

@@ -776,9 +776,7 @@ class WorkFileController extends Controller
                  */
                 $files = WorkFileModel::whereIn('id', $req->input('files'))
                     ->where(fn ($outer) => $outer
-                        ->whereHas('items', fn ($q) => $q->whereNull('vendor_id')
-                            ->whereNull('kept_in_house_on')
-                            ->whereNotIn('status', [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED]))
+                        ->whereHas('items', fn ($q) => WorkFileModel::canBeGivenOut($q))
                         ->orWhereDoesntHave('items'))
                     ->where('status', '!=', WorkFileModel::CANCELLED)
                     ->get();
@@ -804,7 +802,7 @@ class WorkFileController extends Controller
                      * folder can come back to this screen for its other half,
                      * and the half that left is not leaving twice.
                      */
-                    $here = $file->items->filter(fn ($item) => $item->isWaitingForAVendor());
+                    $here = $file->items->filter(fn ($item) => $item->canBeGivenOut());
 
                     $going = $jobs ? $here->whereIn('id', $jobs) : $here;
 
@@ -1019,9 +1017,20 @@ class WorkFileController extends Controller
                      * somebody already, or done with and never going anywhere.
                      * Only "here" can be ticked.
                      */
-                    'state' => in_array($item->status, [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED], true)
-                        ? 'done'
-                        : ($item->vendor_id ? 'out' : ($item->isKeptInHouse() ? 'kept' : 'here')),
+                    'state' => match (true) {
+                        in_array($item->status, [WorkFileModel::APPROVED, WorkFileModel::RETURNED, WorkFileModel::CANCELLED], true) => 'done',
+                        $item->canBeGivenOut() => 'here',
+                        // Handed back with part of its rate still theirs: back,
+                        // not "with them", and not offered — see cameBackWhole().
+                        // Before the migration which it is cannot be told, and
+                        // saying part is still theirs would often be untrue.
+                        $item->vendor_id && $item->vendor_returned_on => WorkFileItemModel::partReversals() ? 'back' : 'back_pending',
+                        (bool) $item->vendor_id => 'out',
+                        default => 'kept',
+                    },
+                    // Back whole from a vendor, and offered again: said, so
+                    // it is not mistaken for work that never went out.
+                    'came_back_from' => $item->cameBackWhole() ? $item->vendor?->name : null,
                     // When the office said it was doing this one itself.
                     'kept_on' => $item->kept_in_house_on
                         ? date('d-m-Y', strtotime($item->kept_in_house_on))
@@ -1068,6 +1077,11 @@ class WorkFileController extends Controller
      * board as before. All that changes is that nobody is being asked to send
      * it any more.
      *
+     * Work a vendor handed back whole is offered on that screen too, and can
+     * be kept here as well as given out again. It stops being theirs: their
+     * credit and its reversal, which net to nothing, leave their statement,
+     * the same as when it goes out to somebody else.
+     *
      * Letting go of it again is a correction and lives on the edit screen, for
      * the same reason moving a file to a different vendor does: by then the
      * folder may have left this list entirely.
@@ -1102,20 +1116,56 @@ class WorkFileController extends Controller
             foreach ($files as $file) {
                 $keeping = $file->items
                     ->whereIn('id', $jobs)
-                    ->filter(fn ($item) => $item->isWaitingForAVendor());
+                    ->filter(fn ($item) => $item->canBeGivenOut());
 
                 if ($keeping->isEmpty()) {
                     continue;
                 }
 
+                $from = $file->status;
+                $wasTheirs = false;
+
                 foreach ($keeping as $item) {
+                    // Back whole from a vendor: no longer theirs, or it would
+                    // still be counted as theirs everywhere a vendor is asked.
+                    if ($item->cameBackWhole()) {
+                        $item->vendor_id = null;
+                        $item->vendor_date = null;
+                        $item->vendor_amount = null;
+                        $item->vendor_returned_on = null;
+                        $wasTheirs = true;
+                    }
+
                     $item->kept_in_house_on = now()->toDateString();
                     $item->save();
                 }
 
+                if ($wasTheirs) {
+                    $file->load('items');
+
+                    /*
+                     * No work on it names a vendor now, which is what a folder
+                     * from before works carried one looks like — and such a
+                     * folder is its own vendor's, all of it. The roll-up leaves
+                     * that as written, so it is cleared here: the folder is
+                     * nobody's, as though never given (found in testing). What
+                     * was reversed goes with the day it came back; the saving
+                     * hook clears it.
+                     */
+                    if (WorkFileModel::isOlderFolder($file->items)) {
+                        $file->vendor_id = null;
+                        $file->vendor_date = null;
+                        $file->vendor_returned_on = null;
+                    }
+
+                    $file->rollUp();
+                    $file->save();
+                    $file->syncLedger();
+                }
+
                 $named = $keeping->map(fn ($item) => $item->workType?->name ?? 'work')->implode(', ');
 
-                $file->logStatus($file->status, $named.' kept in-house');
+                $file->logStatus($from, $named.' kept in-house');
 
                 $done->push($file);
             }

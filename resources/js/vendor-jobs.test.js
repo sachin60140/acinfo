@@ -284,6 +284,59 @@ describe('work the office is doing itself', () => {
     });
 });
 
+describe('work a vendor handed back', () => {
+    /* One work back whole and offered again, one back with part still theirs. */
+    const BACK = file(4, [
+        work(41, 'TR', { came_back_from: 'Sharma Ji', vendor: 'Sharma Ji', vendor_date: '01-09-2026', vendor_amount: 1000 }),
+        work(42, 'HPA', { state: 'back', vendor: 'Dabloo Ji Muzaffarpur', vendor_date: '01-09-2026', vendor_amount: 900 }),
+        work(43, 'RC', { state: 'back_pending', vendor: 'Dabloo Ji Muzaffarpur', vendor_date: '01-09-2026', vendor_amount: 700 }),
+    ]);
+
+    const withBack = () => mount({ files: [BACK] });
+
+    it('offers work back whole again, saying who it came back from', () => {
+        const host = withBack();
+
+        expect(workBox(host, 41)).not.toBeNull();
+        expect(workBox(host, 41).closest('.give-job').textContent).toContain('came back from Sharma Ji');
+    });
+
+    it('says nothing of coming back on work that never went out', () => {
+        const host = mount();
+
+        expect(fileBox(host, 1).closest('tr').textContent).not.toContain('came back');
+    });
+
+    it('offers no tick for work with part of its rate still theirs, and says it is back', async () => {
+        const host = withBack();
+
+        expect(workBox(host, 42)).toBeNull();
+
+        const line = [...fileBox(host, 4).closest('tr').querySelectorAll('.give-work--fixed')]
+            .find((el) => el.textContent.includes('HPA'));
+
+        expect(line.textContent).toContain('back from Dabloo Ji Muzaffarpur');
+        expect(line.textContent).not.toContain('with Dabloo');
+
+        await click(fileBox(host, 4));
+
+        expect(postedWork(host)).toEqual([41]);
+    });
+
+    it('before the update, says only that it is back', () => {
+        const host = withBack();
+
+        expect(workBox(host, 43)).toBeNull();
+
+        const line = [...fileBox(host, 4).closest('tr').querySelectorAll('.give-work--fixed')]
+            .find((el) => el.textContent.includes('RC'));
+
+        expect(line.textContent).toContain('back from Dabloo Ji Muzaffarpur');
+        expect(line.textContent).not.toContain('part of the rate');
+        expect(line.textContent).not.toContain('with Dabloo');
+    });
+});
+
 describe('the rate follows its own work', () => {
     it('leaves a box disabled until that work is ticked', async () => {
         const host = mount();

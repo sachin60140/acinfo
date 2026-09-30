@@ -3719,6 +3719,21 @@ class WorkFileModel extends Model
         ];
     }
     /**
+     * WorkFileItemModel::canBeGivenOut(), as a condition on the works: waiting
+     * for a vendor, or back whole from one — see cameBackWhole().
+     */
+    public static function canBeGivenOut($q)
+    {
+        return $q->whereNotIn('status', [self::APPROVED, self::RETURNED, self::CANCELLED])
+            ->where(fn ($who) => $who
+                ->where(fn ($waiting) => $waiting->whereNull('vendor_id')->whereNull('kept_in_house_on'))
+                ->when(WorkFileItemModel::partReversals(), fn ($back) => $back->orWhere(fn ($whole) => $whole
+                    ->whereNotNull('vendor_id')
+                    ->whereNotNull('vendor_returned_on')
+                    ->whereNull('vendor_returned_amount'))));
+    }
+
+    /**
      * Files waiting to be given to a vendor: received, not cancelled, nobody
      * working on them yet. This is exactly the set the assign screen offers, and
      * the same conditions are re-applied on save so a stale page cannot reassign
@@ -3744,11 +3759,7 @@ class WorkFileModel extends Model
              * the moment anything on it was given away.
              */
             ->where(fn ($outer) => $outer
-                ->whereHas('items', fn ($q) => $q->whereNull('vendor_id')
-                    // Work the office said it is doing itself is not waiting for
-                    // anybody; see WorkFileItemModel::isWaitingForAVendor().
-                    ->whereNull('kept_in_house_on')
-                    ->whereNotIn('status', [self::APPROVED, self::RETURNED, self::CANCELLED]))
+                ->whereHas('items', fn ($q) => self::canBeGivenOut($q))
                 // A folder with no works at all is still handed over whole.
                 ->orWhereDoesntHave('items'))
             // Only work still in hand can be given out. A file that is approved,

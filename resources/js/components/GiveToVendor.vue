@@ -626,6 +626,12 @@ onMounted(() => {
                                                 @change="onJobToggle(file, item)">
                                             <span class="give-work__name">{{ item.work_type || '&mdash;' }}</span>
 
+                                            <!-- Back whole from a vendor and offered again: said,
+                                                 so it is not taken for work that never went out. -->
+                                            <span v-if="item.came_back_from" class="give-work__with">
+                                                came back from {{ item.came_back_from }}
+                                            </span>
+
                                             <!-- Its own papers, beside its own tick, where a
                                                  folder holds more than one work and the line under
                                                  its number cannot say which of them is held up.
@@ -651,6 +657,23 @@ onMounted(() => {
                                             <span class="give-work__name">{{ item.work_type || '&mdash;' }}</span>
                                             <span v-if="item.state === 'out'" class="give-work__with">
                                                 with {{ item.vendor || 'a vendor' }}<template v-if="item.vendor_date"> since {{ item.vendor_date }}</template>
+                                            </span>
+                                            <!-- Handed back, but part of its rate is still theirs,
+                                                 so it stays theirs and has no tick. Said as back,
+                                                 not as with them: the papers are on our desk. -->
+                                            <span
+                                                v-else-if="item.state === 'back'"
+                                                class="give-work__with"
+                                                title="Part of its rate is still theirs, so it cannot go to anyone else">
+                                                back from {{ item.vendor || 'a vendor' }}, part of the rate still theirs
+                                            </span>
+                                            <!-- Handed back while the update is unfinished: whether
+                                                 any of the rate is still theirs cannot be told yet. -->
+                                            <span
+                                                v-else-if="item.state === 'back_pending'"
+                                                class="give-work__with"
+                                                title="Not offered again until the update is finished">
+                                                back from {{ item.vendor || 'a vendor' }}
                                             </span>
                                             <!-- Ours. Shown rather than dropped, so the row says why
                                                  this work has no tick instead of simply lacking one;
