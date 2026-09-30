@@ -3756,26 +3756,39 @@ class WorkFileModel extends Model
 
     /**
      * Let go of the vendor such a folder came back from, as it goes out again
-     * or is kept here: nobody's, as though never given.
+     * or is kept here: what they did not finish is nobody's, as though never
+     * given.
      *
-     * The rates agreed with them go too. On the folder's works they were
-     * theirs; left on works that name nobody they would read as the office's
-     * own cost. Their credit and its reversal, which net to nothing, leave
-     * their statement at the next syncLedger().
+     * The rates agreed with them for it go too. Left on works that name
+     * nobody they would read as the office's own cost. Their credit and its
+     * reversal for it, which net to nothing, leave their statement at the
+     * next syncLedger().
+     *
+     * What they did finish stays theirs: approved, or gone back to its
+     * customer, while they had it. Written onto the work itself — handed back
+     * with the folder, all of its rate reversed — as a work of their own
+     * would be (see WorkFileItemModel::cameBackWhole(), which never lets go of
+     * finished work). Found in review: cleared with the rest, the transfer
+     * they got approved left the Vendors report and their profit.
      */
     public function letGoOfItsVendor(): void
     {
-        $this->vendor_id = null;
-        $this->vendor_date = null;
-        $this->vendor_returned_on = null;
-        $this->vendor_amount = null;
-
         foreach ($this->items as $item) {
-            if ($item->vendor_amount !== null) {
+            if (in_array($item->status, [self::APPROVED, self::RETURNED], true)) {
+                $item->vendor_id = $this->vendor_id;
+                $item->vendor_date = $this->vendor_date;
+                $item->vendor_returned_on = $this->vendor_returned_on;
+                $item->save();
+            } elseif ($item->vendor_amount !== null) {
                 $item->vendor_amount = null;
                 $item->save();
             }
         }
+
+        $this->vendor_id = null;
+        $this->vendor_date = null;
+        $this->vendor_returned_on = null;
+        $this->vendor_amount = null;
     }
 
     /**

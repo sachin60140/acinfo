@@ -194,6 +194,20 @@ class OlderFolderGiveToVendorTest extends TestCase
             ->pluck('amount', 'party_id')->map(fn ($amount) => (float) $amount)->all();
     }
 
+    /** Approved while the vendor had it. */
+    private function approve(WorkFileModel $file, WorkTypeModel $type): void
+    {
+        $work = $this->work($file, $type);
+        $work->status = WorkFileModel::APPROVED;
+        $work->save();
+
+        $file = $file->fresh();
+        $file->load('items');
+        $file->rollUp();
+        $file->save();
+        $file->syncLedger();
+    }
+
     private function twoWorks(): WorkFileModel
     {
         $file = $this->olderFolder([[$this->tr, 1000], [$this->hpa, 800]]);
@@ -306,6 +320,131 @@ class OlderFolderGiveToVendorTest extends TestCase
         $work = $this->offered($file, $this->hpa);
         $this->assertSame('here', $work['state']);
         $this->assertNull($work['came_back_from']);
+    }
+
+    /**
+     * What they finished while they had it stays theirs when the rest goes
+     * out again: written onto the work, handed back with the folder, its rate
+     * credited and reversed (found in review — cleared with the rest, the
+     * transfer they got approved left the Vendors report and their profit).
+     */
+    public function test_work_they_finished_stays_theirs_when_the_rest_goes_out(): void
+    {
+        $file = $this->twoWorks();
+        $this->approve($file, $this->tr);
+        $this->takeBack($file)->assertRedirect(route('workfile.index'));
+
+        $this->give($this->dabloo, $file, [[$this->hpa, 900]])->assertRedirect(route('workfile.index'));
+
+        $done = $this->work($file, $this->tr);
+        $this->assertSame($this->sharma->id, (int) $done->vendor_id);
+        $this->assertSame('2026-09-05', date('Y-m-d', strtotime($done->vendor_date)));
+        $this->assertSame('2026-09-08', date('Y-m-d', strtotime($done->vendor_returned_on)));
+        $this->assertEquals(1000, $done->vendor_amount);
+        $this->assertSame(WorkFileModel::APPROVED, $done->status);
+
+        $this->assertEquals([$this->sharma->id => 1000, $this->dabloo->id => 900], $this->lines($file, 'vendor'));
+        $this->assertEquals([$this->sharma->id => 1000], $this->lines($file, 'vendor_return'));
+        $this->assertSame($this->dabloo->id, (int) $this->work($file, $this->hpa)->vendor_id);
+    }
+
+    /** Gone back to its customer while they had it: as finished, theirs. */
+    public function test_work_gone_back_to_its_customer_stays_theirs_too(): void
+    {
+        $file = $this->twoWorks();
+        $returned = $this->work($file, $this->tr);
+        $returned->status = WorkFileModel::RETURNED;
+        $returned->save();
+        $this->takeBack($file->fresh())->assertRedirect(route('workfile.index'));
+
+        $this->give($this->dabloo, $file, [[$this->hpa, 900]])->assertRedirect(route('workfile.index'));
+
+        $this->assertSame($this->sharma->id, (int) $this->work($file, $this->tr)->vendor_id);
+        $this->assertSame(WorkFileModel::RETURNED, $this->work($file, $this->tr)->status);
+    }
+
+    public function test_work_they_finished_stays_theirs_when_the_rest_is_kept(): void
+    {
+        $file = $this->twoWorks();
+        $this->approve($file, $this->tr);
+        $this->takeBack($file)->assertRedirect(route('workfile.index'));
+
+        $this->keep($file, $this->hpa)->assertRedirect(route('workfile.assign'));
+
+        $this->assertSame($this->sharma->id, (int) $this->work($file, $this->tr)->vendor_id);
+        $this->assertEquals([$this->sharma->id => 1000], $this->lines($file, 'vendor'));
+        $this->assertEquals([$this->sharma->id => 1000], $this->lines($file, 'vendor_return'));
+
+        $kept = $this->work($file, $this->hpa);
+        $this->assertNull($kept->vendor_id);
+        $this->assertNull($kept->vendor_amount);
+        $this->assertTrue(WorkFileModel::inHouseWork()->contains('id', $kept->id));
+        // Theirs by the work they finished, and back.
+        $this->assertSame($this->sharma->id, (int) $file->fresh()->vendor_id);
+        $this->assertFalse($file->fresh()->isHeldByItsVendor());
+    }
+
+    /**
+     * How an older folder with works comes about now: the works on a folder
+     * already given out swapped on the edit screen, the new one naming nobody
+     * and the folder still naming its vendor. Theirs, all of it, until they
+     * hand it back (found in review: the tests built it by hand).
+     */
+    public function test_an_older_folder_made_on_the_edit_screen(): void
+    {
+        $file = new WorkFileModel;
+        $file->file_no = 'F-OF-'.uniqid();
+        $file->received_date = '2026-09-01';
+        $file->registration_no = 'BR01OF'.random_int(1000, 9999);
+        $file->work_type_id = $this->tr->id;
+        $file->customer_id = $this->customer->id;
+        $file->customer_amount = 3000;
+        $file->status = WorkFileModel::IN_OFFICE;
+        $file->save();
+
+        $transfer = new WorkFileItemModel;
+        $transfer->work_file_id = $file->id;
+        $transfer->work_type_id = $this->tr->id;
+        $transfer->customer_amount = 3000;
+        $transfer->status = WorkFileModel::IN_OFFICE;
+        $transfer->save();
+
+        $file->syncLedger();
+        $this->give($this->sharma, $file->fresh(), [[$this->tr, 1000]])->assertRedirect(route('workfile.index'));
+
+        // The transfer was the wrong work: swapped for an addition.
+        $file = $file->fresh();
+        $this->actingAs($this->admin)->post(route('workfile.edit', $file->id), [
+            'file_no' => $file->file_no,
+            'received_date' => date('Y-m-d', strtotime($file->received_date)),
+            'work_type_id' => $file->work_type_id,
+            'customer_id' => $file->customer_id,
+            'customer_amount' => (string) $file->customer_amount,
+            'status' => $file->status,
+            'vendor_id' => $file->vendor_id,
+            'vendor_amount' => (string) $file->vendor_amount,
+            'vendor_date' => date('Y-m-d', strtotime($file->vendor_date)),
+            'remove_works' => [$transfer->id],
+            'new_works' => [['work_type_id' => $this->hpa->id, 'amount' => '3000', 'vendor_amount' => '800']],
+        ])->assertSessionMissing('error');
+
+        $file = $file->fresh();
+        $this->assertTrue(WorkFileModel::isOlderFolder($file->items));
+        $this->assertSame($this->sharma->id, (int) $file->vendor_id);
+        $this->assertTrue($file->isHeldByItsVendor());
+
+        // Not on Give to Vendor; on the take-back list, under them.
+        $this->assertArrayNotHasKey($file->id, $this->onOffer());
+        $this->assertContains($file->id.':'.$this->sharma->id, collect($this->actingAs($this->admin)
+            ->getJson(route('workfile.vendorreturn'))->assertOk()->json('props.files'))->pluck('key')->all());
+
+        // Back whole, it is offered, saying who it came back from.
+        $this->takeBack($file)->assertRedirect(route('workfile.index'));
+        $this->assertSame($this->sharma->name, $this->offered($file, $this->hpa)['came_back_from']);
+
+        $this->give($this->dabloo, $file, [[$this->hpa, 900]])->assertRedirect(route('workfile.index'));
+        $this->assertEquals([$this->dabloo->id => 900], $this->lines($file, 'vendor'));
+        $this->assertSame([], $this->lines($file, 'vendor_return'));
     }
 
     /**
