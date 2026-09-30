@@ -46,11 +46,7 @@ class WorkFileController extends Controller
      */
     private static function partialOrNull($value, $whole): ?float
     {
-        if ($value === null || $value === '' || (float) $value >= (float) $whole) {
-            return null;
-        }
-
-        return (float) $value;
+        return WorkFileModel::partOrAll($value, $whole);
     }
 
     public function index(Request $req)
@@ -1890,11 +1886,19 @@ class WorkFileController extends Controller
     }
 
     /**
-     * Take a batch of files back from a vendor.
+     * Take work back from vendors: one vendor's part of a folder at a time.
      *
      * The mirror of assign(): what was booked to the vendor is reversed with a
      * debit beside the original credit, so their statement shows both and nets
-     * to nothing owed. The files go back to In Office.
+     * to nothing owed. Their works go back to In Office.
+     *
+     * Only theirs. Asked for by the owner on 2026-09-28, with the rule that a
+     * vendor's is only the work they were given: taking a folder back moved
+     * every open work on it to In Office — the office's own, and another
+     * vendor's — capped a part reversal at the whole folder's rate, and could
+     * not take back a folder split between two vendors at all. A row on the
+     * screen is a folder and a vendor now ("12:5"); a bare folder number, as
+     * older pages post, is every vendor still holding work on it.
      */
     public function vendorReturn(Request $req)
     {
@@ -1902,7 +1906,7 @@ class WorkFileController extends Controller
             $req->validate([
                 'returned_on' => 'required|date_format:Y-m-d',
                 'files' => 'required|array|min:1',
-                'files.*' => 'integer',
+                'files.*' => ['required', 'regex:/^\d+(:\d+)?$/'],
                 'amounts' => 'nullable|array',
                 'amounts.*' => 'nullable|numeric|gt:0|max:99999999',
                 // Same rule as returning to a customer: a balance moves, so it
@@ -1913,93 +1917,144 @@ class WorkFileController extends Controller
                 'remark.required' => 'Taking a file back changes the vendor\'s balance, so it needs a reason.',
             ]);
 
-            $amounts = $req->input('amounts', []);
+            // An array, whatever came: a hand-made post with an empty value
+            // arrives as null (found in review).
+            $amounts = (array) ($req->input('amounts') ?? []);
+            $picks = self::takeBackPicks($req->input('files'));
 
-            // You cannot reverse more than was booked to the vendor.
-            $overReversed = WorkFileModel::whereIn('id', $req->input('files'))->get()
-                ->filter(function ($file) use ($amounts) {
-                    $amount = $amounts[$file->id] ?? null;
+            /*
+             * What cannot stand, said before anything moves: a reversal above
+             * what was booked to that vendor for these works, or one figure
+             * typed for a folder two vendors hold, which cannot be split
+             * between them without guessing.
+             */
+            $refused = [];
 
-                    return $amount !== null && $amount !== ''
-                        && (float) $amount > (float) $file->vendor_amount;
-                })
-                ->pluck('file_no');
+            foreach (WorkFileModel::withVendor(array_keys($picks)) as $file) {
+                $held = $file->heldByVendor();
+                $taking = self::takingFrom($picks[$file->id], $held);
 
-            if ($overReversed->isNotEmpty()) {
+                /*
+                 * Before the migration has run, a part is kept on the folder,
+                 * and a folder not back yet keeps none: typed for one vendor
+                 * while another still has work on it, it would be dropped, and
+                 * all of theirs reversed (found in review). Refused, rather.
+                 */
+                $partKept = WorkFileItemModel::partReversals()
+                    || WorkFileModel::isOlderFolder($file->items)
+                    || ! array_diff_key($held, $taking);
+
+                foreach ($taking as $vendorId => $works) {
+                    $typed = self::typedReversal($amounts, $file->id, $vendorId, count($held));
+                    $name = $file->file_no.' ('.(self::holderName($file, $vendorId, $works) ?? 'its vendor').')';
+
+                    if ($typed === false) {
+                        $refused[] = $name.' — tick each vendor\'s row';
+                    } elseif ($typed !== null && ! $partKept) {
+                        $refused[] = $name.' — a part can be typed here once the update is finished; leave it blank to reverse all of it';
+                    } elseif ($typed !== null && (float) $typed > (float) $file->bookedFor($vendorId, $works)) {
+                        $refused[] = $name;
+                    }
+                }
+            }
+
+            if ($refused) {
                 return back()->withInput()->with(
                     'error',
-                    'A reversal cannot exceed what was booked to the vendor. Check: '.$overReversed->implode(', ')
+                    'A reversal cannot exceed what was booked to the vendor. Check: '.implode(', ', $refused)
                 );
             }
 
-            $returned = DB::transaction(function () use ($req, $amounts) {
-                // Re-read under the same conditions the screen was built with, so
-                // a stale page cannot return a file twice or return one that has
-                // since been cancelled.
-                $files = WorkFileModel::whereIn('id', $req->input('files'))
-                    ->whereNotNull('vendor_id')
-                    ->whereNull('vendor_returned_on')
-                    // Same condition the screen was built with, so a stale page
-                    // cannot act on a file that has since finished with these papers.
-                    ->whereNotIn('status', [WorkFileModel::CANCELLED, WorkFileModel::RETURNED])
-                    ->with('vendor')
-                    ->get();
+            $returned = DB::transaction(function () use ($req, $amounts, $picks) {
+                $done = [];
 
-                foreach ($files as $file) {
+                // Re-read under the same conditions the screen was built with,
+                // so a stale page cannot take a work back twice, or one that has
+                // since been cancelled or gone back to its customer.
+                foreach (WorkFileModel::withVendor(array_keys($picks)) as $file) {
+                    $held = $file->heldByVendor();
+                    $taking = self::takingFrom($picks[$file->id], $held);
+
+                    if (! $taking) {
+                        continue;
+                    }
+
                     $from = $file->status;
-                    $vendorName = $file->vendor?->name;
+                    $older = WorkFileModel::isOlderFolder($file->items);
+                    $live = $file->items->reject(fn ($item) => $item->status === WorkFileModel::CANCELLED);
+                    $clauses = [];
 
-                    $amount = $amounts[$file->id] ?? null;
+                    foreach ($taking as $vendorId => $works) {
+                        $typed = self::typedReversal($amounts, $file->id, $vendorId, count($held));
+                        $name = self::holderName($file, $vendorId, $works);
 
-                    $file->vendor_returned_on = $req->returned_on;
+                        /*
+                         * Back on our desk — the work that was still out, at
+                         * least. Work already through the RTO stays approved:
+                         * the papers moving does not undo what was done to
+                         * them. Nothing is forced on work already returned to
+                         * its customer or cancelled: doing that once withdrew a
+                         * customer's refund and re-charged them in full.
+                         */
+                        $moves = $older ? $live : $works;
 
-                    // The works come back with the folder, for the reason they
-                    // went out with it.
-                    $file->items()
-                        ->where('status', '<>', WorkFileModel::CANCELLED)
-                        ->whereNotNull('vendor_id')
-                        ->update(['vendor_returned_on' => $req->returned_on]);
-                    // Blank, or the whole booking, both mean reverse it all.
-                    $file->vendor_returned_amount = self::partialOrNull($amount, $file->vendor_amount);
+                        foreach ($moves as $work) {
+                            if (in_array($work->status, WorkFileModel::OPEN_STATUSES, true)) {
+                                $work->status = WorkFileModel::IN_OFFICE;
+                            }
 
-                    /*
-                     * Back on our desk — the work that was still out, at least.
-                     * Work already through the RTO stays approved: the papers
-                     * moving does not undo what was done to them.
-                     *
-                     * The works move, not just the folder. Moving the folder
-                     * alone left it saying In Office while every work on it
-                     * still said File Dispatch, and the next roll-up read the
-                     * works and flipped it back to claiming it was with the
-                     * vendor.
-                     *
-                     * Nothing is forced on a file already returned to its
-                     * customer or cancelled: doing that once rewrote such a
-                     * file's status, and syncLedger withdrew the customer's
-                     * refund and silently re-charged them in full.
-                     */
-                    $file->items()
-                        ->whereIn('status', WorkFileModel::OPEN_STATUSES)
-                        ->update(['status' => WorkFileModel::IN_OFFICE]);
+                            if (! $older) {
+                                $work->vendor_returned_on = $req->returned_on;
+                            }
+
+                            $work->save();
+                        }
+
+                        $booked = (float) $file->bookedFor($vendorId, $works);
+                        $rates = $works->sum(fn ($work) => (float) $work->vendor_amount);
+
+                        if ($older) {
+                            // The folder is the vendor's, all of it, and says so.
+                            $file->vendor_returned_on = $req->returned_on;
+                            $file->vendor_returned_amount = WorkFileModel::partOrAll($typed, $booked);
+                        } elseif (WorkFileItemModel::partReversals() && $rates > 0) {
+                            // A part is shared over their works; see reversalOnWorks().
+                            foreach (WorkFileModel::reversalOnWorks($works, $typed) as $workId => $part) {
+                                $works->firstWhere('id', $workId)->forceFill(['vendor_returned_amount' => $part])->save();
+                            }
+                        } elseif (! WorkFileItemModel::partReversals() || $booked > 0) {
+                            // A rate agreed on the folder alone, or works that
+                            // cannot carry a part yet: on the folder, as before.
+                            // Never "all of it" for work nobody priced, though:
+                            // the office's own rate is not theirs to take back.
+                            $file->vendor_returned_amount = WorkFileModel::partOrAll($typed, $booked);
+                        }
+
+                        // Named so a customer's history drops it; see customerRemark().
+                        $clauses[] = $works->count() === $live->count() || $older
+                            ? 'Papers returned by '.$name
+                            : $works->map(fn ($work) => $work->workType?->name)->filter()->unique()->implode(', ').' papers returned by '.$name;
+
+                        $done[] = $file->file_no.' ('.$name.')';
+                    }
 
                     $file->load('items');
                     $file->rollUp();
                     $file->save();
                     $file->syncLedger();
 
-                    $file->logStatus($from, trim(($req->remark ? $req->remark.' — ' : '').'Papers returned by '.$vendorName));
+                    $file->logStatus($from, trim(($req->remark ? $req->remark.' — ' : '').implode('; ', $clauses)));
                 }
 
-                return $files;
+                return $done;
             });
 
-            if ($returned->isEmpty()) {
+            if (! $returned) {
                 return back()->with('error', 'Those files are no longer out with a vendor — they may have been returned or cancelled already.');
             }
 
             return redirect()->route('workfile.index')
-                ->with('success', $returned->count().' '.Str::plural('file', $returned->count())
-                    .' taken back from the vendor: '.$returned->pluck('file_no')->implode(', '));
+                ->with('success', 'Taken back: '.implode(', ', $returned));
         }
 
         $files = WorkFileModel::withVendor();
@@ -2009,6 +2064,19 @@ class WorkFileController extends Controller
             ? date('d-m-Y', strtotime($returnedOn))
             : (string) $returnedOn;
 
+        /*
+         * One row a vendor a folder: a folder split between two is listed
+         * under each, with their own works and what was booked to them for
+         * those. Newest out first, at the office's request.
+         */
+        $rows = $files
+            ->flatMap(fn ($file) => collect($file->heldByVendor())
+                ->map(fn ($works, $vendorId) => self::takeBackRow($file, (int) $vendorId, $works))
+                ->values())
+            ->sort(fn ($a, $b) => [(string) $b['given_raw'], $b['id'], $a['vendor_id']] <=> [(string) $a['given_raw'], $a['id'], $b['vendor_id']])
+            ->map(fn ($row) => array_diff_key($row, ['given_raw' => true]))
+            ->values();
+
         $props = [
             'action' => route('workfile.vendorreturn'),
             'csrf' => csrf_token(),
@@ -2017,30 +2085,105 @@ class WorkFileController extends Controller
             'returnedOnDisplay' => $returnedOnDisplay,
             'remark' => old('remark', ''),
             // A bounced batch comes back ticked and filled in as it was sent.
-            'pickedIds' => array_map('intval', (array) old('files', [])),
+            // Only what a row could have posted: a hand-made nested value
+            // would not survive being read as text (found in review).
+            'pickedIds' => array_values(array_map('strval', array_filter((array) old('files', []), 'is_scalar'))),
             'oldAmounts' => (object) (array) old('amounts', []),
-            'files' => $files->map(fn ($file) => [
-                'id' => $file->id,
-                'file_no' => $file->file_no,
-                // Named from the works when the folder is split between vendors.
-                'vendor' => $file->vendorLabel(),
-                'vendor_date' => $file->vendor_date ? date('d-m-Y', strtotime($file->vendor_date)) : null,
-                // How long the vendor has had it, which is why this list is read.
-                'days_out' => WorkFileModel::daysOutText($file->vendor_date, $file->status),
-                'registration_no' => $file->registration_no,
-                // Every work on the file, not the first of them: a folder
-                // for a transfer and a hypothecation addition is both.
-                'work_type' => $file->workLabel() ?: $file->workType?->name,
-                'description' => $file->description,
-                'customer' => $file->customer?->name,
-                'vendor_amount' => $file->vendor_amount === null ? null : (float) $file->vendor_amount,
-            ])->values(),
+            'files' => $rows,
         ];
 
         return Screen::make('admin.work.vendor-return', 'vue-vendor-return', $props, [
-            'fileCount' => $files->count(),
+            'fileCount' => $rows->count(),
             'anyFiles' => WorkFileModel::exists(),
         ])->toResponse($req);
+    }
+
+    /** What a vendor still holds of one folder, as a row of the take-back list. */
+    private static function takeBackRow(WorkFileModel $file, int $vendorId, $works): array
+    {
+        $older = WorkFileModel::isOlderFolder($file->items);
+        $given = $older ? $file->vendor_date : $works->pluck('vendor_date')->filter()->min();
+        $booked = $file->bookedFor($vendorId, $works);
+
+        return [
+            'id' => $file->id,
+            // What the row posts: this folder, this vendor.
+            'key' => $file->id.':'.$vendorId,
+            'vendor_id' => $vendorId,
+            'file_no' => $file->file_no,
+            'vendor' => self::holderName($file, $vendorId, $works),
+            'vendor_date' => $given ? date('d-m-Y', strtotime($given)) : null,
+            'given_raw' => $given ? date('Y-m-d', strtotime($given)) : '',
+            // How long the vendor has had it, which is why this list is read.
+            'days_out' => WorkFileModel::daysOutText($given, $older ? $file->status : WorkFileModel::statusFromItems($works, $file->status)),
+            'registration_no' => $file->registration_no,
+            // Their works, not the folder's: a transfer they have and a
+            // hypothecation the office kept is a transfer, to them.
+            'work_type' => ($older ? $file->workLabel() : $works->map(fn ($work) => $work->workType?->name)->filter()->unique()->implode(', '))
+                ?: $file->workType?->name,
+            'description' => $file->description,
+            'customer' => $file->customer?->name,
+            'vendor_amount' => $booked,
+        ];
+    }
+
+    /** Who holds these works: their own vendor, or on an older folder the folder's. */
+    private static function holderName(WorkFileModel $file, int $vendorId, $works): ?string
+    {
+        return collect($works)->firstWhere('vendor_id', $vendorId)?->vendor?->name
+            ?? ((int) $file->vendor_id === $vendorId ? $file->vendor?->name : null);
+    }
+
+    /**
+     * The rows ticked, by folder: "12:5" is folder 12's vendor 5, and a bare
+     * "12" — an older page — is every vendor still holding work on it.
+     *
+     * @return array<int, array<int, int>|null> folder id => vendor ids, or null for all
+     */
+    private static function takeBackPicks(array $ticked): array
+    {
+        $picks = [];
+
+        foreach ($ticked as $one) {
+            [$fileId, $vendorId] = array_pad(explode(':', (string) $one, 2), 2, null);
+            $fileId = (int) $fileId;
+
+            if ($vendorId === null) {
+                $picks[$fileId] = null;
+            } elseif (! array_key_exists($fileId, $picks) || $picks[$fileId] !== null) {
+                $picks[$fileId][] = (int) $vendorId;
+            }
+        }
+
+        return $picks;
+    }
+
+    /** The vendors ticked on one folder who still hold work on it, with their works. */
+    private static function takingFrom(?array $vendorIds, array $held): array
+    {
+        return $vendorIds === null ? $held : array_intersect_key($held, array_flip($vendorIds));
+    }
+
+    /**
+     * The part typed for one vendor's row — or for a bare folder number, when
+     * one vendor holds it. False when a bare folder number with a figure is two
+     * vendors': the figure cannot be split between them without guessing.
+     */
+    private static function typedReversal(array $amounts, int $fileId, int $vendorId, int $holders): string|false|null
+    {
+        $own = $amounts[$fileId.':'.$vendorId] ?? null;
+
+        if ($own !== null && $own !== '') {
+            return $own;
+        }
+
+        $bare = $amounts[$fileId] ?? null;
+
+        if ($bare === null || $bare === '') {
+            return null;
+        }
+
+        return $holders === 1 ? $bare : false;
     }
 
     /**
@@ -2867,12 +3010,23 @@ class WorkFileController extends Controller
                 ])->with('error', 'This changes a price that was already agreed: '.implode('; ', $priceChanges));
             }
 
-            // Both the credit and its reversal are tied to one vendor, so moving
-            // the file elsewhere afterwards would drag that vendor's history onto
-            // someone else's statement. Undo the return first.
-            if ($file->isReturnedByVendor() && (int) $req->vendor_id !== (int) $file->vendor_id) {
-                return back()->withInput()->with('error', 'This file was returned by '.($file->vendor?->name ?? 'its vendor')
-                    .'. Clear the return date before giving it to a different vendor, so their statement keeps both entries.');
+            /*
+             * Both the credit and its reversal are tied to one vendor, so moving
+             * the file elsewhere afterwards would drag that vendor's history onto
+             * someone else's statement. Any work back, not only the whole
+             * folder: found in review, one vendor's part handed back and
+             * another's still out, the box moved every work to the new vendor
+             * and the first one's credit and reversal went with it.
+             */
+            $anyBack = $file->isReturnedByVendor() || $file->items()
+                ->where('status', '<>', WorkFileModel::CANCELLED)
+                ->whereNotNull('vendor_id')
+                ->whereNotNull('vendor_returned_on')
+                ->exists();
+
+            if ($anyBack && (int) $req->vendor_id !== (int) $file->vendor_id) {
+                return back()->withInput()->with('error', 'Work on this file came back from its vendor, and their statement keeps '
+                    .'both lines for it — so it cannot be moved to another vendor here.');
             }
 
             if ($req->status === WorkFileModel::APPROVED
@@ -3001,11 +3155,13 @@ class WorkFileController extends Controller
                 if ((int) $vendorWas !== (int) $file->vendor_id) {
                     $file->items()
                         ->where('status', '<>', WorkFileModel::CANCELLED)
-                        ->update([
+                        ->update(array_merge([
                             'vendor_id' => $file->vendor_id,
                             'vendor_date' => $file->vendor_date,
-                            'vendor_returned_on' => $file->vendor_id ? $file->vendor_returned_on : null,
-                        ]);
+                            // Nothing on it came back: the guard above refuses
+                            // a new vendor where anything did.
+                            'vendor_returned_on' => null,
+                        ], WorkFileItemModel::partReversals() ? ['vendor_returned_amount' => null] : []));
                 } elseif ($file->vendor_id) {
                     /*
                      * The same vendor, with the day corrected: the works that

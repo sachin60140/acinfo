@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\PartyLedgerModel;
+use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -102,6 +103,15 @@ class ResyncVendors extends Command
                     $file->vendor_id = $plan['folder']['vendor_id'];
                     $file->vendor_date = $plan['folder']['vendor_date'];
                     $file->vendor_returned_on = $plan['folder']['vendor_returned_on'];
+                }
+
+                if ($plan['folder'] || $plan['reversal']) {
+                    // Refigured from the works whenever the folder is written,
+                    // so a changed hand-back day cannot leave a stale figure.
+                    if (WorkFileItemModel::partReversals() && ! WorkFileModel::isOlderFolder($file->items)) {
+                        $file->vendor_returned_amount = $file->reversalFromWorks($file->items);
+                    }
+
                     $file->save();
                 }
 
@@ -130,6 +140,13 @@ class ResyncVendors extends Command
 
         if ($folder) {
             $says[] = 'names vendor #'.($file->vendor_id ?: 'none').' → #'.($folder['vendor_id'] ?: 'none');
+        }
+
+        // What it says came back of its vendors' rates, where its works now say.
+        $reversal = self::reversalDrift($file);
+
+        if ($reversal) {
+            $says[] = 'rates back '.$reversal[0].' → '.$reversal[1];
         }
 
         // Each vendor's lines, as they stand and as they should.
@@ -186,6 +203,36 @@ class ResyncVendors extends Command
                 && (! $item->vendor_id || $item->vendor_returned_on))
             ->count();
 
-        return ['says' => $says, 'folder' => $folder, 'held' => $held, 'office_dispatched' => $officeDispatched];
+        return ['says' => $says, 'folder' => $folder, 'reversal' => $reversal !== null, 'held' => $held, 'office_dispatched' => $officeDispatched];
+    }
+
+    /**
+     * The folder's own part reversal where its works say another — what a
+     * folder handed back before the works carried their part, or before the
+     * roll-up learned to add them, still says. Null where they agree, or where
+     * the works cannot carry a part yet, or on an older folder.
+     *
+     * @return array{0: string, 1: string}|null  [what it says, what the works say]
+     */
+    public static function reversalDrift(WorkFileModel $file): ?array
+    {
+        // A cancelled folder's figure is frozen until it is un-cancelled,
+        // when roll-up works it out again from the works.
+        if (! WorkFileItemModel::partReversals() || WorkFileModel::isOlderFolder($file->items) || $file->isCancelled()) {
+            return null;
+        }
+
+        $has = $file->vendor_returned_amount === null ? null : round((float) $file->vendor_returned_amount, 2);
+        $should = $file->reversalFromWorks($file->items);
+
+        if ($has === $should || ($has !== null && $should !== null && abs($has - $should) < 0.005)) {
+            return null;
+        }
+
+        $say = fn (?float $amount) => $amount === null
+            ? ($file->vendor_returned_on ? 'all' : 'none')
+            : number_format($amount, 2);
+
+        return [$say($has), $say($should)];
     }
 }

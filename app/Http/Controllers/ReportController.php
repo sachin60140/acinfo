@@ -7,6 +7,7 @@ use App\Models\ExpenseTypeModel;
 use App\Models\PartyLedgerModel;
 use App\Models\PartyModel;
 use App\Models\WorkFileExpenseModel;
+use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Support\Screen;
 use App\Support\WhatsApp;
@@ -520,14 +521,51 @@ class ReportController extends Controller
             ->get()
             ->map(fn ($one) => $row($one, -1_000_000_000 - (int) $one->file_id, (float) $one->amount, self::givenOut($one->work, $one->vendor_name)));
 
-        // What the vendor handed back is gated on the folder, as SPENT is:
-        // the folder is back when every work on it is. Asked of one vendor,
-        // a folder that is theirs — which a folder handed back is, the return
-        // screen taking back only a folder with one vendor.
-        $reversed = DB::table('work_file as f')
+        $handedBack = fn ($one) => 'Handed back'.($one->vendor_name ? ' by '.$one->vendor_name : ' by the vendor').' · rate reversed';
+
+        /*
+         * What a vendor handed back, work by work: each work's own reversal,
+         * one row a vendor a file a day. Found on 2026-09-29: read off the
+         * folder, a folder a vendor held part of reversed the office's rate
+         * under their name too, and a folder split between two showed one
+         * vendor's hand-back under neither. These add up to SPENT's reversal,
+         * which is the works' rolled up.
+         */
+        $reversed = WorkFileItemModel::partReversals()
+            ? DB::table('work_file_item as i')
+                ->join('work_file as f', 'f.id', '=', 'i.work_file_id')
+                ->leftJoin('party as v', 'v.id', '=', 'i.vendor_id')
+                ->where('i.status', '<>', WorkFileModel::CANCELLED)
+                ->whereNotNull('i.vendor_id')
+                ->whereNotNull('i.vendor_returned_on')
+                ->where('i.vendor_amount', '>', 0)
+                ->when($vendorId, fn ($q) => $q->where('i.vendor_id', $vendorId))
+                ->select(
+                    'i.id',
+                    'i.vendor_id',
+                    DB::raw('LEAST(COALESCE(i.vendor_returned_amount, i.vendor_amount), i.vendor_amount) as amount'),
+                    'v.name as vendor_name'
+                )
+                ->tap(fn ($q) => $files($q, 'i.vendor_returned_on'))
+                ->get()
+                ->groupBy(fn ($one) => $one->file_id.':'.$one->vendor_id.':'.$one->day)
+                ->map(fn ($day) => $row(
+                    $day->first(),
+                    -3_000_000_000 - (int) $day->min('id'),
+                    -1 * round($day->sum(fn ($one) => (float) $one->amount), 2),
+                    $handedBack($day->first())
+                ))
+                ->filter(fn ($one) => $one->amount < 0)
+                ->values()
+            : collect();
+
+        // And an older folder's — or, before the works could carry a part,
+        // every folder's — off the folder, as SPENT reads it.
+        $older = DB::table('work_file as f')
             ->leftJoin('party as v', 'v.id', '=', 'f.vendor_id')
             ->whereNotNull('f.vendor_returned_on')
             ->where('f.vendor_amount', '>', 0)
+            ->when(WorkFileItemModel::partReversals(), fn ($q) => $q->whereRaw(WorkFileModel::olderFolderSql('f')))
             ->when($vendorId, fn ($q) => $q->where('f.vendor_id', $vendorId))
             ->select(
                 DB::raw('LEAST(COALESCE(f.vendor_returned_amount, f.vendor_amount), f.vendor_amount) as amount'),
@@ -536,14 +574,9 @@ class ReportController extends Controller
             ->tap(fn ($q) => $files($q, 'f.vendor_returned_on'))
             ->get()
             ->filter(fn ($one) => (float) $one->amount > 0)
-            ->map(fn ($one) => $row(
-                $one,
-                -2_000_000_000 - (int) $one->file_id,
-                -1 * (float) $one->amount,
-                'Handed back'.($one->vendor_name ? ' by '.$one->vendor_name : ' by the vendor').' · rate reversed'
-            ));
+            ->map(fn ($one) => $row($one, -2_000_000_000 - (int) $one->file_id, -1 * (float) $one->amount, $handedBack($one)));
 
-        return $works->concat($folders)->concat($reversed)->values();
+        return $works->concat($folders)->concat($reversed)->concat($older)->values();
     }
 
     /** "TR · Parwez Ji · given out", or that it has not gone to anybody yet. */

@@ -28,15 +28,23 @@ const props = defineProps({
 });
 
 /*
- * One row of working state per file. Old input is folded in, so a batch the
- * server bounced comes back with the same files ticked and the same figures
- * typed rather than making someone rebuild it.
+ * One row of working state per vendor per file: a folder split between two
+ * vendors is two rows, each taking back only that vendor's works. What a row
+ * posts is its key — "12:5", folder 12's vendor 5 — or the file's own number
+ * where the server sent no key.
+ *
+ * Old input is folded in, so a batch the server bounced comes back with the
+ * same rows ticked and the same figures typed rather than making someone
+ * rebuild it.
  */
+const keyOf = (file) => String(file.key ?? file.id);
+
 const rows = reactive(
     props.files.map((file) => ({
         ...file,
-        picked: props.pickedIds.some((id) => Number(id) === Number(file.id)),
-        amount: props.oldAmounts[file.id] ?? '',
+        key: keyOf(file),
+        picked: props.pickedIds.some((id) => String(id) === keyOf(file)),
+        amount: props.oldAmounts[keyOf(file)] ?? '',
     }))
 );
 
@@ -53,7 +61,9 @@ const booked = (row) => Number(row.vendor_amount) || 0;
  * so filling in there makes the box impossible to clear or edit.
  */
 function prefill(row) {
-    if (row.picked && String(row.amount).trim() === '') {
+    // Nothing booked yet, nothing to show: a 0.00 filled in would read as a
+    // figure, and the server refuses one.
+    if (row.picked && String(row.amount).trim() === '' && booked(row) > 0) {
         row.amount = booked(row).toFixed(2);
     }
 }
@@ -160,7 +170,7 @@ const summary = computed(() => {
 
     return {
         tone: 'ready',
-        text: `${count} ${count === 1 ? 'file comes' : 'files come'} back, ${money(total.value)} off what is owed to vendors.`,
+        text: `${count} ${count === 1 ? 'comes' : 'come'} back, ${money(total.value)} off what is owed to vendors.`,
     };
 });
 </script>
@@ -237,9 +247,11 @@ const summary = computed(() => {
                     <div>
                         <h2 class="ui-card__title">Files Out With Vendors</h2>
                         <div class="ui-hint vr-blurb">
-                            Taking a file back reverses what was booked to that vendor. Their statement keeps
+                            Taking work back reverses what was booked to that vendor for it. Their statement keeps
                             both lines &mdash; what was booked and what came back &mdash; and nets to nothing
-                            owed. The file returns to <strong>In Office</strong>.
+                            owed. Their works return to <strong>In Office</strong>; work kept in the office, or
+                            with another vendor, stays where it is. A file shared between vendors is listed once
+                            for each.
                         </div>
                     </div>
 
@@ -273,7 +285,7 @@ const summary = computed(() => {
                             <tbody>
                                 <tr
                                     v-for="row in rows"
-                                    :key="row.id"
+                                    :key="row.key"
                                     :class="{ 'is-picked': row.picked, 'is-blocked': problem(row) !== null }">
                                     <td data-label="Take back" class="vr-pick">
                                         <!-- The square around the box ticks it too; see .tick-hit. -->
@@ -282,9 +294,9 @@ const summary = computed(() => {
                                                 type="checkbox"
                                                 class="vr-tick"
                                                 name="files[]"
-                                                :value="row.id"
+                                                :value="row.key"
                                                 v-model="row.picked"
-                                                :aria-label="`Take back file ${row.file_no}`"
+                                                :aria-label="row.vendor ? `Take back file ${row.file_no} from ${row.vendor}` : `Take back file ${row.file_no}`"
                                                 @change="prefill(row)">
                                         </label>
                                     </td>
@@ -325,7 +337,7 @@ const summary = computed(() => {
                                             :max="row.vendor_amount"
                                             class="ui-input ui-input--amount"
                                             :class="{ 'ui-input--invalid': problem(row) !== null }"
-                                            :name="`amounts[${row.id}]`"
+                                            :name="`amounts[${row.key}]`"
                                             v-model="row.amount"
                                             :disabled="!row.picked"
                                             :placeholder="booked(row).toFixed(2)">

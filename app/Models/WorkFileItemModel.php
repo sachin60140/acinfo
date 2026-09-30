@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * One job on a file.
@@ -113,6 +114,34 @@ class WorkFileItemModel extends Model
             } else {
                 $item->approved_on = null;
             }
+
+            // A part of the rate reversed goes with the hand-back it was part
+            // of, as the folder's does.
+            if (self::partReversals() && ! $item->vendor_returned_on) {
+                $item->vendor_returned_amount = null;
+            }
         });
+    }
+
+    /**
+     * Whether a work can carry its own part reversal yet: the column arrives
+     * with a migration, and a deploy here is a git pull that does not run one.
+     * Until it has, a hand-back reverses as it did — on the folder.
+     */
+    public static function partReversals(): bool
+    {
+        return self::$partReversals ??= Schema::hasColumn('work_file_item', 'vendor_returned_amount');
+    }
+
+    private static ?bool $partReversals = null;
+
+    /**
+     * For the tests: behave as though the migration has or has not run, or
+     * (null) ask the database again. The path between a pull and a migrate
+     * is the one a deploy here always takes, so it is tested.
+     */
+    public static function assumePartReversals(?bool $known): void
+    {
+        self::$partReversals = $known;
     }
 }

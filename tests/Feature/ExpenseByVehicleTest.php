@@ -163,14 +163,15 @@ class ExpenseByVehicleTest extends TestCase
         return (float) WorkFileModel::whereKey($file->id)->selectRaw(WorkFileModel::SPENT.' as spent')->value('spent');
     }
 
-    /** The vendor hands the folder back undone, as the vendor-return screen records it. */
+    /** The vendor hands the folder back undone, through the vendor-return screen. */
     private function handBack(WorkFileModel $file, ?float $reversed, string $on = '2026-09-20'): void
     {
-        $file->items()->update(['vendor_returned_on' => $on, 'status' => WorkFileModel::IN_OFFICE]);
-        $file->vendor_returned_amount = $reversed;
-        $file->rollUp();
-        $file->save();
-        $file->syncLedger();
+        $this->actingAs($this->admin)->post(route('workfile.vendorreturn'), [
+            'returned_on' => $on,
+            'files' => [$file->id],
+            'amounts' => $reversed === null ? [] : [$file->id => $reversed],
+            'remark' => 'Handed back undone',
+        ])->assertRedirect(route('workfile.index'));
     }
 
     // ------------------------------------------------------------- the point

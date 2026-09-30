@@ -423,6 +423,12 @@ class AuditWorkFiles extends Command
                 .' — files:resync-vendors puts this right');
         }
 
+        // And what it says came back of its vendors' rates.
+        if ($reversal = ResyncVendors::reversalDrift($file)) {
+            $note($id, 'says '.$reversal[0].' of its vendors\' rates came back but its works say '.$reversal[1]
+                .' — files:resync-vendors puts this right');
+        }
+
         // The wording, which files:relabel-ledger is what puts right.
         $customer = $entries->get('customer');
 
@@ -439,7 +445,9 @@ class AuditWorkFiles extends Command
          * kept the details, and nothing here said so.
          */
         foreach (PartyLedgerModel::where('work_file_id', $file->id)->whereIn('file_role', ['vendor', 'vendor_return'])->get() as $line) {
-            $should = $file->vendorParticularFor((int) $line->party_id).($line->file_role === 'vendor_return' ? ' - returned by vendor' : '');
+            // As vendorLines() words it, where the line is one it calls for.
+            $should = $lines[$line->file_role][(int) $line->party_id]['says']
+                ?? $file->vendorParticularFor((int) $line->party_id).($line->file_role === 'vendor_return' ? ' - returned by vendor' : '');
 
             if ($line->particular !== $should) {
                 $note($id, "reads \"{$line->particular}\" on vendor {$line->party_id}'s statement and should read \"$should\""

@@ -348,12 +348,14 @@ class PartlyGivenVendorReportTest extends TestCase
     /** He hands his work back: it is in the office, and his booking is reversed in part. */
     public function test_a_vendor_hand_back_is_theirs(): void
     {
-        $file = $this->move($this->partlyGiven(), $this->hpt, [
-            'status' => WorkFileModel::IN_OFFICE,
-            'vendor_returned_on' => '2026-09-05',
-        ]);
-        $file->vendor_returned_amount = 500;
-        $file->save();
+        $file = $this->partlyGiven();
+
+        $this->actingAs($this->admin)->post(route('workfile.vendorreturn'), [
+            'returned_on' => '2026-09-05',
+            'files' => [$file->id.':'.$this->sharma->id],
+            'amounts' => [$file->id.':'.$this->sharma->id => 500],
+            'remark' => 'Handed back undone',
+        ])->assertRedirect(route('workfile.index'));
 
         $row = $this->rowsFor($file, ['status' => WorkFileModel::IN_OFFICE])[$this->sharma->id];
 
