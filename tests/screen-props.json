@@ -129,6 +129,7 @@
                     "id": "number",
                     "items": {
                         "list_of": {
+                            "came_back_from": "null",
                             "customer_amount": "number",
                             "id": "number",
                             "kept_on": "null",
