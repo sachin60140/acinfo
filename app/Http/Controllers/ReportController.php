@@ -1363,13 +1363,20 @@ class ReportController extends Controller
                         default => $days.' days',
                     },
                     'days' => max(0, $days),
-                    'state' => $file === null ? '' : ($theirs->every($approved) ? 'Finished' : $theirs
+                    /*
+                     * A line on a file none of whose works are theirs — one
+                     * the old rule wrote, which files:resync-vendors has not
+                     * put right because a payment is adjusted against it —
+                     * says so, rather than reading Finished over nothing
+                     * (found in review).
+                     */
+                    'state' => $file === null ? '' : ($theirs->isEmpty() ? 'Not their work — see files:resync-vendors' : ($theirs->every($approved) ? 'Finished' : $theirs
                         ->map(fn ($item) => match (true) {
                             $approved($item) => WorkFileModel::STATUSES[$item->status],
                             $item->vendor_returned_on !== null => 'Given back',
                             default => WorkFileModel::STATUSES[$item->status] ?? $item->status,
                         })
-                        ->unique()->implode(', ')),
+                        ->unique()->implode(', '))),
                     'finished' => $finished ? $bill['due'] : 0.0,
                     'due' => $bill['due'],
                 ]);
@@ -1478,7 +1485,7 @@ class ReportController extends Controller
              * works carried a vendor — none of them ever did — is the folder's
              * vendor's, all of it.
              */
-            $older = $all->every(fn ($work) => ! $work->vendor_id);
+            $older = WorkFileModel::isOlderFolder($all);
 
             if ($partyType === 'vendor') {
                 /*
