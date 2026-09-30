@@ -1022,7 +1022,9 @@ class WorkFileController extends Controller
                         $item->canBeGivenOut() => 'here',
                         // Handed back with part of its rate still theirs: back,
                         // not "with them", and not offered — see cameBackWhole().
-                        $item->vendor_id && $item->vendor_returned_on => 'back',
+                        // Before the migration which it is cannot be told, and
+                        // saying part is still theirs would often be untrue.
+                        $item->vendor_id && $item->vendor_returned_on => WorkFileItemModel::partReversals() ? 'back' : 'back_pending',
                         (bool) $item->vendor_id => 'out',
                         default => 'kept',
                     },
@@ -1146,13 +1148,14 @@ class WorkFileController extends Controller
                      * from before works carried one looks like — and such a
                      * folder is its own vendor's, all of it. The roll-up leaves
                      * that as written, so it is cleared here: the folder is
-                     * nobody's, as though never given (found in testing).
+                     * nobody's, as though never given (found in testing). What
+                     * was reversed goes with the day it came back; the saving
+                     * hook clears it.
                      */
                     if (WorkFileModel::isOlderFolder($file->items)) {
                         $file->vendor_id = null;
                         $file->vendor_date = null;
                         $file->vendor_returned_on = null;
-                        $file->vendor_returned_amount = null;
                     }
 
                     $file->rollUp();

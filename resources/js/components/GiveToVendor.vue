@@ -667,6 +667,14 @@ onMounted(() => {
                                                 title="Part of its rate is still theirs, so it cannot go to anyone else">
                                                 back from {{ item.vendor || 'a vendor' }}, part of the rate still theirs
                                             </span>
+                                            <!-- Handed back while the update is unfinished: whether
+                                                 any of the rate is still theirs cannot be told yet. -->
+                                            <span
+                                                v-else-if="item.state === 'back_pending'"
+                                                class="give-work__with"
+                                                title="Not offered again until the update is finished">
+                                                back from {{ item.vendor || 'a vendor' }}
+                                            </span>
                                             <!-- Ours. Shown rather than dropped, so the row says why
                                                  this work has no tick instead of simply lacking one;
                                                  letting go of it again is done on the edit screen. -->

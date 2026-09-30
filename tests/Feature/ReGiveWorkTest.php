@@ -380,7 +380,15 @@ class ReGiveWorkTest extends TestCase
 
         $this->assertSame([], $this->lines($file, 'vendor'));
         $this->assertSame([], $this->lines($file, 'vendor_return'));
-        $this->assertNull($file->fresh()->vendor_id);
+
+        // Nobody's, as though never given: a folder still marked back from
+        // a vendor is refused a new one on the edit screen (found in review).
+        $folder = $file->fresh();
+        $this->assertNull($folder->vendor_id);
+        $this->assertNull($folder->vendor_date);
+        $this->assertNull($folder->vendor_returned_on);
+        $this->assertNull($folder->vendor_returned_amount);
+        $this->assertFalse($folder->isReturnedByVendor());
 
         // Off Give to Vendor, and on the office's own list.
         $this->assertArrayNotHasKey($file->id, $this->onOffer());
@@ -433,5 +441,22 @@ class ReGiveWorkTest extends TestCase
         $this->assertSame($this->sharma->id, (int) $this->work($file, $this->tr)->vendor_id);
         $this->assertEquals([$this->sharma->id => 1000], $this->lines($file, 'vendor'));
         $this->assertEquals([$this->sharma->id => 1000], $this->lines($file, 'vendor_return'));
+    }
+
+    /**
+     * And the screen says only that it is back: whether part of its rate is
+     * still theirs cannot be told yet, and it often is not (found in review).
+     */
+    public function test_before_the_update_it_is_said_to_be_back_and_no_more(): void
+    {
+        WorkFileItemModel::assumePartReversals(false);
+
+        // Listed for the work never given out.
+        $file = $this->backWhole([$this->tr, $this->hpa]);
+
+        $work = $this->offered($file, $this->tr);
+        $this->assertSame('back_pending', $work['state']);
+        $this->assertNull($work['came_back_from']);
+        $this->assertSame('here', $this->offered($file, $this->hpa)['state']);
     }
 }

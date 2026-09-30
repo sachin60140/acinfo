@@ -289,6 +289,7 @@ describe('work a vendor handed back', () => {
     const BACK = file(4, [
         work(41, 'TR', { came_back_from: 'Sharma Ji', vendor: 'Sharma Ji', vendor_date: '01-09-2026', vendor_amount: 1000 }),
         work(42, 'HPA', { state: 'back', vendor: 'Dabloo Ji Muzaffarpur', vendor_date: '01-09-2026', vendor_amount: 900 }),
+        work(43, 'RC', { state: 'back_pending', vendor: 'Dabloo Ji Muzaffarpur', vendor_date: '01-09-2026', vendor_amount: 700 }),
     ]);
 
     const withBack = () => mount({ files: [BACK] });
@@ -320,6 +321,19 @@ describe('work a vendor handed back', () => {
         await click(fileBox(host, 4));
 
         expect(postedWork(host)).toEqual([41]);
+    });
+
+    it('before the update, says only that it is back', () => {
+        const host = withBack();
+
+        expect(workBox(host, 43)).toBeNull();
+
+        const line = [...fileBox(host, 4).closest('tr').querySelectorAll('.give-work--fixed')]
+            .find((el) => el.textContent.includes('RC'));
+
+        expect(line.textContent).toContain('back from Dabloo Ji Muzaffarpur');
+        expect(line.textContent).not.toContain('part of the rate');
+        expect(line.textContent).not.toContain('with Dabloo');
     });
 });
 
