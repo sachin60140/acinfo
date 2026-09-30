@@ -778,6 +778,7 @@ class WorkFileController extends Controller
                     ->where(fn ($outer) => $outer
                         ->whereHas('items', fn ($q) => WorkFileModel::canBeGivenOut($q))
                         ->orWhereDoesntHave('items'))
+                    ->whereRaw('NOT '.WorkFileModel::HELD_BY_ITS_VENDOR)
                     ->where('status', '!=', WorkFileModel::CANCELLED)
                     ->get();
 
@@ -813,6 +814,12 @@ class WorkFileController extends Controller
                      * for the works to carry — so the folder carries it.
                      */
                     if ($file->items->isEmpty()) {
+                        // Back whole from the vendor it last went to: theirs no
+                        // longer, nor the rate agreed with them.
+                        if ($file->cameBackWholeFromItsVendor()) {
+                            $file->letGoOfItsVendor();
+                        }
+
                         $file->vendor_id = $req->vendor_id;
                         $file->vendor_date = $req->vendor_date;
 
@@ -839,6 +846,12 @@ class WorkFileController extends Controller
 
                     if ($going->isEmpty()) {
                         continue;
+                    }
+
+                    // An older folder back whole from its vendor: none of it
+                    // is theirs now, the works staying here included.
+                    if ($file->cameBackWholeFromItsVendor()) {
+                        $file->letGoOfItsVendor();
                     }
 
                     /*
@@ -1030,7 +1043,11 @@ class WorkFileController extends Controller
                     },
                     // Back whole from a vendor, and offered again: said, so
                     // it is not mistaken for work that never went out.
-                    'came_back_from' => $item->cameBackWhole() ? $item->vendor?->name : null,
+                    'came_back_from' => match (true) {
+                        $item->cameBackWhole() => $item->vendor?->name,
+                        $file->cameBackWholeFromItsVendor() && $item->canBeGivenOut() => $file->vendor?->name,
+                        default => null,
+                    },
                     // When the office said it was doing this one itself.
                     'kept_on' => $item->kept_in_house_on
                         ? date('d-m-Y', strtotime($item->kept_in_house_on))
@@ -1114,7 +1131,8 @@ class WorkFileController extends Controller
             $done = collect();
 
             foreach ($files as $file) {
-                $keeping = $file->items
+                // Nothing of an older folder its vendor still has.
+                $keeping = $file->isHeldByItsVendor() ? collect() : $file->items
                     ->whereIn('id', $jobs)
                     ->filter(fn ($item) => $item->canBeGivenOut());
 
@@ -1123,7 +1141,12 @@ class WorkFileController extends Controller
                 }
 
                 $from = $file->status;
-                $wasTheirs = false;
+                // An older folder back whole: none of it is theirs now.
+                $wasTheirs = $file->cameBackWholeFromItsVendor();
+
+                if ($wasTheirs) {
+                    $file->letGoOfItsVendor();
+                }
 
                 foreach ($keeping as $item) {
                     // Back whole from a vendor: no longer theirs, or it would

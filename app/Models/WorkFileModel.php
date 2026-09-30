@@ -3719,6 +3719,79 @@ class WorkFileModel extends Model
         ];
     }
     /**
+     * A folder from before works carried their own vendor, which that vendor
+     * still has: out with them, or handed back with part of its rate still
+     * theirs.
+     *
+     * Its works name nobody, so each reads as waiting for a vendor — and Give
+     * to Vendor offered them while the vendor had the papers. But all of an
+     * older folder is its vendor's (see isOlderFolder()), and giving any of it
+     * out takes their credit off their statement. Found in review on
+     * 2026-09-30; the same rule as cameBackWhole() on a work, asked of the
+     * folder that carries the vendor.
+     */
+    public function isHeldByItsVendor(): bool
+    {
+        return $this->vendor_id
+            && self::isOlderFolder($this->items)
+            && (! $this->vendor_returned_on || $this->vendor_returned_amount !== null);
+    }
+
+    /** isHeldByItsVendor(), as SQL, of the row called work_file. */
+    public const HELD_BY_ITS_VENDOR = '(work_file.vendor_id IS NOT NULL AND '.self::OLDER_FOLDER.'
+        AND (work_file.vendor_returned_on IS NULL OR work_file.vendor_returned_amount IS NOT NULL))';
+
+    /**
+     * A folder from before works carried their own vendor, handed back by
+     * that vendor with all of its rate reversed: nothing of it is theirs, and
+     * it can go out again.
+     */
+    public function cameBackWholeFromItsVendor(): bool
+    {
+        return $this->vendor_id
+            && self::isOlderFolder($this->items)
+            && $this->vendor_returned_on
+            && $this->vendor_returned_amount === null;
+    }
+
+    /**
+     * Let go of the vendor such a folder came back from, as it goes out again
+     * or is kept here: what they did not finish is nobody's, as though never
+     * given.
+     *
+     * The rates agreed with them for it go too. Left on works that name
+     * nobody they would read as the office's own cost. Their credit and its
+     * reversal for it, which net to nothing, leave their statement at the
+     * next syncLedger().
+     *
+     * What they did finish stays theirs: approved, or gone back to its
+     * customer, while they had it. Written onto the work itself — handed back
+     * with the folder, all of its rate reversed — as a work of their own
+     * would be (see WorkFileItemModel::cameBackWhole(), which never lets go of
+     * finished work). Found in review: cleared with the rest, the transfer
+     * they got approved left the Vendors report and their profit.
+     */
+    public function letGoOfItsVendor(): void
+    {
+        foreach ($this->items as $item) {
+            if (in_array($item->status, [self::APPROVED, self::RETURNED], true)) {
+                $item->vendor_id = $this->vendor_id;
+                $item->vendor_date = $this->vendor_date;
+                $item->vendor_returned_on = $this->vendor_returned_on;
+                $item->save();
+            } elseif ($item->vendor_amount !== null) {
+                $item->vendor_amount = null;
+                $item->save();
+            }
+        }
+
+        $this->vendor_id = null;
+        $this->vendor_date = null;
+        $this->vendor_returned_on = null;
+        $this->vendor_amount = null;
+    }
+
+    /**
      * WorkFileItemModel::canBeGivenOut(), as a condition on the works: waiting
      * for a vendor, or back whole from one — see cameBackWhole().
      */
@@ -3744,7 +3817,9 @@ class WorkFileModel extends Model
         return self::query()
             // items.vendor: a folder can come back here for its other half, and
             // the half already gone has to say who has it.
-            ->with('workType', 'customer', 'items.workType', 'items.vendor')
+            // vendor: an older folder back from its vendor says who; see
+            // cameBackWholeFromItsVendor().
+            ->with('workType', 'customer', 'vendor', 'items.workType', 'items.vendor')
             // Whether its papers are ready to go with it; see assign().
             ->select('work_file.*')
             ->selectRaw(self::NEEDS_AUDIT.' as needs_audit')
@@ -3762,6 +3837,8 @@ class WorkFileModel extends Model
                 ->whereHas('items', fn ($q) => self::canBeGivenOut($q))
                 // A folder with no works at all is still handed over whole.
                 ->orWhereDoesntHave('items'))
+            // Nor anything of an older folder its vendor still has.
+            ->whereRaw('NOT '.self::HELD_BY_ITS_VENDOR)
             // Only work still in hand can be given out. A file that is approved,
             // returned or cancelled has nothing left for a vendor to do.
             ->whereIn('status', self::OPEN_STATUSES)
