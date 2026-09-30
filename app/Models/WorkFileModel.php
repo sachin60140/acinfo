@@ -1549,6 +1549,100 @@ class WorkFileModel extends Model
     }
 
     /**
+     * Who the folder's work was given to, in the space a list gives: each
+     * vendor's name in work order — "Sharma, Shailendra" — and "+ in-house"
+     * where a live work was given to nobody. Null where none is out with
+     * anybody. An older folder, none of whose works ever named a vendor, is
+     * its own vendor's.
+     *
+     * Asked for by the owner on 2026-09-28, with the rule that anything
+     * vendor-wise counts only the works given to that vendor: the folder's
+     * vendor named a folder a vendor held part of as wholly theirs, and a
+     * folder split between two — naming neither — as In-house.
+     *
+     * @param  array<int, string>  $names  vendor id => name
+     */
+    public static function givenTo($works, $folderVendorId, ?string $folderVendorName, array $names): ?string
+    {
+        $works = collect($works);
+
+        if (self::isOlderFolder($works)) {
+            return $folderVendorId ? $folderVendorName : null;
+        }
+
+        $standing = self::standing($works);
+        $ids = $standing->pluck('vendor_id')->filter()->map(fn ($id) => (int) $id)->unique()->values();
+
+        if ($ids->isEmpty()) {
+            return null;
+        }
+
+        $named = $ids->map(fn ($id) => $names[$id] ?? 'Unknown vendor')->implode(', ');
+
+        return $standing->contains(fn ($work) => ! $work->vendor_id) ? $named.' + in-house' : $named;
+    }
+
+    /**
+     * The day the folder's work first went out: the earliest of its live
+     * given works, or, on an older folder, the folder's own. Null where
+     * nothing is out with anybody — a given work since cancelled has no day.
+     */
+    public static function givenOutOn($works, $folderVendorDate): ?string
+    {
+        $works = collect($works);
+
+        if (self::isOlderFolder($works)) {
+            return $folderVendorDate ?: null;
+        }
+
+        return self::standing($works)->filter(fn ($work) => $work->vendor_id)->pluck('vendor_date')->filter()->min() ?: null;
+    }
+
+    /** The live works — or, struck off whole, all of them, so it still says who had it. */
+    private static function standing($works)
+    {
+        $live = collect($works)->reject(fn ($work) => $work->status === self::CANCELLED);
+
+        return $live->isEmpty() ? collect($works) : $live;
+    }
+
+    /**
+     * What the board's heading says of this folder for one holder — or, for
+     * none, of the folder: where it stands, who has it, when it went out and
+     * when it was through.
+     *
+     * @return array{status: string, vendor: ?string, given_on: ?string, finished_on: ?string}
+     */
+    public function partFor(?int $holder): array
+    {
+        if ($holder === null) {
+            return [
+                'status' => $this->status,
+                'vendor' => self::givenTo($this->items, $this->vendor_id, $this->vendor?->name,
+                    $this->items->mapWithKeys(fn ($item) => $item->vendor_id ? [(int) $item->vendor_id => $item->vendor?->name] : [])->all()),
+                'given_on' => self::givenOutOn($this->items, $this->vendor_date),
+                'finished_on' => $this->finishedOn(),
+            ];
+        }
+
+        $mine = $this->worksHeldBy($holder);
+        $status = self::boardStatus($mine, $this->status);
+
+        return [
+            'status' => $status,
+            'vendor' => $holder ? ($mine->first()?->vendor?->name ?? $this->vendor?->name) : null,
+            'given_on' => $holder
+                ? (self::isOlderFolder($this->items) ? $this->vendor_date : self::standing($mine)->pluck('vendor_date')->filter()->min())
+                : null,
+            'finished_on' => match ($status) {
+                self::APPROVED => $mine->pluck('approved_on')->filter()->max(),
+                self::RETURNED => $this->returned_on,
+                default => null,
+            },
+        ];
+    }
+
+    /**
      * How long the work took, for a file that is over.
      *
      * The same span the office watches while a file is out, stopped on the day
@@ -3719,10 +3813,28 @@ class WorkFileModel extends Model
     {
         // The jobs come with the file: the board moves each of them along on
         // its own, because approvals arrive one at a time.
-        $query = self::query()->with('workType', 'customer', 'vendor', 'items.workType');
+        $query = self::query()->with('workType', 'customer', 'vendor', 'items.workType', 'items.vendor');
+
+        $holder = self::holderKey($vendorId);
+
+        /*
+         * One vendor's view, or the office's: the folders they hold work on,
+         * standing where their own works stand. Asked for by the owner on
+         * 2026-09-28, with the rule that anything vendor-wise counts only the
+         * works given to that vendor: asked of the folder's vendor, a vendor's
+         * view listed the office's own work beside theirs, the In-house view
+         * missed work kept in the office on a folder a vendor had part of, and
+         * a folder split between two vendors was under neither.
+         */
+        if ($holder !== null) {
+            return $query
+                ->whereIn('work_file.id', self::heldBy($holder, $filter, $workTypeId)->select('p.work_file_id'))
+                ->orderBy('received_date', 'asc')
+                ->orderBy('id', 'asc')
+                ->get();
+        }
 
         self::applyStatusFilter($query, $filter);
-        self::applyVendorFilter($query, $vendorId);
 
         if ($workTypeId) {
             // Matched against the jobs, so a file is shown when any of its work
@@ -3741,71 +3853,147 @@ class WorkFileModel extends Model
      * else is one named status. Shared so the board and its counts can never
      * disagree about what a tab means.
      */
-    private static function applyStatusFilter($query, string $filter): void
+    private static function applyStatusFilter($query, string $filter, string $column = 'work_file.status'): void
     {
         // Named with its table: the work type counts below join the works,
         // which have a status of their own, and a bare column would be
         // ambiguous — or worse, silently the wrong one.
         if ($filter === 'open') {
-            $query->whereIn('work_file.status', self::OPEN_STATUSES);
+            $query->whereIn($column, self::OPEN_STATUSES);
         } elseif (array_key_exists($filter, self::STATUSES)) {
-            $query->where('work_file.status', $filter);
+            $query->where($column, $filter);
         }
     }
 
     /**
-     * Narrows to one vendor, or to the work kept in-house.
-     *
-     * 'none' rather than an empty string, because a missing parameter and a
-     * deliberate choice of "nobody" are different answers and a blank cannot
-     * tell them apart.
+     * The board's vendor filter, as a holder: null for no filter, 0 for the
+     * work nobody was given ('none' — a deliberate choice, which a blank
+     * could not tell from no filter), a vendor's id, or -1 — matching nothing,
+     * as a junk id always did.
      */
-    private static function applyVendorFilter($query, $vendorId): void
+    public static function holderKey($vendorId): ?int
     {
-        if ($vendorId === self::IN_HOUSE) {
-            $query->whereNull('work_file.vendor_id');
+        return match (true) {
+            $vendorId === null || $vendorId === '' => null,
+            $vendorId === self::IN_HOUSE => 0,
+            ctype_digit((string) $vendorId) && (int) $vendorId > 0 => (int) $vendorId,
+            default => -1,
+        };
+    }
 
-            return;
+    /** Folders any work of which, cancelled ones included, was ever given out. */
+    private static function everGiven()
+    {
+        return DB::table('work_file_item')->whereNotNull('vendor_id')->distinct()->select('work_file_id');
+    }
+
+    /**
+     * One row per work, with who holds it: its own vendor — or, on an older
+     * folder, the folder's — and 0 for nobody. Ungrouped: grouped over, it is
+     * MariaDB-safe, having nothing correlated in it.
+     */
+    private static function worksByHolder(bool $openFolders = false)
+    {
+        return DB::table('work_file_item as i')
+            ->join('work_file', 'work_file.id', '=', 'i.work_file_id')
+            // A part can only stand open on a folder that is open: asked of an
+            // open tab — In Hand, the board's default — the rest is not read
+            // (found in review: every work ever entered was grouped, every load).
+            ->when($openFolders, fn ($q) => $q->whereIn('work_file.status', self::OPEN_STATUSES))
+            ->leftJoinSub(self::everGiven(), 'given', 'given.work_file_id', '=', 'i.work_file_id')
+            ->select('i.id', 'i.work_file_id', 'i.work_type_id', 'i.status', 'work_file.status as folder_status')
+            ->selectRaw('COALESCE(i.vendor_id, CASE WHEN given.work_file_id IS NULL THEN work_file.vendor_id END, 0) AS holder');
+    }
+
+    /** boardStatus(), as SQL over a holder's works (as $h, grouped). */
+    private static function boardStatusSql(string $h): string
+    {
+        $open = "'".implode("','", self::OPEN_STATUSES)."'";
+        [$approved, $partly, $cancelled, $returned] = [self::APPROVED, self::PARTLY_APPROVED, self::CANCELLED, self::RETURNED];
+
+        return "CASE
+            WHEN SUM($h.status IN ($open)) > 0 THEN
+                CASE WHEN SUM($h.status = '$approved') > 0 THEN '$partly'
+                     ELSE ELT(MIN(NULLIF(FIELD($h.status, $open), 0)), $open) END
+            WHEN SUM($h.status <> '$cancelled') = 0 THEN '$cancelled'
+            WHEN SUM($h.status NOT IN ('$returned', '$cancelled')) = 0 THEN '$returned'
+            ELSE '$approved' END";
+    }
+
+    /**
+     * Each folder's parts, one per holder, standing where that holder's
+     * works stand — narrowed to parts with a work of one type when asked.
+     */
+    private static function holdings($workTypeId = null, ?string $filter = null)
+    {
+        $parts = DB::query()->fromSub(self::worksByHolder(self::isOpenTab($filter)), 'h')
+            ->select('h.work_file_id', 'h.holder')
+            ->selectRaw(self::boardStatusSql('h').' AS status')
+            ->groupBy('h.work_file_id', 'h.holder');
+
+        if ($workTypeId) {
+            $parts->havingRaw('SUM(h.work_type_id = ?) > 0', [(int) $workTypeId]);
         }
 
-        if ($vendorId) {
-            $query->where('work_file.vendor_id', $vendorId);
-        }
+        return $parts;
+    }
+
+    /** Whether a tab shows only work still in hand: In Hand, or one of its stages. */
+    private static function isOpenTab(?string $filter): bool
+    {
+        return $filter === 'open' || in_array($filter, self::OPEN_STATUSES, true);
+    }
+
+    /** One holder's parts under a tab. */
+    private static function heldBy(int $holder, string $filter, $workTypeId = null)
+    {
+        $query = DB::query()->fromSub(self::holdings($workTypeId, $filter), 'p')->where('p.holder', $holder);
+
+        self::applyStatusFilter($query, $filter, 'p.status');
+
+        return $query;
+    }
+
+    /** The works of this folder one holder has; see worksByHolder(). Cancelled ones included. */
+    public function worksHeldBy(int $holder)
+    {
+        $older = self::isOlderFolder($this->items);
+
+        return $this->items
+            ->filter(fn ($item) => (int) ($item->vendor_id ?: ($older ? $this->vendor_id : 0)) === $holder)
+            ->values();
     }
 
     /**
      * Which vendors are holding work under the filters that are on, and how
      * much each of them has.
      *
-     * Files nobody was given are counted together as in-house: they are work in
-     * hand like any other, and leaving them out of the row would make the
-     * counts disagree with the board.
+     * Work nobody was given is counted together as in-house: it is work in
+     * hand like any other, and leaving it out of the row would make the counts
+     * disagree with the board.
+     *
+     * One chip a holder, counting their parts: a folder shared between a
+     * vendor and the office, or two vendors, is under each of them — so the
+     * chips can add up to more than All. Each counts exactly what the board
+     * shows when it is clicked.
      *
      * @return \Illuminate\Support\Collection<int, object>
      */
     public static function vendorCounts(string $filter, $workTypeId = null)
     {
-        $query = DB::table('work_file')
-            ->leftJoin('party as vendor', 'vendor.id', '=', 'work_file.vendor_id');
+        $query = DB::query()->fromSub(self::holdings($workTypeId, $filter), 'p')
+            ->leftJoin('party as vendor', 'vendor.id', '=', 'p.holder');
 
-        self::applyStatusFilter($query, $filter);
-
-        if ($workTypeId) {
-            $query->whereExists(fn ($q) => $q->select(DB::raw(1))
-                ->from('work_file_item')
-                ->whereColumn('work_file_item.work_file_id', 'work_file.id')
-                ->where('work_file_item.work_type_id', $workTypeId));
-        }
+        self::applyStatusFilter($query, $filter, 'p.status');
 
         return $query
             ->select(
-                DB::raw('COALESCE(vendor.id, 0) as id'),
-                DB::raw("COALESCE(vendor.name, 'In-house') as name"),
-                DB::raw('COUNT(DISTINCT work_file.id) as total')
+                DB::raw('p.holder as id'),
+                DB::raw("COALESCE(vendor.name, CASE WHEN p.holder = 0 THEN 'In-house' ELSE 'Unknown vendor' END) as name"),
+                DB::raw('COUNT(*) as total')
             )
             // ONLY_FULL_GROUP_BY: the columns the names are derived from.
-            ->groupBy('vendor.id', 'vendor.name')
-            ->havingRaw('COUNT(DISTINCT work_file.id) > 0')
+            ->groupBy('p.holder', 'vendor.name')
             ->orderBy('name', 'asc')
             ->get();
     }
@@ -3818,25 +4006,34 @@ class WorkFileModel extends Model
      */
     public static function statusCounts($workTypeId = null, $vendorId = null): array
     {
-        $query = DB::table('work_file');
+        $holder = self::holderKey($vendorId);
 
-        self::applyVendorFilter($query, $vendorId);
+        if ($holder !== null) {
+            // One holder's parts, by where their works stand; see forStatusBoard().
+            $byStatus = DB::query()->fromSub(self::holdings($workTypeId), 'p')
+                ->where('p.holder', $holder)
+                ->selectRaw('p.status, COUNT(*) as total')
+                ->groupBy('p.status')
+                ->pluck('total', 'status');
+        } else {
+            $query = DB::table('work_file');
 
-        if ($workTypeId) {
-            /*
-             * Matched against the works, which is how the board itself filters:
-             * counting the folder's own type credited a folder to the first work
-             * on it, so the tab promised fewer files than the board then showed.
-             */
-            $query->whereExists(fn ($q) => $q->select(DB::raw(1))
-                ->from('work_file_item')
-                ->whereColumn('work_file_item.work_file_id', 'work_file.id')
-                ->where('work_file_item.work_type_id', $workTypeId));
+            if ($workTypeId) {
+                /*
+                 * Matched against the works, which is how the board itself filters:
+                 * counting the folder's own type credited a folder to the first work
+                 * on it, so the tab promised fewer files than the board then showed.
+                 */
+                $query->whereExists(fn ($q) => $q->select(DB::raw(1))
+                    ->from('work_file_item')
+                    ->whereColumn('work_file_item.work_file_id', 'work_file.id')
+                    ->where('work_file_item.work_type_id', $workTypeId));
+            }
+
+            $byStatus = $query->selectRaw('status, COUNT(*) as total')
+                ->groupBy('status')
+                ->pluck('total', 'status');
         }
-
-        $byStatus = $query->selectRaw('status, COUNT(*) as total')
-            ->groupBy('status')
-            ->pluck('total', 'status');
 
         $counts = ['open' => 0, 'all' => 0];
 
@@ -3860,6 +4057,23 @@ class WorkFileModel extends Model
      */
     public static function workTypeCounts(string $filter, $vendorId = null)
     {
+        $holder = self::holderKey($vendorId);
+
+        /*
+         * One holder's view: the types of their own works, on the parts the
+         * board shows them under this tab.
+         */
+        if ($holder !== null) {
+            return DB::query()->fromSub(self::worksByHolder(self::isOpenTab($filter)), 'w')
+                ->joinSub(self::heldBy($holder, $filter)->select('p.work_file_id', 'p.holder'), 'p',
+                    fn ($join) => $join->on('p.work_file_id', '=', 'w.work_file_id')->on('p.holder', '=', 'w.holder'))
+                ->join('work_type', 'work_type.id', '=', 'w.work_type_id')
+                ->select('work_type.id', 'work_type.name', DB::raw('COUNT(DISTINCT w.work_file_id) as total'))
+                ->groupBy('work_type.id', 'work_type.name')
+                ->orderBy('work_type.name', 'asc')
+                ->get();
+        }
+
         /*
          * Counted through the works, so a folder appears under every type it
          * holds. DISTINCT because that is the point: a folder with a transfer
@@ -3871,7 +4085,6 @@ class WorkFileModel extends Model
             ->join('work_type', 'work_type.id', '=', 'work_file_item.work_type_id');
 
         self::applyStatusFilter($query, $filter);
-        self::applyVendorFilter($query, $vendorId);
 
         return $query
             ->select('work_type.id', 'work_type.name', DB::raw('COUNT(DISTINCT work_file.id) as total'))
@@ -3987,14 +4200,27 @@ class WorkFileModel extends Model
 
             $seen[$key] = true;
 
+            /*
+             * Paid to the work's own vendor, on the day it went to them — or,
+             * on an older folder, the folder's. Found on 2026-09-28: read off
+             * the folder, a rate typed on work the office kept was offered as
+             * paid to the vendor who had the rest, and a folder split between
+             * two vendors was never offered at all.
+             */
+            $held = 'COALESCE(work_file_item.vendor_id, CASE WHEN given.work_file_id IS NULL THEN work_file.vendor_id END)';
+            $on = 'COALESCE(work_file_item.vendor_date, CASE WHEN given.work_file_id IS NULL THEN work_file.vendor_date END)';
+
             $query = DB::table('work_file_item')
                 ->join('work_file', 'work_file.id', '=', 'work_file_item.work_file_id')
-                ->join('party as vendor', 'vendor.id', '=', 'work_file.vendor_id')
+                ->leftJoinSub(self::everGiven(), 'given', 'given.work_file_id', '=', 'work_file_item.work_file_id')
+                // A work nobody was given was paid to nobody.
+                ->join('party as vendor', 'vendor.id', '=', DB::raw($held))
                 ->where('work_file_item.work_type_id', $typeId)
                 // A rate that was never agreed is not a rate that was paid, and
-                // a cancelled file was owed for by nobody.
+                // cancelled work was owed for by nobody.
                 ->whereNotNull('work_file_item.vendor_amount')
                 ->where('work_file_item.vendor_amount', '>', 0)
+                ->where('work_file_item.status', '<>', self::CANCELLED)
                 ->where('work_file.status', '<>', self::CANCELLED);
 
             /*
@@ -4010,12 +4236,13 @@ class WorkFileModel extends Model
                 'work_type_id' => (int) $typeId,
                 'rto' => $rto,
                 'rates' => $query
-                    ->orderByDesc('work_file.vendor_date')
+                    ->orderByRaw("$on DESC")
                     ->orderByDesc('work_file.id')
+                    ->orderByDesc('work_file_item.id')
                     ->limit($limit)
                     ->get([
                         'work_file.file_no',
-                        'work_file.vendor_date',
+                        DB::raw("$on as vendor_date"),
                         'work_file.registration_no',
                         'vendor.name as vendor',
                         'work_file_item.vendor_amount as amount',
@@ -4061,6 +4288,7 @@ class WorkFileModel extends Model
                 'work_type.name as work_type',
                 'work_type.id as work_type_id',
                 'customer.name as customer_name',
+                'work_file.vendor_id',
                 'vendor.name as vendor_name'
             );
 
@@ -4080,16 +4308,26 @@ class WorkFileModel extends Model
          * work_type_id and two works, so "has this vehicle had a transfer
          * before" cannot be answered from the column joined above.
          */
-        $works = $files->isEmpty() ? collect() : DB::table('work_file_item')
+        $all = $files->isEmpty() ? collect() : DB::table('work_file_item')
             ->join('work_type', 'work_type.id', '=', 'work_file_item.work_type_id')
+            ->leftJoin('party as work_vendor', 'work_vendor.id', '=', 'work_file_item.vendor_id')
             ->whereIn('work_file_item.work_file_id', $files->pluck('id')->all())
-            ->where('work_file_item.status', '<>', self::CANCELLED)
             ->orderBy('work_file_item.id')
-            ->get(['work_file_item.work_file_id', 'work_file_item.status', 'work_type.id', 'work_type.name'])
+            ->get(['work_file_item.work_file_id', 'work_file_item.status', 'work_file_item.vendor_id',
+                'work_type.id', 'work_type.name', 'work_vendor.name as vendor_name'])
             ->groupBy('work_file_id');
 
         foreach ($files as $file) {
-            $file->works = $works->get($file->id, collect())->values();
+            $mine = $all->get($file->id, collect());
+            $file->works = $mine->reject(fn ($work) => $work->status === self::CANCELLED)->values();
+
+            /*
+             * Who had it, from its works, as the Work Report says it: every
+             * vendor by name, "+ in-house" where the office kept some. Read
+             * off the folder, one split between two vendors named nobody.
+             */
+            $file->vendor_name = self::givenTo($mine, $file->vendor_id, $file->vendor_name,
+                $mine->filter(fn ($work) => $work->vendor_id)->mapWithKeys(fn ($work) => [(int) $work->vendor_id => $work->vendor_name])->all());
             // Still in hand: the state that makes the same work arriving again
             // a file entered twice rather than a job done again.
             $file->open = ! in_array($file->status, [self::APPROVED, self::RETURNED, self::CANCELLED], true);
@@ -5363,19 +5601,7 @@ class WorkFileModel extends Model
              * return is always of the whole folder, so its day is the
              * folder's.
              */
-            $row->status = self::statusFromItems($mine, $folder->status);
-
-            /*
-             * Returned only while the folder is: the refund is recorded
-             * on the folder, and cleared from it the moment it is not.
-             * Found in review: a folder returned, then one of its works
-             * brought back, left the vendor's works reading returned —
-             * billed nothing, against a refund the ledger no longer
-             * holds. Such a row reads as the folder does, as it did.
-             */
-            if ($row->status === self::RETURNED && $folder->status !== self::RETURNED) {
-                $row->status = $folder->status;
-            }
+            $row->status = self::holderStatus($mine, $folder->status);
 
             $row->finished_on = match ($row->status) {
                 self::APPROVED => $mine->pluck('approved_on')->filter()->max(),
@@ -5415,6 +5641,39 @@ class WorkFileModel extends Model
         }
 
         return $out;
+    }
+
+    /**
+     * Where one holder's works on a folder stand: statusFromItems() of theirs,
+     * the folder's status passed so a returned folder stays returned.
+     *
+     * Returned only while the folder is: the refund is recorded on the
+     * folder, and cleared from it the moment it is not. Found in review: a
+     * folder returned, then one of its works brought back, left the vendor's
+     * works reading returned — billed nothing, against a refund the ledger no
+     * longer holds. Such a part reads as the folder does.
+     */
+    public static function holderStatus($works, string $folderStatus): string
+    {
+        $status = self::statusFromItems(collect($works), $folderStatus);
+
+        return $status === self::RETURNED && $folderStatus !== self::RETURNED ? $folderStatus : $status;
+    }
+
+    /**
+     * Where one holder's works stand, as the status board shows them: what the
+     * works say — a part all of whose standing works went back to the customer
+     * reads Returned, whatever the folder does since.
+     *
+     * Not holderStatus(), whose "as the folder does" keeps a report from
+     * billing a refund the ledger no longer holds. Found in review: on the
+     * board, a vendor's returned work on a folder partly brought back read as
+     * In Office — counted under In Hand, where the board then had no row of
+     * theirs to show. The board's own mirror is boardStatusSql().
+     */
+    public static function boardStatus($works, string $folderStatus): string
+    {
+        return self::statusFromItems(collect($works), self::RETURNED);
     }
 
     /**

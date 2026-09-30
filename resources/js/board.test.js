@@ -312,3 +312,34 @@ describe('saving from a board that may be out of date', () => {
         expect(host.querySelector('select[name="statuses[11]"]').value).toBe('in_office');
     });
 });
+
+/*
+ * A vendor's name finds their work, not the office's beside it. Asked for by
+ * the owner on 2026-09-28: the folder's heading names every vendor on it now
+ * ("Sharma + in-house"), and matched against that, "sharma tr" found the
+ * office's own TR on a folder Sharma had part of.
+ */
+describe('searching for a vendor on a folder shared with the office', () => {
+    const SHARED = [{
+        ...FILES[1],
+        id: 3,
+        file_no: 'F-00077',
+        vendor: 'Sharma + in-house',
+        // What Give to Vendor writes: it names the vendor on the folder's history.
+        last_remark: 'HPT given to Sharma',
+        items: [
+            { ...FILES[1].items[0], id: 31, work_type: 'HPT', vendor: 'Sharma' },
+            { ...FILES[1].items[1], id: 32, work_type: 'TR', vendor: null },
+        ],
+    }];
+
+    it('finds only the work that is theirs', async () => {
+        const host = mount(SHARED);
+
+        await search(host, 'sharma hpt');
+        expect(host.querySelector('.board__search .ui-hint').textContent.trim()).toBe('1 of 2 works.');
+
+        await search(host, 'sharma tr');
+        expect(host.querySelector('.board__search .ui-hint').textContent.trim()).toBe('Nothing here matches that.');
+    });
+});

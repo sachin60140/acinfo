@@ -640,6 +640,12 @@ class ReportController extends Controller
         // spreadsheet. One query for the whole report.
         $breakdown = WorkFileModel::workBreakdown($rows->pluck('id')->all());
 
+        // The vendors the works name, for Given To, in one read — never added
+        // to workBreakdown(), which the customer portal reads too.
+        $vendorNames = $partyType === 'vendor' ? [] : PartyModel::whereIn('id',
+            collect($breakdown)->flatten(1)->pluck('vendor_id')->filter()->unique()->values()->all()
+        )->pluck('name', 'id')->all();
+
         // Grouped once here so the view only lays out what it is given.
         $groups = [];
         /*
@@ -748,6 +754,20 @@ class ReportController extends Controller
 
                 $split = WorkFileModel::workSplit($works);
 
+                /*
+                 * Customer-wise, who the folder's work went to and when, from
+                 * its works: every vendor on it by name, "+ in-house" where
+                 * the office kept some. Found on 2026-09-28: read off the
+                 * folder, one a vendor held part of was theirs whole, one split
+                 * between two was "In-house", and one whose given work was
+                 * cancelled was dated and counted out as though still given.
+                 * Vendor-wise, the row is already the vendor's own part.
+                 */
+                $givenOn = $partyType === 'vendor' ? $row->vendor_date : WorkFileModel::givenOutOn($works, $row->vendor_date);
+                $givenTo = $partyType === 'vendor'
+                    ? $row->customer_name
+                    : (WorkFileModel::givenTo($works, $row->vendor_id, $row->vendor_name, $vendorNames) ?? 'In-house');
+
                 $reportRows[] = [
                     'id' => (int) $row->id,
                     // Banded on the id, never the name: only (party_type, mobile)
@@ -769,12 +789,12 @@ class ReportController extends Controller
                     'received_sort' => date('Y-m-d', strtotime($row->received_date)),
 
                     // The day it went to the vendor, and how long it has been there.
-                    'dispatched' => $row->vendor_date ? date('d-m-Y', strtotime($row->vendor_date)) : null,
-                    'dispatched_sort' => $row->vendor_date ? date('Y-m-d', strtotime($row->vendor_date)) : null,
-                    'days_out' => WorkFileModel::daysOutText($row->vendor_date, $row->status, $row->finished_on),
+                    'dispatched' => $givenOn ? date('d-m-Y', strtotime($givenOn)) : null,
+                    'dispatched_sort' => $givenOn ? date('Y-m-d', strtotime($givenOn)) : null,
+                    'days_out' => WorkFileModel::daysOutText($givenOn, $row->status, $row->finished_on),
                     'work_type' => $row->work_type,
                     'description' => $row->description,
-                    'counterparty' => $partyType === 'vendor' ? $row->customer_name : ($row->vendor_name ?: 'In-house'),
+                    'counterparty' => $givenTo,
                     'status' => $statuses[$row->status] ?? $row->status,
                     'status_key' => $row->status,
 

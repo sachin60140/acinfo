@@ -92,9 +92,15 @@ const haystack = (row) => [
     row.file.file_no,
     row.file.registration_no,
     row.file.customer,
-    row.file.vendor,
+    // The work's own vendor, where the server says it: the folder's heading
+    // names every vendor on it, and "sharma tr" found the office's TR on a
+    // folder Sharma had part of.
+    row.vendor !== undefined ? row.vendor : row.file.vendor,
     row.file.status_label,
-    row.file.last_remark,
+    // Without the clause the office's own moves write — "HPT given to
+    // Sharma", "papers returned by …" — which names a vendor on every work
+    // of the folder (found in review).
+    (row.file.last_remark || '').replace(/\b(given\s+to|papers\s+returned\s+by)\b.*$/i, ''),
     row.work_type,
 ].filter(Boolean).join(' ').toLowerCase();
 
