@@ -66,6 +66,20 @@ class ReportController extends Controller
             'unpriced' => (int) $rows->sum('unpriced'),
         ];
 
+        /*
+         * A folder shared between holders is a file under each of them, so
+         * the vendor cut's rows add up to more files than there are: the
+         * heading counts each once, as every other cut does. Its margin is
+         * each holder's part, kept out only while that part waits on a price
+         * (as the owner chose), so what it covers is said in parts. Found in
+         * review: said in files, it read "on 0 of 1 files" over a margin that
+         * had a vendor's priced part in it.
+         */
+        if ($group === 'vendor') {
+            $totals['parts'] = $totals['files'];
+            $totals['files'] = WorkFileModel::profitFiles($from, $to)['files'];
+        }
+
         $periodText = ($from || $to)
             ? ($from ? date('d-m-Y', strtotime($from)) : 'Beginning').' to '.($to ? date('d-m-Y', strtotime($to)) : date('d-m-Y'))
             : 'All dates';
@@ -98,7 +112,10 @@ class ReportController extends Controller
             'emptyText' => ($from || $to)
                 ? 'No work in this period. Try widening the dates.'
                 : 'No work has been booked yet.',
-            'totals' => ['files' => 'sum', 'billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
+            // Not the files on the vendor cut: see above.
+            'totals' => $group === 'vendor'
+                ? ['billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum']
+                : ['files' => 'sum', 'billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
             'columns' => [
                 // The counter-expenses line is the only one that has anything to
                 // add here, and it needs to: a row with a cost that charges
