@@ -1145,6 +1145,10 @@ class ReportTest extends TestCase
         WorkFileModel::summary();
         // The dashboard's Money by month chart, grouped by month.
         WorkFileModel::monthlyMoney(12);
+        // The Vendors report and the dashboard's turnaround chart, grouped
+        // twice over, per vendor per folder and per vendor.
+        WorkFileModel::vendorPerformance();
+        WorkFileModel::vendorPerformance('2026-01-01', '2026-12-31');
 
         foreach (array_keys(WorkFileModel::PROFIT_GROUPS) as $group) {
             WorkFileModel::profitBy($group);

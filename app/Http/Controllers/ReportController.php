@@ -1547,8 +1547,14 @@ class ReportController extends Controller
                  * were charged to them.
                  */
                 $theirs = ($older ? $live : $live->where('vendor_id', $file->party_id))
-                    ->reject(fn ($work) => $work->vendor_returned_on
-                        && (! $work->approved_on || substr((string) $work->vendor_returned_on, 0, 10) < substr((string) $work->approved_on, 0, 10)));
+                    ->reject(function ($work) use ($older, $file) {
+                        // An older folder is handed back whole, and the day
+                        // is the folder's: its works carry none (found on
+                        // 2026-09-29, the Vendors report agreeing with this one).
+                        $back = $older ? $file->vendor_returned_on : $work->vendor_returned_on;
+
+                        return $back && (! $work->approved_on || substr((string) $back, 0, 10) < substr((string) $work->approved_on, 0, 10));
+                    });
 
                 // Nothing of theirs was approved while they had it.
                 if ($theirs->isEmpty()) {
