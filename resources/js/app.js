@@ -1,4 +1,3 @@
-import './bootstrap';
 import { mount } from './mounts';
 import { sidebar } from './sidebar';
 import './navigate';
