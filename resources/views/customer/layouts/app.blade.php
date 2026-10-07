@@ -24,9 +24,6 @@
   <!-- Vendor CSS Files -->
   <link href="{{ url('assets/vendor/bootstrap/css/bootstrap.min.css') }}" rel="stylesheet">
   <link href="{{ url('assets/vendor/bootstrap-icons/bootstrap-icons.css') }}" rel="stylesheet">
-  <link href="{{ url('assets/vendor/boxicons/css/boxicons.min.css') }}" rel="stylesheet">
-  <link href="{{ url('assets/vendor/remixicon/remixicon.css') }}" rel="stylesheet">
-  <link href="{{ url('assets/vendor/simple-datatables/style.css') }}" rel="stylesheet">
 
   <!-- Template Main CSS File -->
   <link href="{{ \App\Support\Asset::url('assets/css/style.css') }}" rel="stylesheet">
@@ -68,7 +65,6 @@
 
 <!-- Vendor JS Files -->
 <script src="{{ url('assets/vendor/bootstrap/js/bootstrap.bundle.min.js') }}"></script>
-<script src="{{ url('assets/vendor/simple-datatables/simple-datatables.js') }}"></script>
 
 <!-- Template Main JS File -->
 <script src="{{ \App\Support\Asset::url('assets/js/main.js') }}"></script>
