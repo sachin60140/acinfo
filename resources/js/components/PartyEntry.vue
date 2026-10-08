@@ -479,6 +479,13 @@ function resetDateField() {
                         Printed on the vendor's statement. Leave out customers' names and what they paid —
                         a customer named here is shown as "…".
                     </div>
+                    <!-- A balance carried from the old Client Ledger, entered
+                         again on Correct: which line it was. The server reads
+                         from that line which client it came from, so the
+                         Collection List still dates it from the old book. Here,
+                         with the Particulars that say where it was brought from:
+                         a write-off or a set-off says something else. -->
+                    <input v-if="entry.corrects" type="hidden" name="corrects" :value="entry.corrects">
                 </div>
 
                 <div v-else-if="isWriteOff" class="ui-field entry-grid__wide">

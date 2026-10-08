@@ -376,6 +376,8 @@ class PartyController extends Controller
                 'entry_kind' => ['nullable', Rule::in([PartyLedgerModel::WRITEOFF, PartyLedgerModel::SETOFF])],
                 'reason' => [Rule::requiredIf($req->input('entry_kind') === PartyLedgerModel::WRITEOFF), 'nullable', 'string', 'max:255'],
                 'counterpart_id' => 'nullable|integer',
+                // A carried balance being entered again on Correct; see below.
+                'corrects' => 'nullable|integer',
 
                 // The files this payment is adjusted against, keyed by file;
                 // see below. An empty box is no line at all.
@@ -489,6 +491,25 @@ class PartyController extends Controller
                     $entry->note = trim((string) $req->input('reason'));
                 }
 
+                /*
+                 * A balance carried from the old Client Ledger, entered again
+                 * on Correct. Found in the health check (2026-10): which client
+                 * it came from stayed behind on the line taken back, so the
+                 * Collection List dated the debt from the day it was carried
+                 * instead of from the old book's own charges; see
+                 * PartyModel::dues(). It goes with it now — read from that
+                 * line, never from the form, and only from one that was carried
+                 * and has been taken back, onto a customer's line that still
+                 * says where it was brought from, which is all dues() looks for.
+                 */
+                $from = (int) $req->input('corrects');
+
+                if ($from && $type === 'customer' && PartyLedgerModel::reversible()
+                    && $entry->particular === CloseClientLedgerController::BROUGHT
+                    && PartyLedgerModel::where('reverses_id', $from)->exists()) {
+                    $entry->note = PartyLedgerModel::whereKey($from)->where('particular', CloseClientLedgerController::BROUGHT)->value('note');
+                }
+
                 // Who typed it in, from the day it could be recorded.
                 if (PartyLedgerModel::adjustable()) {
                     $entry->created_by = Auth::id();
@@ -584,6 +605,9 @@ class PartyController extends Controller
                 'particular' => (string) old('particular'),
                 'entry_kind' => (string) old('entry_kind'),
                 'reason' => (string) old('reason'),
+                // A carried balance being entered again on Correct: posted back
+                // as it came, for the server to read its client from.
+                'corrects' => (string) old('corrects'),
             ],
 
             /*
@@ -1578,7 +1602,8 @@ class PartyController extends Controller
      *
      * "Correct" is the same, and then the Entry screen with the entry filled
      * in — files it was adjusted against included — to be typed again as it
-     * should have been.
+     * should have been. A balance carried from the old Client Ledger is taken
+     * back only that way; see below.
      */
     public function reverse(Request $req, $id)
     {
@@ -1647,6 +1672,24 @@ class PartyController extends Controller
 
             if (PartyLedgerModel::where('reverses_id', $entry->id)->exists()) {
                 throw ValidationException::withMessages(['reason' => 'Entry #'.$entry->id.' has already been reversed.']);
+            }
+
+            /*
+             * A balance carried from the old Client Ledger is taken back only
+             * to be entered again. Found in the health check (2026-10):
+             * reversed on its own it was in neither book. The old book still
+             * says it was carried, so the close-book screen no longer offered
+             * the client and a second carry was refused as "carried over
+             * already" — and the customer's statement, the Collection List and
+             * the Receivable tile no longer held it. Correct reverses it and
+             * opens the Entry screen with it, for the right customer or the
+             * right amount, and with which client it came from; see entry().
+             */
+            if ($entry->particular === CloseClientLedgerController::BROUGHT && ! $req->boolean('correct')) {
+                throw ValidationException::withMessages([
+                    'reason' => 'Entry #'.$entry->id.' is a balance carried from the old Client Ledger, which now shows it as carried. '
+                        .'Reversed on its own it would be in neither book. Use Reverse and enter it again, and type it for the right customer or amount.',
+                ]);
             }
 
             if ($partnerId) {
@@ -1792,6 +1835,13 @@ class PartyController extends Controller
                     'counterpart_id' => $setOff ? (string) $partner->party_id : '',
                     'alloc' => $asInput($lines),
                     'counter_alloc' => $asInput($partnerLines),
+                    /*
+                     * A balance carried from the old Client Ledger: which line
+                     * it was, so the one typed again can say which client it
+                     * came from. Only its number goes in the form; entry()
+                     * reads the client from the line itself.
+                     */
+                    'corrects' => $entry->particular === CloseClientLedgerController::BROUGHT ? (string) $entry->id : '',
                 ])
                 ->with('success', $setOff
                     ? 'Set-off entries #'.$entry->id.' and #'.$partner->id.' have been reversed, on both accounts. Enter it again correctly below.'
@@ -1821,12 +1871,16 @@ class PartyController extends Controller
      * And, for a half of a set-off, which entry is its other half: the dialog
      * says the two go back together.
      *
-     * @return array{change: ?string, row_state: ?string, office_note: ?string, adjust_url: ?string, setoff_with: ?int}
+     * And whether it is a balance carried from the old Client Ledger, which is
+     * taken back only to be entered again: the dialog offers only that, and
+     * says why. See reverse().
+     *
+     * @return array{change: ?string, row_state: ?string, office_note: ?string, adjust_url: ?string, setoff_with: ?int, carried: bool}
      */
     private static function changeFields($entry, $reversedBy, bool $reversible, string $paymentSide, array $history = [], array $period = []): array
     {
         if (! $reversible) {
-            return ['change' => null, 'row_state' => null, 'office_note' => null, 'adjust_url' => null, 'setoff_with' => null];
+            return ['change' => null, 'row_state' => null, 'office_note' => null, 'adjust_url' => null, 'setoff_with' => null, 'carried' => false];
         }
 
         $reversal = $reversedBy[$entry->id] ?? null;
@@ -1850,6 +1904,7 @@ class PartyController extends Controller
                     .($partnerSays ? ', with its other half, '.$partnerSays : ''),
                 'adjust_url' => null,
                 'setoff_with' => null,
+                'carried' => false,
             ];
         }
 
@@ -1860,6 +1915,7 @@ class PartyController extends Controller
                 'office_note' => $entry->note ? 'Why: '.$entry->note : null,
                 'adjust_url' => null,
                 'setoff_with' => null,
+                'carried' => false,
             ];
         }
 
@@ -1888,6 +1944,7 @@ class PartyController extends Controller
                 ? route('party.adjust', ['id' => $entry->id] + $period)
                 : null,
             'setoff_with' => $partner,
+            'carried' => $entry->particular === CloseClientLedgerController::BROUGHT,
         ];
     }
 
@@ -2045,6 +2102,7 @@ class PartyController extends Controller
             'office_note' => null,
             'adjust_url' => null,
             'setoff_with' => null,
+            'carried' => false,
         ]];
 
         $closing = [[
@@ -2064,6 +2122,7 @@ class PartyController extends Controller
             'office_note' => null,
             'adjust_url' => null,
             'setoff_with' => null,
+            'carried' => false,
         ]];
 
         // Only when there is one to show. A column of empty cells is clutter on
