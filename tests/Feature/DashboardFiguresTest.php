@@ -2,9 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Models\ExpenseTypeModel;
 use App\Models\PartyLedgerModel;
 use App\Models\PartyModel;
 use App\Models\User;
+use App\Models\WorkFileExpenseModel;
 use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
@@ -190,6 +192,70 @@ class DashboardFiguresTest extends TestCase
         $this->assertEqualsWithDelta(9000, $after['billed'] - $before['billed'], 0.01);
         $this->assertEqualsWithDelta(0, $after['margin'] - $before['margin'], 0.01);
         $this->assertEqualsWithDelta(0, $after['cost'] - $before['cost'], 0.01);
+    }
+
+    /**
+     * And what it has cost so far is a cost already.
+     *
+     * Found in a health check on 2026-10-07: a file with one rate still to
+     * agree showed no cost at all — the rate agreed on its other work, already
+     * on the vendor's statement, and the challan already paid — while the
+     * Profit report the chart opens counted both. Only its margin waits.
+     */
+    public function test_the_chart_counts_the_cost_the_profit_report_counts(): void
+    {
+        $thisMonth = [now()->startOfMonth()->toDateString(), now()->endOfMonth()->toDateString()];
+
+        $report = fn () => WorkFileModel::profitBy('month', ...$thisMonth)->firstWhere('group_key', now()->format('Y-m'));
+
+        $chartBefore = $this->thisMonth(WorkFileModel::monthlyMoney(2));
+        $reportBefore = $report();
+
+        // HPT at 3,000 with 1,200 agreed, TR at 2,000 with nothing agreed yet,
+        // and a 250 challan paid on the folder.
+        $file = $this->file(['charged' => 3000, 'cost' => 1200, 'vendor' => true, 'status' => WorkFileModel::DISPATCHED]);
+
+        $tr = new WorkFileItemModel;
+        $tr->work_file_id = $file->id;
+        $tr->work_type_id = $this->type->id;
+        $tr->customer_amount = 2000;
+        $tr->vendor_id = $this->vendor->id;
+        $tr->vendor_date = now()->toDateString();
+        $tr->status = WorkFileModel::DISPATCHED;
+        $tr->save();
+
+        $file->load('items');
+        $file->rollUp();
+        $file->save();
+
+        $challan = new ExpenseTypeModel;
+        $challan->name = 'Challan '.uniqid();
+        $challan->is_active = 1;
+        $challan->save();
+
+        $expense = new WorkFileExpenseModel;
+        $expense->work_file_id = $file->id;
+        $expense->expense_type_id = $challan->id;
+        $expense->amount = 250;
+        $expense->spent_on = now()->toDateString();
+        $expense->save();
+
+        $chartAfter = $this->thisMonth(WorkFileModel::monthlyMoney(2));
+        $reportAfter = $report();
+
+        $this->assertEqualsWithDelta(5000, $chartAfter['billed'] - $chartBefore['billed'], 0.01);
+        $this->assertEqualsWithDelta(1450, $chartAfter['cost'] - $chartBefore['cost'], 0.01, 'the agreed rate and the challan are a cost');
+        $this->assertEqualsWithDelta(0, $chartAfter['margin'] - $chartBefore['margin'], 0.01, 'and the margin still waits on the price');
+
+        // And the Profit report the chart opens moved by the same three figures.
+        foreach (['billed', 'cost', 'margin'] as $figure) {
+            $this->assertEqualsWithDelta(
+                (float) $reportAfter->$figure - (float) ($reportBefore->$figure ?? 0),
+                $chartAfter[$figure] - $chartBefore[$figure],
+                0.01,
+                "the chart and the Profit report it opens disagree about the $figure"
+            );
+        }
     }
 
     // --------------------------------------------------------- files in and out

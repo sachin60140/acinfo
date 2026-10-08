@@ -133,7 +133,7 @@ class OlderFolderGiveToVendorTest extends TestCase
     }
 
     /** The post Give to Vendor makes; no works ticked is the whole folder. */
-    private function give(PartyModel $vendor, WorkFileModel $file, array $rates = [])
+    private function give(PartyModel $vendor, WorkFileModel $file, array $rates = [], string $on = '2026-09-12')
     {
         $amounts = [];
 
@@ -143,7 +143,7 @@ class OlderFolderGiveToVendorTest extends TestCase
 
         return $this->actingAs($this->admin)->post(route('workfile.assign'), array_filter([
             'vendor_id' => $vendor->id,
-            'vendor_date' => '2026-09-12',
+            'vendor_date' => $on,
             'files' => [$file->id],
             'jobs' => $amounts ? array_keys($amounts) : null,
             'amounts' => $amounts,
@@ -410,7 +410,8 @@ class OlderFolderGiveToVendorTest extends TestCase
         $transfer->save();
 
         $file->syncLedger();
-        $this->give($this->sharma, $file->fresh(), [[$this->tr, 1000]])->assertRedirect(route('workfile.index'));
+        // Given before takeBack() brings it back, as olderFolder() is.
+        $this->give($this->sharma, $file->fresh(), [[$this->tr, 1000]], '2026-09-05')->assertRedirect(route('workfile.index'));
 
         // The transfer was the wrong work: swapped for an addition.
         $file = $file->fresh();

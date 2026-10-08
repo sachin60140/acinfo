@@ -370,4 +370,124 @@ class KeptInHouseTest extends TestCase
         $this->assertSame(now()->toDateString(), $transfer->fresh()->kept_in_house_on);
         $this->assertNull($addition->fresh()->kept_in_house_on);
     }
+
+    // --------------------------------------------------- a folder of one work
+
+    /**
+     * The edit form of a folder of one work, saved: its boxes are that work's,
+     * and the in-house box is one of them. Posted as the page posts it — a
+     * hidden 0 and, ticked, a 1 after it — and left out where the page leaves
+     * it out.
+     */
+    private function saveOneWork(WorkFileModel $file, array $changes = [])
+    {
+        return $this->actingAs($this->admin)->post(route('workfile.edit', $file->id), $changes + [
+            'file_no' => $file->file_no,
+            'received_date' => $file->received_date,
+            'work_type_id' => $file->work_type_id,
+            'customer_id' => $this->customer->id,
+            'customer_amount' => '3000',
+            'status' => WorkFileModel::IN_OFFICE,
+        ]);
+    }
+
+    /** What the edit screen hands its form for the boxes at the top. */
+    private function boxes(WorkFileModel $file): array
+    {
+        return $this->actingAs($this->admin)
+            ->getJson(route('workfile.edit', $file->id))->assertOk()->json('props.values');
+    }
+
+    /**
+     * Found in the health check: the box lived only in the table a folder of
+     * several works has, and the save read it only there. A folder of one work
+     * — the commonest kind — kept in-house by a wrong press dropped off Give to
+     * Vendor for good, and the only way to send it out was to type a vendor on
+     * the edit screen, past the papers check and the hand-over sheet.
+     */
+    public function test_a_one_work_folder_kept_by_mistake_is_let_go_of_on_the_edit_screen(): void
+    {
+        $file = $this->file([$this->tr]);
+        $transfer = $this->jobOf($file, $this->tr);
+
+        $this->keep($file, [$transfer]);
+        $this->assertArrayNotHasKey($file->id, $this->onOffer());
+
+        $this->assertTrue($this->boxes($file)['in_house'], 'the edit screen does not say it is ours');
+
+        $this->saveOneWork($file, ['in_house' => '0'])->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertNull($transfer->fresh()->kept_in_house_on);
+        $this->assertArrayHasKey($file->id, $this->onOffer(), 'it is still not offered to a vendor');
+        $this->assertFalse(
+            WorkFileModel::inHouseWork()->contains('id', $transfer->id),
+            'it is still on the In-house list'
+        );
+    }
+
+    public function test_a_one_work_folder_can_be_kept_from_the_edit_screen_too(): void
+    {
+        $file = $this->file([$this->tr]);
+        $transfer = $this->jobOf($file, $this->tr);
+
+        $this->assertFalse($this->boxes($file)['in_house']);
+
+        $this->saveOneWork($file, ['in_house' => '1'])->assertSessionHasNoErrors();
+        $this->assertSame(now()->toDateString(), $transfer->fresh()->kept_in_house_on);
+
+        // Saved again ticked, it keeps the day it was decided.
+        WorkFileItemModel::whereKey($transfer->id)->update(['kept_in_house_on' => '2026-09-03']);
+        $this->saveOneWork($file, ['in_house' => '1']);
+        $this->assertSame('2026-09-03', $transfer->fresh()->kept_in_house_on);
+    }
+
+    /** A save sent back brings the box back as it was left, like the boxes beside it. */
+    public function test_a_refused_one_work_save_brings_the_box_back_as_left(): void
+    {
+        $file = $this->file([$this->tr]);
+        $transfer = $this->jobOf($file, $this->tr);
+
+        $this->keep($file, [$transfer]);
+
+        // Unticked, with a charge moved and no reason given for it: refused.
+        $this->from(route('workfile.edit', $file->id))
+            ->saveOneWork($file, ['in_house' => '0', 'customer_amount' => '3500'])
+            ->assertSessionHasErrors('price_remark');
+
+        $this->assertNotNull($transfer->fresh()->kept_in_house_on, 'the refused save was applied');
+        $this->assertFalse($this->boxes($file)['in_house'], 'the box came back ticked again');
+    }
+
+    /** A page without the box — one drawn before it, or with a vendor chosen — changes nothing. */
+    public function test_a_one_work_save_without_the_box_leaves_the_mark_alone(): void
+    {
+        $file = $this->file([$this->tr]);
+        $transfer = $this->jobOf($file, $this->tr);
+
+        $this->keep($file, [$transfer]);
+        $this->saveOneWork($file, ['remarks' => 'Customer rang'])->assertSessionHasNoErrors();
+
+        $this->assertSame(now()->toDateString(), $transfer->fresh()->kept_in_house_on);
+    }
+
+    /**
+     * Work with a vendor is with them. The box is not on the page then, and a
+     * post carrying it anyway — or one choosing a vendor in the same save — does
+     * not call the work ours.
+     */
+    public function test_a_one_work_folder_with_a_vendor_is_not_called_ours(): void
+    {
+        $file = $this->file([$this->tr]);
+        $transfer = $this->jobOf($file, $this->tr);
+
+        $this->saveOneWork($file, [
+            'vendor_id' => $this->sharma->id,
+            'vendor_amount' => '1800',
+            'vendor_date' => '2026-09-05',
+            'in_house' => '1',
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame($this->sharma->id, (int) $transfer->fresh()->vendor_id);
+        $this->assertNull($transfer->fresh()->kept_in_house_on);
+    }
 }

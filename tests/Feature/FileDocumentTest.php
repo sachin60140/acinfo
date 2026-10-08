@@ -463,7 +463,7 @@ class FileDocumentTest extends TestCase
 
     private function portal(PartyModel $customer, WorkFileModel $file)
     {
-        return $this->withSession(['customer_id' => $customer->id])
+        return $this->actingAsCustomer($customer)
             ->get(route('customer.file.document', $file->id));
     }
 
@@ -514,7 +514,7 @@ class FileDocumentTest extends TestCase
 
         $this->portal($customer, $file)->assertNotFound();
 
-        $page = $this->withSession(['customer_id' => $customer->id])
+        $page = $this->actingAsCustomer($customer)
             ->getJson(route('customer.file', $file->id))->assertOk();
 
         $this->assertSame([], $page->json('page.documents'), 'and nothing offered on the page');
@@ -538,7 +538,7 @@ class FileDocumentTest extends TestCase
             ['file' => $this->pdf('scan_2.pdf'), 'title' => 'Form 29'],
         ]);
 
-        $docs = $this->withSession(['customer_id' => $customer->id])
+        $docs = $this->actingAsCustomer($customer)
             ->getJson(route('customer.file', $file->id))->assertOk()->json('page.documents');
 
         $this->assertSame(['Form 29', 'RC'], array_column($docs, 'name'), 'every one, newest first');
@@ -555,7 +555,7 @@ class FileDocumentTest extends TestCase
 
         // The stored path never reaches the customer in any form, and neither
         // does what the scanner called it.
-        $body = $this->withSession(['customer_id' => $customer->id])
+        $body = $this->actingAsCustomer($customer)
             ->get(route('customer.file', $file->id))->assertOk()->getContent();
 
         $this->assertStringNotContainsString(WorkFileModel::DOC_DIR, $body);
@@ -576,7 +576,7 @@ class FileDocumentTest extends TestCase
         // The older of the two, which the page used to have no way to offer.
         $rc = WorkFileDocumentModel::where('work_file_id', $file->id)->where('title', 'RC')->firstOrFail();
 
-        $response = $this->withSession(['customer_id' => $customer->id])
+        $response = $this->actingAsCustomer($customer)
             ->get(route('customer.file.document', ['id' => $file->id, 'doc' => $rc->id]))
             ->assertOk();
 
@@ -611,7 +611,7 @@ class FileDocumentTest extends TestCase
 
         $doc = WorkFileDocumentModel::where('work_file_id', $file->id)->firstOrFail();
 
-        $disposition = (string) $this->withSession(['customer_id' => $customer->id])
+        $disposition = (string) $this->actingAsCustomer($customer)
             ->get(route('customer.file.document', ['id' => $file->id, 'doc' => $doc->id]))
             ->assertOk()
             ->headers->get('content-disposition');
@@ -634,15 +634,13 @@ class FileDocumentTest extends TestCase
         $this->upload($alsoMine, [['file' => $this->pdf(), 'title' => 'RC']]);
         $this->upload($stranger, [['file' => $this->pdf(), 'title' => 'NOC']]);
 
-        $session = ['customer_id' => $customer->id];
-
         // Their own document, asked for through the wrong file.
-        $this->withSession($session)
+        $this->actingAsCustomer($customer)
             ->get(route('customer.file.document', ['id' => $mine->id, 'doc' => WorkFileDocumentModel::latestFor($alsoMine->id)->id]))
             ->assertNotFound();
 
         // Somebody else's, through their own file.
-        $this->withSession($session)
+        $this->actingAsCustomer($customer)
             ->get(route('customer.file.document', ['id' => $mine->id, 'doc' => WorkFileDocumentModel::latestFor($stranger->id)->id]))
             ->assertNotFound();
     }
