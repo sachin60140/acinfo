@@ -11,10 +11,13 @@ namespace App\Support;
  * the dialog closed and the remark was gone. This hands the page what was
  * typed so the dialog can open again with it; WorkUpdateDialog decides what is
  * safe to put back.
+ *
+ * The status board is handed the same, for the same reason — a refusal sent
+ * it back drawn fresh — and StatusBoard puts it back by the same rules.
  */
 class UpdateDialog
 {
-    /** @return array{statuses: array, was: array, remarks: array, approved_on: array, reason: string}|null */
+    /** @return array{statuses: array, was: array, remarks: array, approved_on: array, was_approved_on: array, reason: string}|null */
     public static function restore(): ?array
     {
         $statuses = old('statuses');
@@ -41,6 +44,13 @@ class UpdateDialog
             'was' => (array) old('was', []),
             'remarks' => (array) old('remarks', []),
             'approved_on' => (array) old('approved_on', []),
+            /*
+             * The approval date each work showed. The board can correct the
+             * date of a work already approved, and a correction is only put
+             * back over the date it corrected — not over one a colleague has
+             * changed since, which the save would then write over unseen.
+             */
+            'was_approved_on' => (array) old('was_approved_on', []),
             'reason' => $reason,
         ];
     }

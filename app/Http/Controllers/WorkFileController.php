@@ -2500,10 +2500,15 @@ class WorkFileController extends Controller
                 })
                 ->map($name);
 
+            /*
+             * Said for both, because it is refused for both: a reader who was
+             * returning papers was told about cancelling work they were not
+             * cancelling, and left to wonder what they had done.
+             */
             if ($unexplained->isNotEmpty()) {
                 return back()->withInput()->with(
                     'error',
-                    'Cancelling work changes the customer\'s balance, so it needs a reason. Add a remark for: '.$unexplained->implode(', ')
+                    'Cancelling work, or returning its papers to the customer, changes the customer\'s balance, so it needs a reason. Add a remark for: '.$unexplained->implode(', ')
                 );
             }
 
@@ -2704,7 +2709,18 @@ class WorkFileController extends Controller
 
             'approvedKey' => WorkFileModel::APPROVED,
             'cancelledKey' => WorkFileModel::CANCELLED,
+            // The states status() refuses without a reason, as the Update
+            // dialog on the Work Report is told them.
+            'reasonKeys' => [WorkFileModel::CANCELLED, WorkFileModel::RETURNED],
             'files' => $files->map(fn ($file) => self::boardFile($file, $holder, $filter, $lastRemarks, $pendingPapers))->values(),
+
+            /*
+             * What a refused save held. The board is one form for the whole
+             * sitting, and a refusal sent it back drawn fresh — every status
+             * chosen, approval date and remark typed on it gone. StatusBoard
+             * decides what is safe to put back.
+             */
+            'restore' => \App\Support\UpdateDialog::restore(),
         ];
         $statuses = WorkFileModel::STATUSES;
 
