@@ -98,7 +98,7 @@ class VendorNamesInTypedTextTest extends TestCase
 
     private function asCustomer()
     {
-        return $this->withSession(['customer_id' => $this->customer->id]);
+        return $this->actingAsCustomer($this->customer);
     }
 
     // ------------------------------------------------------------- the helper
@@ -271,7 +271,7 @@ class VendorNamesInTypedTextTest extends TestCase
         $this->assertSame('Received from Dualq Selfname, sent via …', $row['particular']);
         $this->assertSame('UPI '.$mobile, $row['ref_no']);
 
-        $portal = $this->withSession(['customer_id' => $self->id])->getJson(route('customer.statement'))->assertOk()->getContent();
+        $portal = $this->actingAsCustomer($self)->getJson(route('customer.statement'))->assertOk()->getContent();
         $this->assertStringContainsString('Received from Dualq Selfname', $portal);
         $this->assertStringNotContainsString('Shailendra', $portal);
 
@@ -290,12 +290,12 @@ class VendorNamesInTypedTextTest extends TestCase
         // Last, so it is also the latest thing the files list says.
         $file->logStatus($file->status, 'Dualq Selfname ji came in to sign');
 
-        $page = $this->withSession(['customer_id' => $self->id])->getJson(route('customer.file', $file->id))->assertOk();
+        $page = $this->actingAsCustomer($self)->getJson(route('customer.file', $file->id))->assertOk();
         $this->assertSame('Dualq Selfname ji, via … ji', $page->json('page.description'));
         $this->assertSame('Dualq Selfname ji to bring it', $page->json('page.papers.needed.0.note'));
         $this->assertStringContainsString('Dualq Selfname ji came in to sign', json_encode($page->json('page.timeline')));
 
-        $list = $this->withSession(['customer_id' => $self->id])->getJson(route('customer.files'))->assertOk()->getContent();
+        $list = $this->actingAsCustomer($self)->getJson(route('customer.files'))->assertOk()->getContent();
         $this->assertStringContainsString('Dualq Selfname ji came in to sign', $list);
 
         $pending = collect($this->actingAs($this->admin)->getJson(route('workfile.paperaudit'))->assertOk()->json('props.pending'))

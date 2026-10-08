@@ -91,8 +91,9 @@ class CustomerPortalController extends Controller
         // the customer ends up signed into.
         $req->session()->regenerate();
 
-        session([
-            self::KEY => $party->id,
+        // With a note of the password it was opened with, so that a new one,
+        // set by the customer or by the office, ends it. See the gate.
+        session(CustomerAuthMiddleware::signedInAs($party) + [
             'customer_name' => $party->name,
         ]);
 
@@ -100,7 +101,9 @@ class CustomerPortalController extends Controller
          * A visit is not an edit to the customer's record, so updated_at stays
          * where it is — the office screens read that column to mean "when did
          * somebody last change this", and every sign-in moving it would make it
-         * mean nothing.
+         * mean nothing. The portal's gate reads it too: the session was noted
+         * with it above, and a sign-in that moved it would have the gate end
+         * the session it had only just opened.
          *
          * timestamps = false, not saveQuietly(): that one suppresses model
          * events and touches the timestamps regardless, which is a distinction
@@ -131,6 +134,11 @@ class CustomerPortalController extends Controller
      * into a party — and exactly one place to be sure it is still a customer.
      * A party deactivated while someone is signed in stops being able to read
      * their own ledger at the next page, not at the next login.
+     *
+     * CustomerAuthMiddleware now asks the same before any screen runs, and
+     * ends the session when the answer is no. This still asks as well: it is
+     * where a screen gets its party from, and a screen that gets it here is
+     * not left open the day somebody adds its route outside the gate.
      */
     private function customer(): PartyModel
     {
@@ -445,6 +453,8 @@ class CustomerPortalController extends Controller
                 'screenshot_url' => WorkFileModel::isStoredUpload($work->approval_screenshot)
                     ? route('customer.file.approval', ['id' => $file->id, 'item' => $work->id])
                     : null,
+                // Which that address cannot say; see WorkFileModel::isPdf().
+                'screenshot_is_pdf' => WorkFileModel::isPdf($work->approval_screenshot),
             ];
         }
 
@@ -461,6 +471,8 @@ class CustomerPortalController extends Controller
                     // A document, so it opens over the page rather than
                     // replacing it — checking an approval is a glance.
                     'subPreview' => true,
+                    // And a PDF in the viewer, as the row says it is one.
+                    'subPdf' => 'screenshot_is_pdf',
                 ],
                 ['key' => 'approved_on', 'label' => 'Approved On'],
                 ['key' => 'charged', 'label' => 'Amount', 'type' => 'money'],
@@ -644,15 +656,17 @@ class CustomerPortalController extends Controller
             $customer->save();
 
             /*
-             * A new session id for the person who just proved themselves. Any
-             * session someone else had on this account keeps its own id, so
-             * this does not turn them out — which is why the message below does
-             * not claim it did.
+             * A new session id for the person who just proved themselves, with
+             * the new password noted in it, so this phone carries on. Every
+             * other session on the account still carries the old one, and the
+             * gate ends each at its next page — very often the reason the
+             * password is being changed at all.
              */
             $req->session()->regenerate();
+            session(CustomerAuthMiddleware::signedInAs($customer));
 
             return redirect()->route('customer.dashboard')
-                ->with('success', 'Your password has been changed. Use it the next time you sign in.');
+                ->with('success', 'Your password has been changed, and any other phone or computer signed in to your account has been signed out.');
         }
 
         $props = [

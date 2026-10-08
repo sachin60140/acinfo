@@ -149,7 +149,8 @@ class ReGiveWorkTest extends TestCase
         $key = $file->id.':'.$vendor->id;
 
         return $this->actingAs($this->admin)->post(route('workfile.vendorreturn'), [
-            'returned_on' => '2026-09-08',
+            // The day give() hands it over: work cannot come back before it went.
+            'returned_on' => '2026-09-12',
             'files' => [$key],
             'amounts' => $part === null ? [] : [$key => $part],
             'remark' => 'Could not get it done',

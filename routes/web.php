@@ -27,9 +27,25 @@ Route::get('/', function () {
     return redirect('/customer');
 });
 
-Route::get('/admin', [AuthController::class, 'login']);
+/*
+ * The office sign-in page and the sign-in itself are not office pages, but they
+ * carry the office pages' password check (AdminSessionMiddleware, in the
+ * 'admin' group in bootstrap/app.php) all the same, because both sign a browser
+ * in: the form with a password, the page with a Remember me cookie.
+ *
+ * The check notes in the session the password it was signed in with, and turns
+ * the browser away once that is no longer the account's. A session with none
+ * noted yet is trusted with whatever the password is when it next asks, so it
+ * has to be noted here, at the sign-in, and not on the first office page the
+ * browser happens to open: one that signed in, went no further and came back
+ * after the password was changed would otherwise be let in on the new one. On
+ * the sign-in page the check also reads the password a Remember me cookie
+ * carries, and turns away one issued under an old password rather than signing
+ * the phone in and sending it on to the dashboard.
+ */
+Route::get('/admin', [AuthController::class, 'login'])->middleware('adminSession');
 
-Route::post('admin-login', [AuthController::class, 'authlogin'])->middleware('throttle:10,1');
+Route::post('admin-login', [AuthController::class, 'authlogin'])->middleware(['throttle:10,1', 'adminSession']);
 
 Route::post('admin/logout', [AuthController::class, 'logout'])->name('adminlogout');
 
