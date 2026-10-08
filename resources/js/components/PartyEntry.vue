@@ -12,7 +12,7 @@
  * the counter is asked about is the one the party is left with — so it is
  * worked out as the amount is typed, not after saving.
  */
-import { computed, nextTick, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { balance, money, side } from '../money';
 import { useAdjust } from '../adjust';
 import AdjustFiles from './AdjustFiles.vue';
@@ -291,6 +291,46 @@ const adjustProblem = computed(() =>
     writeOffProblem.value || setOffProblem.value || adjust.problem.value || counterAdjust.problem.value
 );
 
+/*
+ * One press, one save. Found in review: a double click, or Enter pressed twice
+ * in the amount box, sent the form twice and both were saved — the payment
+ * twice on the statement, a set-off cleared twice on both accounts. Not
+ * disabled inside the submit itself, or the press would still go but the
+ * browser would drop it.
+ */
+const submitting = ref(false);
+
+function onSubmit(event) {
+    if (submitting.value) {
+        event.preventDefault();
+
+        return;
+    }
+
+    submitting.value = true;
+}
+
+// Brought back from the browser's history, the page can be used again.
+function onPageShow(event) {
+    if (event.persisted) {
+        submitting.value = false;
+    }
+}
+
+window.addEventListener('pageshow', onPageShow);
+onBeforeUnmount(() => window.removeEventListener('pageshow', onPageShow));
+
+/*
+ * And the server's half: a token for this page, posted with every press, so
+ * that the same save arriving twice is written once whatever got it there —
+ * a press this guard never saw, or the page brought back with Back and sent
+ * again. See PartyController::savedBefore(). Made here, once, as the page
+ * opens, rather than handed down with it: drawn by the server, every load
+ * would hand the screen something different, and the page and its data are
+ * held to be the same screen.
+ */
+const once = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('');
+
 const dateBox = ref(null);
 
 /*
@@ -342,11 +382,12 @@ function resetDateField() {
 
 <template>
     <div class="ui party-entry">
-        <form class="ui-card entry-form" :action="action" method="POST" @reset.prevent="onReset">
+        <form class="ui-card entry-form" :action="action" method="POST" @submit="onSubmit" @reset.prevent="onReset">
             <!-- Rendered here rather than passed as a slot: the component is
                  mounted onto a bare element, so there is no server markup to
                  slot in. -->
             <input type="hidden" name="_token" :value="csrf">
+            <input type="hidden" name="once" :value="once">
 
             <div class="ui-card__head">
                 <h2 class="ui-card__title">New Ledger Entry</h2>
@@ -589,7 +630,7 @@ function resetDateField() {
                     <button type="reset" class="ui-btn">
                         <i class="bi bi-arrow-counterclockwise"></i> Reset
                     </button>
-                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="Boolean(adjustProblem)">
+                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="submitting || Boolean(adjustProblem)">
                         <i class="bi bi-check2-circle"></i> Save Entry
                     </button>
                 </div>
