@@ -12,7 +12,7 @@
  * over one bad figure or a missing reason. So the rules it would bounce on are
  * shown before the batch is sent rather than after.
  */
-import { computed, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref } from 'vue';
 import { money } from '../money';
 
 const props = defineProps({
@@ -128,6 +128,38 @@ function toggleAll(checked) {
 // Old input can come back with files already ticked and their amounts cleared.
 rows.forEach((row) => prefill(row));
 
+/*
+ * One press, one return.
+ *
+ * A double click sent the batch twice, and the second post, read while the
+ * first was still saving, tried to book the refund a second time and ended on
+ * a server error page — with the return already saved, so the page said the
+ * opposite of what had happened. The server makes a second post wait its turn
+ * now and refuses it; this stops it being sent at all. Released when the
+ * browser brings the page back from its history, or the button would stay dead
+ * on a page returned to with Back.
+ */
+const submitting = ref(false);
+
+function onSubmit(event) {
+    if (submitting.value) {
+        event.preventDefault();
+
+        return;
+    }
+
+    submitting.value = true;
+}
+
+function onPageShow(event) {
+    if (event.persisted) {
+        submitting.value = false;
+    }
+}
+
+window.addEventListener('pageshow', onPageShow);
+onBeforeUnmount(() => window.removeEventListener('pageshow', onPageShow));
+
 const BADGES = {
     in_office: 'neutral',
     paper_pendency: 'warn',
@@ -160,7 +192,7 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
     <!-- Not "cr": party/_style.blade.php, which this page includes, uses .cr to
          mean credit and paints it red. Both rules sit at the same specificity,
          so which one wins is decided by stylesheet order alone. -->
-    <form v-else class="ui ui-page cr-return" :action="action" method="POST">
+    <form v-else class="ui ui-page cr-return" :action="action" method="POST" @submit="onSubmit">
         <!-- Rendered here rather than passed as a slot: the component is mounted
              onto a bare element, so there is no server markup to slot in. -->
         <input type="hidden" name="_token" :value="csrf">
@@ -356,7 +388,7 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                 </span>
                 <div class="cr-actions">
                     <a :href="cancelUrl" class="ui-btn">Cancel</a>
-                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="blocked">
+                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="submitting || blocked">
                         <i class="bi bi-arrow-return-left"></i> Return to Customer
                     </button>
                 </div>
