@@ -467,6 +467,7 @@
             "oldRows": {
                 "list_of": {
                     "description": "string",
+                    "duplicate_ok": "bool",
                     "registration_no": "string",
                     "works": {
                         "list_of": {

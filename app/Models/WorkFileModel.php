@@ -2659,6 +2659,47 @@ class WorkFileModel extends Model
     }
 
     /**
+     * Lock these folders for the rest of the transaction, before anything
+     * about them is read in it.
+     *
+     * Give to Vendor, Keep in-house, Papers Returned by Vendor and Return to
+     * Customer each read the ticked folders again inside their transaction, so
+     * a stale page cannot act on work that has moved since. Found in the health
+     * check of 2026-10-07: that read did not wait for a post of the same
+     * folders that was still saving — a double click. The second read them as
+     * they were, wrote what the first had just written, and so saw nothing
+     * change; then it rebuilt the vendor's lines from the old state and deleted
+     * the one the first had made. Both said they had worked, and the vendor's
+     * statement lost its credit for work they hold, or its reversal for work
+     * they handed back. Return to Customer, hit the same way, was a 500 on the
+     * ledger's unique key with the return already saved.
+     *
+     * Locked, the second waits for the first to finish, reads what it did, and
+     * is refused the way a stale page is.
+     *
+     * Taken alone and first, rather than by locking the re-read itself as Hand
+     * Over does. The first plain read in a transaction fixes what every later
+     * one sees, and the re-read asks about each folder's works as well, which
+     * its lock need not cover: locking folder by folder, it can read the works
+     * of one before it has waited for the next, and then sees that one as it
+     * was. Whether it does depends on how the database plans the query — on a
+     * MariaDB copy, a take-back of two folders posted a moment after a
+     * take-back of one of them still lost that one's reversal (found testing
+     * this fix). A lock on the folders alone reads nothing else, so everything
+     * after it is read once the wait is over. In id order, so two batches
+     * sharing folders queue for them the same way rather than each holding one
+     * the other wants.
+     */
+    public static function lockFolders(array $ids): void
+    {
+        self::query()
+            ->whereIn('id', array_map('intval', $ids))
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->pluck('id');
+    }
+
+    /**
      * Files currently out with a vendor and not yet returned — what the return
      * screen offers, and the same conditions are re-applied on save so a stale
      * page cannot return a file twice.
