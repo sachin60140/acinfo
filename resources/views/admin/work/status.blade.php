@@ -286,6 +286,10 @@
                         @endif
                     </div>
                 @else
+                    {{-- A tab of finished work too long for one page. The board's
+                         search is the browser's, over the rows it was sent. --}}
+                    @include('partials._list-page', ['shown' => $shown, 'note' => 'Search looks through these only.'])
+
                     {{--
                         Rendered by Vue. The field names are the ones
                         WorkFileController::status() already validates, so the form

@@ -56,7 +56,9 @@ class WorkTypeModel extends Model
      * can pre-fill the amount without a second request.
      *
      * $includeId keeps a retired type in the list for the one file that already
-     * uses it, so editing that file does not force the type to be changed.
+     * uses it, so editing that file does not force the type to be changed. One
+     * id or several: a folder of several works has a type for each, and any of
+     * them may be the one that was switched off.
      */
     public static function selectList($includeId = null)
     {
@@ -65,7 +67,7 @@ class WorkTypeModel extends Model
                 $q->where('is_active', 1);
 
                 if ($includeId) {
-                    $q->orWhere('id', $includeId);
+                    $q->orWhereIn('id', (array) $includeId);
                 }
             })
             ->select('id', 'name', 'default_rate', 'default_vendor_rate', 'is_active')

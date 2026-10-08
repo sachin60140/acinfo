@@ -78,7 +78,7 @@ const FILES = [
     },
 ];
 
-function mount(files = FILES) {
+function mount(files = FILES, extra = {}) {
     const host = document.createElement('div');
     document.body.appendChild(host);
 
@@ -91,6 +91,7 @@ function mount(files = FILES) {
         approvedKey: 'approval_done',
         cancelledKey: 'cancelled',
         today: '2026-08-21',
+        ...extra,
     });
 
     app.mount(host);
@@ -341,5 +342,217 @@ describe('searching for a vendor on a folder shared with the office', () => {
 
         await search(host, 'sharma tr');
         expect(host.querySelector('.board__search .ui-hint').textContent.trim()).toBe('Nothing here matches that.');
+    });
+});
+
+/*
+ * Paper Returned to Customer gives the charge back, so the server refuses it
+ * without a reason just as it refuses a cancellation. Found in the health
+ * check: the board asked a reason only of Cancelled, let a return with no
+ * remark through, and the server sent the whole board back.
+ */
+describe('a return to the customer', () => {
+    const RETURNABLE = [{
+        ...FILES[0],
+        statuses: { ...FILES[0].statuses, paper_returned: 'Paper Returned to Customer' },
+    }];
+
+    const choose = async (host, id, status) => {
+        const select = host.querySelector(`select[name="statuses[${id}]"]`);
+        select.value = status;
+        select.dispatchEvent(new window.Event('change'));
+        await nextTick();
+    };
+
+    const save = (host) => host.querySelector('button[type="submit"]');
+
+    it('needs a reason before the board can be saved, as a cancellation does', async () => {
+        const host = mount(RETURNABLE);
+
+        await choose(host, 11, 'paper_returned');
+
+        expect(save(host).disabled).toBe(true);
+        expect(host.querySelector('.ui-card__foot').textContent).toContain('1 needs a reason');
+        expect(host.querySelector('input[name="remarks[11]"]').getAttribute('placeholder')).toBe('A reason is required');
+
+        const remark = host.querySelector('input[name="remarks[11]"]');
+        remark.value = 'Customer took the papers to another agent';
+        remark.dispatchEvent(new window.Event('input'));
+        await nextTick();
+
+        expect(save(host).disabled).toBe(false);
+    });
+
+    it('asks it of whatever the server says needs one', async () => {
+        const host = mount(RETURNABLE, { reasonKeys: ['cancelled'] });
+
+        await choose(host, 11, 'paper_returned');
+
+        expect(save(host).disabled).toBe(false);
+    });
+
+    /*
+     * The finding's own case, from the other side: a return the server
+     * refused for want of a reason comes back still chosen, with the board
+     * asking for the reason — not drawn fresh with the choice gone.
+     */
+    it('comes back from a refusal still chosen, asking for its reason', () => {
+        const host = mount(RETURNABLE, {
+            restore: {
+                statuses: { 11: 'paper_returned' },
+                was: { 11: 'file_dispatch' },
+                remarks: { 11: '' },
+                approved_on: {},
+                was_approved_on: {},
+                reason: 'Cancelling work, or returning its papers to the customer, changes the customer\'s balance, so it needs a reason.',
+            },
+        });
+
+        expect(host.querySelector('select[name="statuses[11]"]').value).toBe('paper_returned');
+        expect(save(host).disabled).toBe(true);
+        expect(host.querySelector('.ui-card__foot').textContent).toContain('1 needs a reason');
+    });
+});
+
+/*
+ * Back from a save the server refused, the board used to be drawn fresh: every
+ * status chosen, approval date and remark typed in that sitting was gone. What
+ * the refused save held is put back where that is safe, by the same rules as
+ * the Update dialog on the Work Report.
+ */
+describe('after a save the server refused', () => {
+    const back = (over = {}) => ({
+        statuses: { 11: 'approval_done', 21: 'file_dispatch', 22: 'cancelled' },
+        was: { 11: 'file_dispatch', 21: 'file_dispatch', 22: 'file_dispatch' },
+        remarks: { 11: '', 21: 'Handed to the runner', 22: 'Buyer backed out' },
+        approved_on: { 11: '2026-08-19' },
+        was_approved_on: { 11: '' },
+        reason: 'Approval Done needs a screenshot. Attach one for: F-00031 · DRC',
+        ...over,
+    });
+
+    const field = (host, name) => host.querySelector(`[name="${name}"]`);
+
+    it('puts back the choices, the approval date and the remarks', () => {
+        const host = mount(FILES, { restore: back() });
+
+        expect(field(host, 'statuses[11]').value).toBe('approval_done');
+        expect(field(host, 'approved_on[11]').value).toBe('2026-08-19');
+        expect(field(host, 'remarks[21]').value).toBe('Handed to the runner');
+        expect(field(host, 'statuses[22]').value).toBe('cancelled');
+        expect(field(host, 'remarks[22]').value).toBe('Buyer backed out');
+
+        // What was drawn is still what is posted as drawn.
+        expect(field(host, 'was[11]').value).toBe('file_dispatch');
+
+        const note = host.querySelector('.board__restored').textContent;
+        expect(note).toContain('What you typed has been put back');
+        // A file cannot be handed back to an upload box.
+        expect(note).toContain('Attach any screenshot again');
+
+        // The approval still wants its screenshot, so the board says so.
+        expect(host.querySelector('.ui-card__foot').textContent).toContain('1 needs a screenshot');
+    });
+
+    /*
+     * Refused because a colleague moved it: the choice was made against a
+     * status that is no longer true, and filling it back in would send the
+     * work straight back. Said on the work, so it is decided again.
+     */
+    it('does not put back a status chosen against one that has changed since', () => {
+        const host = mount(FILES, { restore: back({ was: { 11: 'in_office', 21: 'file_dispatch', 22: 'file_dispatch' } }) });
+
+        expect(field(host, 'statuses[11]').value).toBe('file_dispatch');
+        expect(field(host, 'approved_on[11]')).toBe(null);
+
+        const row = field(host, 'statuses[11]').closest('tr');
+        expect(row.textContent).toContain('This work is now File Dispatch');
+        expect(row.textContent).toContain('your choice of Approval Done was not put back');
+
+        expect(host.querySelector('.board__restored').textContent).toContain('Some of what you typed has been put back');
+
+        // The rest of the sitting is still put back.
+        expect(field(host, 'statuses[22]').value).toBe('cancelled');
+    });
+
+    /*
+     * A corrected approval date comes back only over the date it was
+     * corrected from. One a colleague has changed since is theirs.
+     */
+    it('puts back a corrected approval date only over the one it corrected', () => {
+        const approved = JSON.parse(JSON.stringify(FILES));
+        approved[0].items[0].status = 'approval_done';
+        approved[0].items[0].approved_on = '20-08-2026';
+        approved[0].items[0].approved_on_value = '2026-08-20';
+        approved[0].items[0].approved_on_iso = '2026-08-20';
+
+        const same = back({
+            statuses: { 11: 'approval_done' },
+            was: { 11: 'approval_done' },
+            remarks: {},
+            approved_on: { 11: '2026-08-18' },
+            was_approved_on: { 11: '2026-08-20' },
+        });
+
+        let host = mount(approved, { restore: same });
+        expect(field(host, 'approved_on[11]').value).toBe('2026-08-18');
+
+        host = mount(approved, { restore: { ...same, was_approved_on: { 11: '2026-08-15' } } });
+
+        // The box shows the date as it is stored now, and sends nothing.
+        expect(host.querySelector('input[type="date"]').value).toBe('2026-08-20');
+        expect(field(host, 'approved_on[11]')).toBe(null);
+    });
+
+    it('puts back nothing when nothing was refused', () => {
+        const host = mount(FILES, { restore: null });
+
+        expect(field(host, 'statuses[11]').value).toBe('file_dispatch');
+        expect(host.querySelector('.board__restored')).toBe(null);
+        expect(host.querySelector('.ui-card__foot').textContent).toContain('No changes yet');
+    });
+
+    /*
+     * A work that is not on this board — moved off this tab since — is simply
+     * not there to put back; the server's message names it.
+     */
+    it('ignores works that are not on the board', () => {
+        const host = mount(FILES, { restore: back({ statuses: { 99: 'cancelled' }, was: { 99: 'in_office' }, remarks: { 99: 'Gone' } }) });
+
+        expect(host.querySelector('.board__restored')).toBe(null);
+        expect(field(host, 'statuses[99]')).toBe(null);
+    });
+});
+
+/*
+ * "View the one on file", for an approval kept as a PDF.
+ *
+ * The address is a route with no extension, so the preview cannot tell a PDF
+ * from it: drawn as an image, it would not load, and the office was told the
+ * evidence had been removed from the server. The server says which it is.
+ */
+describe('an approval kept as a PDF', () => {
+    it('opens in the viewer', async () => {
+        const host = mount([{
+            ...FILES[0],
+            status: 'approval_done',
+            items: [{
+                ...FILES[0].items[0],
+                status: 'approval_done',
+                has_screenshot: true,
+                screenshot_url: '/admin/file/1/approval/11',
+                screenshot_is_pdf: true,
+                approved_on: '21-08-2026',
+                approved_on_iso: '2026-08-21',
+            }],
+        }]);
+
+        [...host.querySelectorAll('a')]
+            .find((a) => a.textContent.includes('View the one on file'))
+            .dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        await nextTick();
+
+        expect(document.querySelector('.preview__frame').getAttribute('src')).toBe('/admin/file/1/approval/11');
+        expect(document.querySelector('.preview__image')).toBe(null);
     });
 });

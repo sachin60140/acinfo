@@ -148,7 +148,7 @@ class VendorNameHiddenTest extends TestCase
         $this->assertStringNotContainsString('given to', strtolower($this->shown($file)));
 
         // Nor on the pages the customer opens: the file, and the list of files.
-        $this->withSession(['customer_id' => $this->customer->id]);
+        $this->actingAsCustomer($this->customer);
 
         $page = $this->getJson(route('customer.file', $file->id))->assertOk()->getContent();
         $list = $this->getJson(route('customer.files'))->assertOk()->getContent();

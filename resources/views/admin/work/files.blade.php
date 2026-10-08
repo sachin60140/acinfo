@@ -124,10 +124,20 @@
                             </div>
                         </form>
 
+                        {{-- Finished work too long for one page: the newest of it,
+                             and every figure below is of those alone. --}}
+                        @include('partials._list-page', [
+                            'shown' => $shown,
+                            'note' => 'The totals and the search cover these only; narrow the dates to see a period whole.',
+                        ])
+
                         <div class="statement-summary mb-3">
                             <div class="stat">
                                 <span class="label">Billed to Customers</span>
                                 <span class="value dr">{{ number_format($billed, 2, '.', ',') }}</span>
+                                @if ($shown)
+                                    <span class="stat-note">of the {{ number_format($fileCount) }} files shown</span>
+                                @endif
                             </div>
                             <div class="stat">
                                 {{-- Not "Vendor Cost": this adds up the cost column, and that has counted
@@ -135,6 +145,9 @@
                                      vendor since file expenses came in. --}}
                                 <span class="label">Cost</span>
                                 <span class="value cr">{{ number_format($cost, 2, '.', ',') }}</span>
+                                @if ($shown)
+                                    <span class="stat-note">of the {{ number_format($fileCount) }} files shown</span>
+                                @endif
                             </div>
                             <div class="stat closing">
                                 <span class="label">Margin</span>
@@ -146,7 +159,9 @@
                                     the two beside it reads as the whole answer.
                                 --}}
                                 @if ($unpricedCount)
-                                    <span class="stat-note">on {{ $fileCount - $unpricedCount }} of {{ $fileCount }} files &mdash; {{ $unpricedCount }} awaiting a price</span>
+                                    <span class="stat-note">on {{ $fileCount - $unpricedCount }} of {{ $shown ? 'the '.number_format($fileCount) : $fileCount }} files{{ $shown ? ' shown' : '' }} &mdash; {{ $unpricedCount }} awaiting a price</span>
+                                @elseif ($shown)
+                                    <span class="stat-note">of the {{ number_format($fileCount) }} files shown</span>
                                 @endif
                             </div>
                         </div>

@@ -245,3 +245,54 @@ describe('a set-off', () => {
         expect(dialog().textContent).not.toContain('set-off');
     });
 });
+
+/*
+ * Reversed on its own, a balance carried from the old Client Ledger would be
+ * in neither book: the old book says it was carried. The server refuses it;
+ * the dialog offers only reversing it to enter it again, and says why.
+ */
+describe('a balance carried from the old Client Ledger', () => {
+    const carried = () => row(31, { particular: 'Balance brought from old Client Ledger', payment_mode: null, debit: 2500, credit: null, carried: true });
+    const reverseAlone = () => [...dialog().querySelectorAll('button[type="submit"]')].find((b) => b.value === '0');
+
+    it('is offered only to be reversed and entered again, and says why', async () => {
+        const host = mount([carried()]);
+
+        changeButtons(host)[0].click();
+        await nextTick();
+
+        expect(reverseAlone()).toBeUndefined();
+        expect(submit('Reverse and enter it again').value).toBe('1');
+        expect(dialog().textContent).toContain('carried from the old Client Ledger');
+        expect(dialog().textContent).toContain('neither book');
+    });
+
+    /*
+     * Found in review: carried to the wrong customer because the right one had
+     * not been made, it was taken back first and the Entry screen left to add
+     * them — losing which old client it came from. The Entry screen picks only
+     * a customer already on the list, and that is said before anything is
+     * pressed.
+     */
+    it('says to add the right customer first, if they are not on the list yet', async () => {
+        const host = mount([carried()]);
+
+        changeButtons(host)[0].click();
+        await nextTick();
+
+        const text = dialog().textContent.replace(/\s+/g, ' ');
+
+        expect(text).toContain('If the right customer is not on the Customers list yet, add them first');
+        expect(text).toContain('can pick only a customer already on it');
+    });
+
+    it('and an ordinary entry keeps both, saying nothing of it', async () => {
+        const host = mount([row(23, { carried: false })]);
+
+        changeButtons(host)[0].click();
+        await nextTick();
+
+        expect(reverseAlone()).toBeDefined();
+        expect(dialog().textContent).not.toContain('old Client Ledger');
+    });
+});

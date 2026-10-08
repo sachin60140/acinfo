@@ -253,6 +253,7 @@
                     "has_vendor": "bool",
                     "id": "number",
                     "in_house": "bool",
+                    "screenshot_is_pdf": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_label": "string",
@@ -262,9 +263,16 @@
                 }
             },
             "papers": "null",
+            "pdfMaxKb": "number",
+            "priced": {
+                "customer_amount": "number",
+                "vendor_amount": "number"
+            },
             "receivedDateField": "string",
             "refundPlaceholder": "string",
             "returnedKey": "string",
+            "screenshotIsPdf": "bool",
+            "screenshotMaxKb": "number",
             "screenshotUrl": "string",
             "statuses": {
                 "approval_done": "string",
@@ -290,11 +298,13 @@
                 }
             },
             "today": "string",
+            "typed": "null",
             "values": {
                 "customer_amount": "string",
                 "customer_id": "number",
                 "description": "string",
                 "file_no": "string",
+                "in_house": "bool",
                 "registration_no": "string",
                 "remarks": "null",
                 "returned_amount": "null",
@@ -460,6 +470,7 @@
             "oldRows": {
                 "list_of": {
                     "description": "string",
+                    "duplicate_ok": "bool",
                     "registration_no": "string",
                     "works": {
                         "list_of": {
@@ -503,6 +514,7 @@
                             "customer_amount": "number",
                             "has_screenshot": "bool",
                             "id": "number",
+                            "screenshot_is_pdf": "bool",
                             "screenshot_url": "null",
                             "status": "string",
                             "vendor": "string",
@@ -532,7 +544,11 @@
                 }
             },
             "pendencyKey": "string",
+            "reasonKeys": {
+                "list_of": "string"
+            },
             "resetUrl": "string",
+            "restore": "null",
             "statuses": {
                 "approval_done": "string",
                 "cancelled": "string",
@@ -597,6 +613,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -630,6 +647,7 @@
                     "registration_no": "string",
                     "row_class": "string",
                     "screenshot": "null",
+                    "screenshot_is_pdf": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
@@ -643,6 +661,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -674,6 +693,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -707,6 +727,7 @@
                     "registration_no": "string",
                     "row_class": "string",
                     "screenshot": "null",
+                    "screenshot_is_pdf": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
@@ -720,6 +741,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -751,6 +773,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -784,6 +807,7 @@
                     "registration_no": "string",
                     "row_class": "string",
                     "screenshot": "null",
+                    "screenshot_is_pdf": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
@@ -797,6 +821,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -828,6 +853,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -861,6 +887,7 @@
                     "registration_no": "string",
                     "row_class": "string",
                     "screenshot": "null",
+                    "screenshot_is_pdf": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
@@ -874,6 +901,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -905,6 +933,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -915,6 +944,7 @@
             "rowClass": "string",
             "rows": "[]",
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -946,6 +976,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -979,6 +1010,7 @@
                     "registration_no": "string",
                     "row_class": "string",
                     "screenshot": "null",
+                    "screenshot_is_pdf": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
@@ -992,6 +1024,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -1023,6 +1056,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -1033,6 +1067,7 @@
             "rowClass": "string",
             "rows": "[]",
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -1206,6 +1241,7 @@
             "indexUrl": "string",
             "initial": {
                 "amount": "string",
+                "corrects": "string",
                 "entry_kind": "string",
                 "entry_type": "string",
                 "particular": "string",
@@ -1342,6 +1378,7 @@
                     "adjust_url": "null",
                     "against": "null",
                     "balance": "number",
+                    "carried": "bool",
                     "change": "null",
                     "credit": "null",
                     "debit": "null",
@@ -1364,6 +1401,7 @@
                     "adjust_url": "null",
                     "against": "null",
                     "balance": "number",
+                    "carried": "bool",
                     "change": "null",
                     "credit": "null",
                     "debit": "number",
@@ -1385,6 +1423,7 @@
                     "adjust_url": "null",
                     "against": "null",
                     "balance": "number",
+                    "carried": "bool",
                     "change": "null",
                     "credit": "number",
                     "debit": "number",
@@ -1561,6 +1600,7 @@
             ],
             "csrf": "string",
             "emptyText": "string",
+            "exportTitle": "string",
             "groupBy": "string",
             "groupLabel": "string",
             "groups": {
@@ -1631,6 +1671,7 @@
             "title": "string",
             "today": "string",
             "todayLabel": "string",
+            "totalLabel": "string",
             "totals": {
                 "billed": "string",
                 "cost": "string",
@@ -1667,6 +1708,7 @@
             ],
             "csrf": "string",
             "emptyText": "string",
+            "exportTitle": "string",
             "groupBy": "string",
             "groupLabel": "string",
             "groups": {
@@ -1737,6 +1779,7 @@
             "title": "string",
             "today": "string",
             "todayLabel": "string",
+            "totalLabel": "string",
             "totals": {
                 "billed": "string",
                 "cost": "string",

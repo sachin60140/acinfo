@@ -331,15 +331,75 @@ function onRegInput(row) {
     timers.set(row, window.setTimeout(() => lookup(row), 400));
 }
 
+/*
+ * A batch the server sent back comes back with its numbers, and with any "take
+ * it in anyway" tick it carried. But the warning that tick answers is drawn
+ * from a lookup, and nothing typed the numbers this time. Found in the health
+ * check: sent back for something else, a ticked file came back with no warning
+ * and no tick, and the next save was refused for a box the page no longer
+ * showed. So every number brought back is looked up again as the page opens.
+ */
+onMounted(() => {
+    for (const row of rows) {
+        if (row.registration_no) {
+            lookup(row);
+        }
+    }
+});
+
 watch(total, (value) => {
     // The panel above this one shows where the customer's balance lands. It
     // listens for the running total rather than reaching into this markup.
     document.dispatchEvent(new CustomEvent('receive-total', { detail: value }));
 });
+
+/*
+ * One batch per press.
+ *
+ * A double click sent the batch twice, and a card with no registration number
+ * on it was opened as two files with the customer charged for both. So the
+ * second submit is stopped here; the server tells a repeat it was already
+ * saved as well, for a press this cannot see. Released when the browser brings
+ * the page back from its history, or the button would stay dead on a page
+ * returned to with Back.
+ *
+ * The form is the page's, drawn around this component, so its submit is
+ * listened for rather than bound in the template.
+ */
+const root = ref(null);
+const submitting = ref(false);
+let form = null;
+
+function onSubmit(event) {
+    if (submitting.value) {
+        event.preventDefault();
+
+        return;
+    }
+
+    submitting.value = true;
+}
+
+function onPageShow(event) {
+    if (event.persisted) {
+        submitting.value = false;
+    }
+}
+
+onMounted(() => {
+    form = root.value?.closest('form') ?? null;
+    form?.addEventListener('submit', onSubmit);
+    window.addEventListener('pageshow', onPageShow);
+});
+
+onBeforeUnmount(() => {
+    form?.removeEventListener('submit', onSubmit);
+    window.removeEventListener('pageshow', onPageShow);
+});
 </script>
 
 <template>
-    <div class="ui rcv">
+    <div ref="root" class="ui rcv">
         <div class="ui-card">
             <div class="ui-card__head">
                 <div>
@@ -629,7 +689,7 @@ watch(total, (value) => {
 
                 <div class="rcv-actions">
                     <a v-if="cancelUrl" :href="cancelUrl" class="ui-btn">Cancel</a>
-                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="unconfirmed.length > 0">
+                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="unconfirmed.length > 0 || submitting">
                         <i class="bi bi-check2-circle"></i> Receive Files
                     </button>
                 </div>

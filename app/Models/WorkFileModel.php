@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -161,6 +162,22 @@ class WorkFileModel extends Model
      */
     public const OPEN_STATUSES = ['in_office', 'paper_pendency', 'file_dispatch',
         'part_pesi_required', 'under_verification', 'partly_approved'];
+
+    /**
+     * The most files a list of finished work is drawn with at once.
+     *
+     * Work in hand stays small, because it gets finished and leaves. Finished
+     * work does not: nearly every file ends up approved, so Update Status's
+     * Approval Done and All tabs, All Work Files and the Work Report grew with
+     * every file the office had ever handled, and each was drawn whole, a row
+     * built in PHP for every file. Found in the health check: on a copy with
+     * 40,000 files Approval Done took 15 seconds and 300 MB, past what a
+     * shared host allows a page.
+     *
+     * So a list of finished work shows the newest this many, says how many
+     * there are in all, and links to the older ones; see newestPage().
+     */
+    public const LIST_LIMIT = 500;
 
     /**
      * The same nine states, said to the person whose file it is.
@@ -1378,7 +1395,7 @@ class WorkFileModel extends Model
             ->get(['i.work_file_id', 't.name'])
             ->groupBy('work_file_id');
 
-        return $files->map(function ($file) use ($owed, $works) {
+        $rows = $files->map(function ($file) use ($owed, $works) {
             $outstanding = (float) ($owed[$file->customer_id][$file->id] ?? 0);
 
             /*
@@ -1419,6 +1436,43 @@ class WorkFileModel extends Model
         })
             // Longest owed first: the list is read to decide who to ring.
             ->sortByDesc('days')
+            ->values();
+
+        /*
+         * Never more than the statement says. A write-off that no longer
+         * settles its bill — returned, struck off, re-priced under it, or
+         * left nothing by a payment for the same bill — takes nothing from any
+         * file but still comes off the balance, so the files can say more is
+         * due than the customer owes; files:audit names it for the office to
+         * take back. Until then each customer's rows are cut to what their
+         * statement says, as the Collection List cuts what it asks for on
+         * finished work. The rows owed the shortest time give it up first, so
+         * the longest owed — the ones this list is read for — still say what
+         * the ledger says, and a row cut to nothing is not asked for at all.
+         * Found in the health check of 2026-10-07: the rows, the dashboard
+         * tile and the WhatsApp message made from them asked for 50 more than
+         * the statement and the Collection List did.
+         */
+        $balances = PartyLedgerModel::balancesFor($rows->pluck('customer_id')->unique()->values()->all());
+
+        $over = $rows->groupBy('customer_id')
+            ->map(fn ($mine, $customer) => round($mine->sum('outstanding') - ($balances[$customer] ?? 0), 2))
+            ->all();
+
+        return $rows->reverse()
+            ->map(function ($row) use (&$over) {
+                $cut = min($row['outstanding'], $over[$row['customer_id']]);
+
+                if ($cut > 0.005) {
+                    $over[$row['customer_id']] -= $cut;
+                    $row['outstanding'] = round($row['outstanding'] - $cut, 2);
+                    $row['part_paid'] = 'part paid';
+                }
+
+                return $row;
+            })
+            ->filter(fn ($row) => $row['outstanding'] > 0.005)
+            ->reverse()
             ->values();
     }
     /**
@@ -1886,6 +1940,14 @@ class WorkFileModel extends Model
      * one kind of thing.
      */
     public const DOC_DIR = 'uploads/documents';
+
+    /**
+     * The largest approval screenshot taken, in kilobytes — the unit the
+     * validator's max rule counts in. The edit screen is handed the same
+     * figure and checks it when a screenshot is picked, so it is said before
+     * the save rather than after it.
+     */
+    public const SCREENSHOT_MAX_KB = 4096;
 
     /**
      * Store an approval screenshot against this file, replacing any earlier one.
@@ -2700,6 +2762,47 @@ class WorkFileModel extends Model
     }
 
     /**
+     * Lock these folders for the rest of the transaction, before anything
+     * about them is read in it.
+     *
+     * Give to Vendor, Keep in-house, Papers Returned by Vendor and Return to
+     * Customer each read the ticked folders again inside their transaction, so
+     * a stale page cannot act on work that has moved since. Found in the health
+     * check of 2026-10-07: that read did not wait for a post of the same
+     * folders that was still saving — a double click. The second read them as
+     * they were, wrote what the first had just written, and so saw nothing
+     * change; then it rebuilt the vendor's lines from the old state and deleted
+     * the one the first had made. Both said they had worked, and the vendor's
+     * statement lost its credit for work they hold, or its reversal for work
+     * they handed back. Return to Customer, hit the same way, was a 500 on the
+     * ledger's unique key with the return already saved.
+     *
+     * Locked, the second waits for the first to finish, reads what it did, and
+     * is refused the way a stale page is.
+     *
+     * Taken alone and first, rather than by locking the re-read itself as Hand
+     * Over does. The first plain read in a transaction fixes what every later
+     * one sees, and the re-read asks about each folder's works as well, which
+     * its lock need not cover: locking folder by folder, it can read the works
+     * of one before it has waited for the next, and then sees that one as it
+     * was. Whether it does depends on how the database plans the query — on a
+     * MariaDB copy, a take-back of two folders posted a moment after a
+     * take-back of one of them still lost that one's reversal (found testing
+     * this fix). A lock on the folders alone reads nothing else, so everything
+     * after it is read once the wait is over. In id order, so two batches
+     * sharing folders queue for them the same way rather than each holding one
+     * the other wants.
+     */
+    public static function lockFolders(array $ids): void
+    {
+        self::query()
+            ->whereIn('id', array_map('intval', $ids))
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->pluck('id');
+    }
+
+    /**
      * Files currently out with a vendor and not yet returned — what the return
      * screen offers, and the same conditions are re-applied on save so a stale
      * page cannot return a file twice.
@@ -3196,8 +3299,8 @@ class WorkFileModel extends Model
 
     /**
      * A period's files, and how many wait on a price: counted once each, for
-     * the vendor cut's heading, whose rows count a shared folder under each
-     * holder of it.
+     * the headings of the vendor cut, whose rows count a shared folder under
+     * each holder of it, and of the work type cut, whose rows count works.
      *
      * @return array{files: int, unpriced: int}
      */
@@ -3317,9 +3420,11 @@ class WorkFileModel extends Model
      * what a transfer earned, because the folder carried one figure for all
      * three. Now each work carries its own.
      *
-     * Cancelled work is out — it charges nobody. So is a cancelled or returned
-     * file: a refund is agreed for the folder, and splitting it across the
-     * works on it would be inventing a precision nobody recorded.
+     * Cancelled work is out — it charges nobody — and so is a cancelled file.
+     * A returned file is kept off its works too: a refund is agreed for the
+     * folder, and splitting it across the works on it would be inventing a
+     * precision nobody recorded. It is on a line of its own instead; see
+     * returnedToCustomer().
      *
      * @return \Illuminate\Support\Collection<int, object>
      */
@@ -3389,10 +3494,72 @@ class WorkFileModel extends Model
             ->orderByRaw('billed desc')
             ->get();
 
+        $rows = $rows->when(
+            ($returned = self::returnedToCustomer($from, $to)) !== null,
+            fn ($all) => $all->push($returned)
+        );
+
         return self::withGivenUp($rows->when(
             ($counter = self::counterExpenses($from, $to)) !== null,
             fn ($all) => $all->push($counter)
         ), $from, $to, 'work_type');
+    }
+
+    /**
+     * The files returned to the customer, as a row of their own.
+     *
+     * Their refund is agreed for the folder, so no one work can carry it, and
+     * the works above leave them out. Left out of the cut altogether, which is
+     * what happened until a health check on 2026-10-07 found it, they took
+     * with them what the office kept of the charge and the vendor's rate that
+     * still stands on the vendor's statement — both of which every other cut
+     * counts — so the same period read lower here than on any other tab, with
+     * nothing on screen saying why. Their challans were on Counter expenses
+     * all along, so the tab did not even agree with itself.
+     *
+     * So they are a line, as counter expenses are, and the tab adds up to the
+     * same money as the others: billed is what was kept (EARNED), and cost is
+     * the vendor's rate that stands — SPENT less what was paid out over the
+     * counter, which is on that line already. Never awaiting a price: a
+     * returned file is settled; see OUTSTANDING.
+     */
+    private static function returnedToCustomer(?string $from, ?string $to): ?object
+    {
+        // Each file on its own, then added up, as profitBy() does each file.
+        $each = DB::table('work_file')
+            ->where('work_file.status', self::RETURNED)
+            ->selectRaw(self::EARNED.' as billed')
+            ->selectRaw('('.self::SPENT.') - '.self::PAID_OUT.' as cost')
+            ->selectRaw("(SELECT COUNT(*) FROM work_file_item AS rw
+                WHERE rw.work_file_id = work_file.id AND rw.status <> 'cancelled') as works");
+
+        self::betweenDates($each, $from, $to);
+
+        $returned = DB::query()
+            ->fromSub($each, 'each_file')
+            ->selectRaw('COUNT(*) as files')
+            ->selectRaw('COALESCE(SUM(works), 0) as works')
+            ->selectRaw('COALESCE(SUM(billed), 0) as billed')
+            ->selectRaw('COALESCE(SUM(cost), 0) as cost')
+            ->selectRaw('COALESCE(SUM(billed - cost), 0) as margin')
+            ->first();
+
+        if (! (int) $returned->files) {
+            return null;
+        }
+
+        return (object) [
+            // Apart from counter expenses (0) and the discounts (-1).
+            'group_key' => -2,
+            'group_label' => 'Returned to customer',
+            'note' => 'Kept after the refund, which is agreed for the file, so no one work carries it',
+            // Its works, as the rows above count theirs: taken in, and given back.
+            'files' => (int) $returned->works,
+            'billed' => (float) $returned->billed,
+            'cost' => (float) $returned->cost,
+            'margin' => (float) $returned->margin,
+            'unpriced' => 0,
+        ];
     }
 
     /**
@@ -3550,12 +3717,19 @@ class WorkFileModel extends Model
          * subqueries against the file, and inside an aggregate under a GROUP
          * BY that is something MySQL allows and MariaDB — the live server —
          * refuses ("work_file.id isn't in GROUP BY"). Found in review.
+         *
+         * What a file has cost is a cost whether or not every price on it is
+         * agreed, as the Profit report this chart opens counts it: only the
+         * margin waits. Found in a health check on 2026-10-07: zeroed with the
+         * margin, a rate already agreed on one of its works and on the
+         * vendor's statement, and a challan already paid, showed as nothing
+         * until the last price was in.
          */
         $each = DB::table('work_file')
             ->whereDate('received_date', '>=', $from->toDateString())
             ->selectRaw("DATE_FORMAT(received_date, '%Y-%m') as month")
             ->selectRaw("$earned as billed")
-            ->selectRaw("CASE WHEN $unsettled THEN 0 ELSE ($spent) END as cost")
+            ->selectRaw("$spent as cost")
             ->selectRaw("CASE WHEN $unsettled THEN 0 ELSE $earned - ($spent) END as margin");
 
         $rows = DB::query()
@@ -3945,14 +4119,23 @@ class WorkFileModel extends Model
      *
      * 'open' is the default and means work still in hand — the reason to open
      * this screen at all. Anything else filters to that one status.
+     *
+     * With a page asked for, a tab of finished work — Approval Done, Paper
+     * Returned, Cancelled, All — is that page of it, newest first; see
+     * newestPage(). Approval Done is newest by the day it was approved, as
+     * that is the tab an approval's date and screenshot are put right on.
+     * Work in hand is all of it, oldest first, whatever is asked.
      */
-    public static function forStatusBoard(string $filter, $workTypeId = null, $vendorId = null)
+    public static function forStatusBoard(string $filter, $workTypeId = null, $vendorId = null, ?int $page = null)
     {
         // The jobs come with the file: the board moves each of them along on
         // its own, because approvals arrive one at a time.
         $query = self::query()->with('workType', 'customer', 'vendor', 'items.workType', 'items.vendor');
 
         $holder = self::holderKey($vendorId);
+
+        // The day a folder on Approval Done was approved, as SQL; see newestPage().
+        $approvedOn = self::FINISHED_ON;
 
         /*
          * One vendor's view, or the office's: the folders they hold work on,
@@ -3962,27 +4145,99 @@ class WorkFileModel extends Model
          * view listed the office's own work beside theirs, the In-house view
          * missed work kept in the office on a folder a vendor had part of, and
          * a folder split between two vendors was under neither.
+         *
+         * Joined rather than matched, so their approved parts can be put in
+         * the order those parts were approved: on the day their own last work
+         * was, not the folder's — a vendor's part approved in May was not
+         * approved today because the office's part of the folder was. One
+         * holder has one part of a folder, so no folder is drawn twice.
          */
         if ($holder !== null) {
-            return $query
-                ->whereIn('work_file.id', self::heldBy($holder, $filter, $workTypeId)->select('p.work_file_id'))
-                ->orderBy('received_date', 'asc')
-                ->orderBy('id', 'asc')
-                ->get();
+            $query->select('work_file.*')
+                ->joinSub(self::heldBy($holder, $filter, $workTypeId), 'part', 'part.work_file_id', '=', 'work_file.id');
+
+            $approvedOn = 'part.approved_on';
+        } else {
+            self::applyStatusFilter($query, $filter);
+
+            if ($workTypeId) {
+                // Matched against the jobs, so a file is shown when any of its work
+                // is of that type — not only when the first one is.
+                $query->whereHas('items', fn ($q) => $q->where('work_type_id', $workTypeId));
+            }
         }
 
-        self::applyStatusFilter($query, $filter);
-
-        if ($workTypeId) {
-            // Matched against the jobs, so a file is shown when any of its work
-            // is of that type — not only when the first one is.
-            $query->whereHas('items', fn ($q) => $q->where('work_type_id', $workTypeId));
+        if ($page !== null && self::isFinishedView($filter)) {
+            return self::newestPage($query, $page, $filter === self::APPROVED ? $approvedOn : null);
         }
 
+        // Named with their table: a holder's part is joined, and has a status of its own.
         return $query
-            ->orderBy('received_date', 'asc')
-            ->orderBy('id', 'asc')
+            ->orderBy('work_file.received_date', 'asc')
+            ->orderBy('work_file.id', 'asc')
             ->get();
+    }
+
+    /**
+     * Whether a list is of finished work, and so drawn a page at a time: one
+     * of the end states, or no status at all ('' or 'all'), which is mostly
+     * finished work. Work in hand, at any stage, and the lists of it to chase
+     * are drawn whole, in their own order: they stay short, and the one that
+     * has waited longest must never be on a page nobody opens.
+     */
+    public static function isFinishedView(?string $view): bool
+    {
+        return in_array((string) $view, ['', 'all', self::APPROVED, self::RETURNED, self::CANCELLED], true);
+    }
+
+    /**
+     * One page of a list of finished work: at most LIST_LIMIT files, newest
+     * first, and how many there are in all, so the page can say it is not the
+     * whole list and link to the rest. See ListPage.
+     *
+     * Newest by the day it came in — save for a list of approved work, which
+     * is newest by the day it was approved, given here as $approvedOn (SQL).
+     * Found in review: by intake alone, a file received in March and approved
+     * today sat on page 3 of Approval Done, the tab where an approval's date
+     * and screenshot are put right, and the board's search, which looks
+     * through its page alone, could not find it; Approved Files buried it the
+     * same way. A day not on record is taken as the day it came in, which no
+     * approval can be before, rather than sinking every such file below the
+     * rest.
+     *
+     * A page past the last is the last, so a link to page 9 of a list that has
+     * shrunk since still shows something.
+     */
+    private static function newestPage($query, int $page, ?string $approvedOn = null): LengthAwarePaginator
+    {
+        $total = (clone $query)->count();
+        $page = self::onAPage($page, $total);
+
+        if ($approvedOn !== null) {
+            $query->orderByRaw("COALESCE($approvedOn, work_file.received_date) DESC");
+        }
+
+        $rows = $query
+            ->orderBy('work_file.received_date', 'desc')
+            ->orderBy('work_file.id', 'desc')
+            ->forPage($page, self::LIST_LIMIT)
+            ->get();
+
+        return self::paged($rows, $total, $page);
+    }
+
+    /** The page asked for, or the nearest one there is. */
+    private static function onAPage(int $page, int $total): int
+    {
+        return max(1, min($page, (int) ceil($total / self::LIST_LIMIT)));
+    }
+
+    /** A page, whose links keep every filter it was drawn under. */
+    private static function paged($rows, int $total, int $page): LengthAwarePaginator
+    {
+        return (new LengthAwarePaginator($rows, $total, self::LIST_LIMIT, $page, [
+            'path' => LengthAwarePaginator::resolveCurrentPath(),
+        ]))->withQueryString();
     }
 
     /**
@@ -4038,7 +4293,7 @@ class WorkFileModel extends Model
             // (found in review: every work ever entered was grouped, every load).
             ->when($openFolders, fn ($q) => $q->whereIn('work_file.status', self::OPEN_STATUSES))
             ->leftJoinSub(self::everGiven(), 'given', 'given.work_file_id', '=', 'i.work_file_id')
-            ->select('i.id', 'i.work_file_id', 'i.work_type_id', 'i.status', 'work_file.status as folder_status')
+            ->select('i.id', 'i.work_file_id', 'i.work_type_id', 'i.status', 'i.approved_on', 'work_file.status as folder_status')
             ->selectRaw('COALESCE(i.vendor_id, CASE WHEN given.work_file_id IS NULL THEN work_file.vendor_id END, 0) AS holder');
     }
 
@@ -4059,13 +4314,16 @@ class WorkFileModel extends Model
 
     /**
      * Each folder's parts, one per holder, standing where that holder's
-     * works stand — narrowed to parts with a work of one type when asked.
+     * works stand — narrowed to parts with a work of one type when asked —
+     * and the day the last of those works was approved, which is the day an
+     * approved part was, as partFor() says it.
      */
     private static function holdings($workTypeId = null, ?string $filter = null)
     {
         $parts = DB::query()->fromSub(self::worksByHolder(self::isOpenTab($filter)), 'h')
             ->select('h.work_file_id', 'h.holder')
             ->selectRaw(self::boardStatusSql('h').' AS status')
+            ->selectRaw('MAX(h.approved_on) AS approved_on')
             ->groupBy('h.work_file_id', 'h.holder');
 
         if ($workTypeId) {
@@ -5193,6 +5451,24 @@ class WorkFileModel extends Model
         return $ours && is_file(public_path($path));
     }
 
+    /**
+     * Whether a stored approval is a PDF, said beside every link to one.
+     *
+     * The screens cannot tell for themselves. An approval is served through a
+     * route — /admin/file/{id}/approval/{item} — so the address they are handed
+     * has no extension, and the preview that looked for ".pdf" on the end drew
+     * every PDF as an image, which would not load, and then told the office the
+     * RTO's evidence had been removed from the server.
+     *
+     * The stored name does know. Its extension is guessed from the content when
+     * it is saved (see storeUpload and storeScreenshot), never taken from the
+     * browser, so this is the file's own word for what it is.
+     */
+    public static function isPdf(?string $path): bool
+    {
+        return is_string($path) && strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'pdf';
+    }
+
     public static function workBreakdown(array $fileIds): array
     {
         if (! $fileIds) {
@@ -5417,8 +5693,11 @@ class WorkFileModel extends Model
     /**
      * @param  bool  $folderStatus  vendor-wise, narrow on the folder's own status
      *                              rather than that of the vendor's works; see below
+     * @param  int|null  $page  for the Work Report: finished work a page at a
+     *                          time; see newestPage(). Approval Time, which
+     *                          counts, asks for none.
      */
-    public static function report(string $partyType, $partyId = null, ?string $status = null, ?string $from = null, ?string $to = null, bool $folderStatus = false)
+    public static function report(string $partyType, $partyId = null, ?string $status = null, ?string $from = null, ?string $to = null, bool $folderStatus = false, ?int $page = null)
     {
         $isVendor = $partyType === 'vendor';
 
@@ -5504,7 +5783,20 @@ class WorkFileModel extends Model
         $byStatus($query);
         $byDate($query);
 
-        $rows = $query
+        /*
+         * With a page asked for, finished work is that page of it: the newest
+         * LIST_LIMIT files, then banded as ever. See newestPage().
+         */
+        $paging = $page !== null && self::isFinishedView($status);
+
+        if ($paging && ! $isVendor) {
+            $newest = self::newestPage($query, $page);
+
+            return $newest->setCollection(self::inBandOrder($newest->getCollection()));
+        }
+
+        // Paged, these are fetched once the folders below are known; see there.
+        $rows = $paging ? null : $query
             ->orderBy('party_name', 'asc')
             ->orderBy('work_file.received_date', 'asc')
             ->orderBy('work_file.id', 'asc')
@@ -5574,18 +5866,47 @@ class WorkFileModel extends Model
             $shares = $shares->filter(fn ($row) => $row->status === $status)->values();
         }
 
+        /*
+         * Paged, a folder split or held in part takes its place among the rest
+         * by the day it came in, like any other. It is drawn from its works
+         * here rather than by the query, so the query gives its newest as far
+         * as this page reaches, the two are put together newest first, and the
+         * page is cut from that.
+         */
+        if ($paging) {
+            $total = (clone $query)->count() + $shares->count();
+            $page = self::onAPage($page, $total);
+
+            $newest = $query
+                ->orderBy('work_file.received_date', 'desc')
+                ->orderBy('work_file.id', 'desc')
+                ->limit($page * self::LIST_LIMIT)
+                ->get()
+                ->concat($shares)
+                ->sort(fn ($a, $b) => [$b->received_date, $b->id] <=> [$a->received_date, $a->id])
+                ->forPage($page, self::LIST_LIMIT);
+
+            return self::paged(self::inBandOrder($newest), $total, $page);
+        }
+
         // Nothing split, nothing to change: the report is what it always was.
         if ($shares->isEmpty()) {
             return $rows;
         }
 
-        /*
-         * Back into the order the query gave, which is what groups the bands.
-         * Names compared without case, as the database's collation compares
-         * them — compared byte by byte, "suman" and "Test" would swap and every
-         * existing band after them would move.
-         */
-        return $rows->concat($shares)
+        // Back into the order the query gave, which is what groups the bands.
+        return self::inBandOrder($rows->concat($shares));
+    }
+
+    /**
+     * Report rows in the order the bands are drawn in: by party, then oldest
+     * first. Names compared without case, as the database's collation
+     * compares them — compared byte by byte, "suman" and "Test" would swap and
+     * every existing band after them would move.
+     */
+    private static function inBandOrder($rows)
+    {
+        return $rows
             ->sort(fn ($a, $b) => [mb_strtolower((string) $a->party_name), $a->received_date, $a->id]
                 <=> [mb_strtolower((string) $b->party_name), $b->received_date, $b->id])
             ->values();
@@ -6371,7 +6692,16 @@ class WorkFileModel extends Model
         ));
     }
 
-    public static function listing(?string $status = null, ?string $from = null, ?string $to = null, ?string $pending = null)
+    /**
+     * All Work Files, and the approved files turned round.
+     *
+     * With a page asked for, a list of finished work — everything, or one end
+     * state — is that page of it; see newestPage(). Approved files are newest
+     * by the day they were approved, which is what Approved Files is read by.
+     * Work in hand and the lists to chase are all of themselves, in their own
+     * order, whatever is asked.
+     */
+    public static function listing(?string $status = null, ?string $from = null, ?string $to = null, ?string $pending = null, ?int $page = null)
     {
         $query = DB::table('work_file')
             ->join('work_type', 'work_type.id', '=', 'work_file.work_type_id')
@@ -6474,6 +6804,11 @@ class WorkFileModel extends Model
                 ->orderBy('work_file.received_date', 'asc')
                 ->orderBy('work_file.id', 'asc')
                 ->get();
+        }
+
+        if ($page !== null && self::isFinishedView($status)) {
+            // Approved files by the day they were approved; see newestPage().
+            return self::newestPage($query, $page, $status === self::APPROVED ? self::FINISHED_ON : null);
         }
 
         return $query

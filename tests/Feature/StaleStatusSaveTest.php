@@ -211,7 +211,10 @@ class StaleStatusSaveTest extends TestCase
         $this->assertStringContainsString('Nothing was saved', $error);
         $this->assertStringContainsString($file->file_no, $error);
         $this->assertStringContainsString('now Under Verification', $error);
-        $this->assertStringContainsString('Reload', $error);
+        // Shown as it stands now on the page that comes back, not 'reload':
+        // a reload has nothing to put back; see BoardRefusedSaveTest.
+        $this->assertStringContainsString('shown below as it stands now', $error);
+        $this->assertStringNotContainsString('Reload', $error);
     }
 
     /** And nothing else in that post is saved either: it was all made against the old page. */

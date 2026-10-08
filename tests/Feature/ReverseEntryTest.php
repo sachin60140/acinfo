@@ -308,7 +308,7 @@ class ReverseEntryTest extends TestCase
         $this->reverse($entry, 'Clerk typed it twice, sorry');
 
         // Signed in to the portal the way the portal signs a customer in.
-        $said = $this->withSession(['customer_id' => $this->customer->id])
+        $said = $this->actingAsCustomer($this->customer)
             ->getJson(route('customer.statement'))->assertOk()->getContent();
 
         $this->assertStringContainsString('Reversal of entry #'.$entry->id, $said);
