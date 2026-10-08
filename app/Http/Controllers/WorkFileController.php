@@ -298,6 +298,8 @@ class WorkFileController extends Controller
                 // evidenced, so the screenshot has to be reachable from the list
                 // as it was from the paperclip — a statement of it is not evidence.
                 'screenshot_url' => $f->approval_screenshot ? route('workfile.approval', $f->id) : null,
+                // Which the preview cannot read from that address; see isPdf().
+                'screenshot_is_pdf' => WorkFileModel::isPdf($f->approval_screenshot),
 
                 'action' => 'Edit',
 
@@ -391,11 +393,13 @@ class WorkFileController extends Controller
                  */
                 $approvals
                     ? ['key' => 'works_done', 'label' => 'Approved Works',
-                        'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url', 'subPreview' => true]
+                        'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url', 'subPreview' => true,
+                        'subPdf' => 'screenshot_is_pdf']
                     : ['key' => 'status', 'label' => 'Status', 'type' => 'badge',
                         'note' => 'works_note', 'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url',
-                        // An image or a PDF, so it opens over the list.
-                        'subPreview' => true],
+                        // An image or a PDF, so it opens over the list — and
+                        // the row says which, so a PDF gets the viewer.
+                        'subPreview' => true, 'subPdf' => 'screenshot_is_pdf'],
 
                 // Exported from both screens, drawn only where they answer the
                 // question. See exportOnly in DataGrid, and workSplit().
@@ -2966,6 +2970,8 @@ class WorkFileController extends Controller
                     'status' => $item->status,
                     'has_screenshot' => (bool) $item->approval_screenshot,
                     'screenshot_url' => $item->approval_screenshot ? route('workfile.approval', ['id' => $item->work_file_id, 'item' => $item->id]) : null,
+                    // Which that address cannot say; see isPdf().
+                    'screenshot_is_pdf' => WorkFileModel::isPdf($item->approval_screenshot),
                     'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
                     // The box is filled with today, which is right far more
                     // often than it is wrong, and can be typed over.
@@ -3838,6 +3844,8 @@ class WorkFileController extends Controller
                 ? number_format((float) $file->customer_amount, 2, '.', '')
                 : '0.00',
             'screenshotUrl' => $isEdit && $file->approval_screenshot ? route('workfile.approval', $file->id) : '',
+            // Which that address cannot say; see isPdf().
+            'screenshotIsPdf' => $isEdit && WorkFileModel::isPdf($file->approval_screenshot),
 
             /*
              * Whether the papers have gone back, and the way to take that back.
@@ -3906,6 +3914,7 @@ class WorkFileController extends Controller
                     'in_house' => $item->isKeptInHouse(),
                     'has_vendor' => (bool) $item->vendor_id,
                     'screenshot_url' => $item->approval_screenshot ? route('workfile.approval', ['id' => $item->work_file_id, 'item' => $item->id]) : null,
+                    'screenshot_is_pdf' => WorkFileModel::isPdf($item->approval_screenshot),
                     'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
                 ])->values()
                 : [],

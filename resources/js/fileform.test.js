@@ -384,3 +384,50 @@ describe('pressing Update File twice', () => {
         expect(button.disabled).toBe(false);
     });
 });
+
+/*
+ * An approval kept as a PDF, opened from the file's own screen.
+ *
+ * The address is a route with no extension, so the preview cannot tell a PDF
+ * from it: drawn as an image, it would not load, and the office was told the
+ * evidence had been removed from the server. The server says which it is.
+ */
+describe('an approval kept as a PDF', () => {
+    const click = (link) => link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    it('opens the folder\'s own in the viewer', async () => {
+        const host = mount({
+            values: { status: 'approval_done' },
+            screenshotUrl: '/admin/file/1/approval',
+            screenshotIsPdf: true,
+        });
+
+        click([...host.querySelectorAll('a')].find((a) => a.textContent.includes('Screenshot on file')));
+        await nextTick();
+
+        expect(document.querySelector('.preview__frame').getAttribute('src')).toBe('/admin/file/1/approval');
+        expect(document.querySelector('.preview__image')).toBe(null);
+    });
+
+    it('opens a work\'s in the viewer', async () => {
+        const host = mount({
+            items: [
+                {
+                    ...TWO_WORKS[0],
+                    status: 'approval_done',
+                    status_label: 'Approval Done',
+                    screenshot_url: '/admin/file/1/approval/11',
+                    screenshot_is_pdf: true,
+                    approved_on: '21-08-2026',
+                },
+                TWO_WORKS[1],
+            ],
+        });
+
+        click(host.querySelector('.wf-works__table a[href="/admin/file/1/approval/11"]'));
+        await nextTick();
+
+        expect(document.querySelector('.preview__frame').getAttribute('src')).toBe('/admin/file/1/approval/11');
+        expect(document.querySelector('.preview__image')).toBe(null);
+    });
+});

@@ -5193,6 +5193,24 @@ class WorkFileModel extends Model
         return $ours && is_file(public_path($path));
     }
 
+    /**
+     * Whether a stored approval is a PDF, said beside every link to one.
+     *
+     * The screens cannot tell for themselves. An approval is served through a
+     * route — /admin/file/{id}/approval/{item} — so the address they are handed
+     * has no extension, and the preview that looked for ".pdf" on the end drew
+     * every PDF as an image, which would not load, and then told the office the
+     * RTO's evidence had been removed from the server.
+     *
+     * The stored name does know. Its extension is guessed from the content when
+     * it is saved (see storeUpload and storeScreenshot), never taken from the
+     * browser, so this is the file's own word for what it is.
+     */
+    public static function isPdf(?string $path): bool
+    {
+        return is_string($path) && strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'pdf';
+    }
+
     public static function workBreakdown(array $fileIds): array
     {
         if (! $fileIds) {
