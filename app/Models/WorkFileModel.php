@@ -3916,7 +3916,9 @@ class WorkFileModel extends Model
      *
      * With a page asked for, a tab of finished work — Approval Done, Paper
      * Returned, Cancelled, All — is that page of it, newest first; see
-     * newestPage(). Work in hand is all of it, oldest first, whatever is asked.
+     * newestPage(). Approval Done is newest by the day it was approved, as
+     * that is the tab an approval's date and screenshot are put right on.
+     * Work in hand is all of it, oldest first, whatever is asked.
      */
     public static function forStatusBoard(string $filter, $workTypeId = null, $vendorId = null, ?int $page = null)
     {
@@ -3926,6 +3928,9 @@ class WorkFileModel extends Model
 
         $holder = self::holderKey($vendorId);
 
+        // The day a folder on Approval Done was approved, as SQL; see newestPage().
+        $approvedOn = self::FINISHED_ON;
+
         /*
          * One vendor's view, or the office's: the folders they hold work on,
          * standing where their own works stand. Asked for by the owner on
@@ -3934,9 +3939,18 @@ class WorkFileModel extends Model
          * view listed the office's own work beside theirs, the In-house view
          * missed work kept in the office on a folder a vendor had part of, and
          * a folder split between two vendors was under neither.
+         *
+         * Joined rather than matched, so their approved parts can be put in
+         * the order those parts were approved: on the day their own last work
+         * was, not the folder's — a vendor's part approved in May was not
+         * approved today because the office's part of the folder was. One
+         * holder has one part of a folder, so no folder is drawn twice.
          */
         if ($holder !== null) {
-            $query->whereIn('work_file.id', self::heldBy($holder, $filter, $workTypeId)->select('p.work_file_id'));
+            $query->select('work_file.*')
+                ->joinSub(self::heldBy($holder, $filter, $workTypeId), 'part', 'part.work_file_id', '=', 'work_file.id');
+
+            $approvedOn = 'part.approved_on';
         } else {
             self::applyStatusFilter($query, $filter);
 
@@ -3948,12 +3962,13 @@ class WorkFileModel extends Model
         }
 
         if ($page !== null && self::isFinishedView($filter)) {
-            return self::newestPage($query, $page);
+            return self::newestPage($query, $page, $filter === self::APPROVED ? $approvedOn : null);
         }
 
+        // Named with their table: a holder's part is joined, and has a status of its own.
         return $query
-            ->orderBy('received_date', 'asc')
-            ->orderBy('id', 'asc')
+            ->orderBy('work_file.received_date', 'asc')
+            ->orderBy('work_file.id', 'asc')
             ->get();
     }
 
@@ -3971,17 +3986,30 @@ class WorkFileModel extends Model
 
     /**
      * One page of a list of finished work: at most LIST_LIMIT files, newest
-     * first — what was approved lately is what is asked about — and how many
-     * there are in all, so the page can say it is not the whole list and link
-     * to the rest. See ListPage.
+     * first, and how many there are in all, so the page can say it is not the
+     * whole list and link to the rest. See ListPage.
+     *
+     * Newest by the day it came in — save for a list of approved work, which
+     * is newest by the day it was approved, given here as $approvedOn (SQL).
+     * Found in review: by intake alone, a file received in March and approved
+     * today sat on page 3 of Approval Done, the tab where an approval's date
+     * and screenshot are put right, and the board's search, which looks
+     * through its page alone, could not find it; Approved Files buried it the
+     * same way. A day not on record is taken as the day it came in, which no
+     * approval can be before, rather than sinking every such file below the
+     * rest.
      *
      * A page past the last is the last, so a link to page 9 of a list that has
      * shrunk since still shows something.
      */
-    private static function newestPage($query, int $page): LengthAwarePaginator
+    private static function newestPage($query, int $page, ?string $approvedOn = null): LengthAwarePaginator
     {
         $total = (clone $query)->count();
         $page = self::onAPage($page, $total);
+
+        if ($approvedOn !== null) {
+            $query->orderByRaw("COALESCE($approvedOn, work_file.received_date) DESC");
+        }
 
         $rows = $query
             ->orderBy('work_file.received_date', 'desc')
@@ -4059,7 +4087,7 @@ class WorkFileModel extends Model
             // (found in review: every work ever entered was grouped, every load).
             ->when($openFolders, fn ($q) => $q->whereIn('work_file.status', self::OPEN_STATUSES))
             ->leftJoinSub(self::everGiven(), 'given', 'given.work_file_id', '=', 'i.work_file_id')
-            ->select('i.id', 'i.work_file_id', 'i.work_type_id', 'i.status', 'work_file.status as folder_status')
+            ->select('i.id', 'i.work_file_id', 'i.work_type_id', 'i.status', 'i.approved_on', 'work_file.status as folder_status')
             ->selectRaw('COALESCE(i.vendor_id, CASE WHEN given.work_file_id IS NULL THEN work_file.vendor_id END, 0) AS holder');
     }
 
@@ -4080,13 +4108,16 @@ class WorkFileModel extends Model
 
     /**
      * Each folder's parts, one per holder, standing where that holder's
-     * works stand — narrowed to parts with a work of one type when asked.
+     * works stand — narrowed to parts with a work of one type when asked —
+     * and the day the last of those works was approved, which is the day an
+     * approved part was, as partFor() says it.
      */
     private static function holdings($workTypeId = null, ?string $filter = null)
     {
         $parts = DB::query()->fromSub(self::worksByHolder(self::isOpenTab($filter)), 'h')
             ->select('h.work_file_id', 'h.holder')
             ->selectRaw(self::boardStatusSql('h').' AS status')
+            ->selectRaw('MAX(h.approved_on) AS approved_on')
             ->groupBy('h.work_file_id', 'h.holder');
 
         if ($workTypeId) {
@@ -6441,8 +6472,10 @@ class WorkFileModel extends Model
      * All Work Files, and the approved files turned round.
      *
      * With a page asked for, a list of finished work — everything, or one end
-     * state — is that page of it; see newestPage(). Work in hand and the lists
-     * to chase are all of themselves, in their own order, whatever is asked.
+     * state — is that page of it; see newestPage(). Approved files are newest
+     * by the day they were approved, which is what Approved Files is read by.
+     * Work in hand and the lists to chase are all of themselves, in their own
+     * order, whatever is asked.
      */
     public static function listing(?string $status = null, ?string $from = null, ?string $to = null, ?string $pending = null, ?int $page = null)
     {
@@ -6550,7 +6583,8 @@ class WorkFileModel extends Model
         }
 
         if ($page !== null && self::isFinishedView($status)) {
-            return self::newestPage($query, $page);
+            // Approved files by the day they were approved; see newestPage().
+            return self::newestPage($query, $page, $status === self::APPROVED ? self::FINISHED_ON : null);
         }
 
         return $query

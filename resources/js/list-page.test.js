@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp, nextTick } from 'vue';
 import DataGrid from './components/DataGrid.vue';
 import WorkReport from './components/WorkReport.vue';
@@ -94,5 +94,134 @@ describe('a list on one page', () => {
         await search(host, 'F-1');
 
         expect(label(host.querySelector('tfoot tr'))).toBe('Total (filtered)');
+    });
+});
+
+/*
+ * An export of such a page.
+ *
+ * Found in review: the PDF, the print and the files exported from a page of a
+ * longer list held that page alone under the list's own heading, with nothing
+ * on them to say so — a customer's Work Report printed as all their files over
+ * the newest 500 of 1,200. The server now hands the grid a heading that says
+ * which page it is (ListPage::heading()), apart from the title: the title is
+ * what the open column bands are remembered by, and must stay put page to page.
+ */
+describe('an export of a page of a longer list', () => {
+    const TITLE = 'Work Files';
+    const EXPORT = 'Work Files — newest 500 of 1,200 files';
+
+    const button = (host, text) => [...host.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith(text));
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        delete window.pdfMake;
+        localStorage.clear();
+    });
+
+    it('heads the print sheet with which page it is', async () => {
+        const written = [];
+        vi.spyOn(window, 'open').mockReturnValue({
+            document: { write: (html) => written.push(html), close() {} },
+            focus() {},
+            print() {},
+        });
+
+        const host = await mount(DataGrid, { title: TITLE, exportTitle: EXPORT });
+        button(host, 'Print').click();
+
+        expect(written.join('')).toContain('<h1>Work Files — newest 500 of 1,200 files</h1>');
+        expect(written.join('')).toContain('<title>Work Files — newest 500 of 1,200 files</title>');
+    });
+
+    it('heads the PDF with it, and names the PDF by it', async () => {
+        let made = null;
+        let named = null;
+
+        // The library arrives as soon as it is asked for, and builds nothing.
+        vi.spyOn(document.head, 'appendChild').mockImplementation((tag) => {
+            setTimeout(() => tag.onload());
+
+            return tag;
+        });
+        window.pdfMake = {
+            createPdf: (doc) => {
+                made = doc;
+
+                return { download: (name) => { named = name; } };
+            },
+        };
+
+        const host = await mount(DataGrid, { title: TITLE, exportTitle: EXPORT });
+        button(host, 'PDF').click();
+        await settle();
+        await settle();
+        await settle();
+
+        expect(made?.content[0].text).toBe(EXPORT);
+        expect(named).toBe('Work-Files-newest-500-of-1-200-files.pdf');
+    });
+
+    it('names the spreadsheet by it', async () => {
+        const named = [];
+        const created = URL.createObjectURL;
+        const revoked = URL.revokeObjectURL;
+        URL.createObjectURL = () => 'blob:export';
+        URL.revokeObjectURL = () => {};
+        vi.spyOn(window.HTMLAnchorElement.prototype, 'click').mockImplementation(function () {
+            named.push(this.download);
+        });
+
+        try {
+            const host = await mount(DataGrid, { title: TITLE, exportTitle: EXPORT });
+            button(host, 'CSV').click();
+        } finally {
+            URL.createObjectURL = created;
+            URL.revokeObjectURL = revoked;
+        }
+
+        expect(named).toEqual(['Work-Files-newest-500-of-1-200-files.csv']);
+    });
+
+    it('leaves the column bands remembered by the title', async () => {
+        localStorage.setItem('acinfo.grid.Work Files.groups', JSON.stringify(['money']));
+
+        const host = await mount(DataGrid, {
+            title: TITLE,
+            exportTitle: EXPORT,
+            columns: [...COLUMNS, { key: 'cost', label: 'Cost', type: 'money', group: 'money' }],
+            groups: [{ key: 'money', label: 'Cost & margin' }],
+        });
+
+        expect([...host.querySelectorAll('thead th')].map((th) => th.textContent.trim())).toContain('Cost');
+    });
+
+    it('is headed by the title when the whole list is on the page', async () => {
+        const written = [];
+        vi.spyOn(window, 'open').mockReturnValue({
+            document: { write: (html) => written.push(html), close() {} },
+            focus() {},
+            print() {},
+        });
+
+        const host = await mount(DataGrid, { title: TITLE });
+        button(host, 'Print').click();
+
+        expect(written.join('')).toContain('<h1>Work Files</h1>');
+    });
+
+    it('is handed through the Work Report to its grid', async () => {
+        const written = [];
+        vi.spyOn(window, 'open').mockReturnValue({
+            document: { write: (html) => written.push(html), close() {} },
+            focus() {},
+            print() {},
+        });
+
+        const host = await mount(WorkReport, { title: 'Customer-wise Work Report', exportTitle: 'Customer-wise Work Report — newest 500 of 1,200 files' });
+        button(host, 'Print').click();
+
+        expect(written.join('')).toContain('<h1>Customer-wise Work Report — newest 500 of 1,200 files</h1>');
     });
 });

@@ -139,9 +139,10 @@ class WorkFileController extends Controller
          * Where this page stands, when finished work is too long for one; see
          * WorkFileModel::LIST_LIMIT. Every figure below is then of this page
          * alone, and says so — a total that quietly covers part of a list
-         * reads as the whole answer.
+         * reads as the whole answer. Approved files come latest approved
+         * first; see WorkFileModel::listing().
          */
-        $shown = ListPage::of($files);
+        $shown = ListPage::of($files, $approvals || $req->query('status') === WorkFileModel::APPROVED);
 
         /*
          * Totals follow what each file actually earned and cost once its status
@@ -321,6 +322,13 @@ class WorkFileController extends Controller
         $props = [
             // Names the export file and heads the PDF and the print sheet.
             'title' => 'Work Files',
+            /*
+             * Unless this is a page of a longer list, when those say which
+             * page: an export headed as the list reads as all of it. Kept
+             * apart from the title, which is also what the grid remembers
+             * the open column bands by, and must not change page to page.
+             */
+            'exportTitle' => ListPage::heading('Work Files', $shown),
             'perPage' => 50,
             /*
              * Two different situations, and until now one sentence.
@@ -2763,8 +2771,9 @@ class WorkFileController extends Controller
             'vendorId' => $vendorId,
             'inHouseKey' => WorkFileModel::IN_HOUSE,
             'fileCount' => $files->count(),
-            // Where this page stands, on a tab of finished work too long for one.
-            'shown' => ListPage::of($files),
+            // Where this page stands, on a tab of finished work too long for
+            // one — Approval Done latest approved first; see forStatusBoard().
+            'shown' => ListPage::of($files, $filter === WorkFileModel::APPROVED),
             'anyFiles' => WorkFileModel::exists(),
             // 'open' and 'all' are tabs rather than stored statuses, so the tab
             // strip is assembled here rather than in the template.

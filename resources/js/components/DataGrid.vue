@@ -100,6 +100,17 @@ const props = defineProps({
     rowClass: { type: String, default: '' },
     rows: { type: Array, default: () => [] },
     title: { type: String, default: 'Export' },
+    /*
+     * What heads the PDF and the print sheet and names every exported file,
+     * when that is not the title. A page of a longer list is not the list, and
+     * a sheet headed as if it were reads as everything there is (found in
+     * review); the server says which page it is. See ListPage::heading().
+     *
+     * Its own prop rather than a new title, because the title is also the key
+     * the open column bands are remembered by, and a key that changed from one
+     * page to the next would forget them on every Older click.
+     */
+    exportTitle: { type: String, default: '' },
 
     // Column key to band rows by, for reports that group by party.
     groupBy: { type: String, default: '' },
@@ -451,6 +462,9 @@ function exportValues() {
 
 const exportHead = computed(() => exportHeader(props.columns));
 
+// What an export is headed and named; see exportTitle.
+const heading = computed(() => props.exportTitle || props.title);
+
 const busy = ref('');
 
 /**
@@ -483,7 +497,7 @@ function download(blob, extension) {
     const link = document.createElement('a');
 
     link.href = url;
-    link.download = fileName(props.title, extension);
+    link.download = fileName(heading.value, extension);
     link.click();
 
     URL.revokeObjectURL(url);
@@ -553,7 +567,7 @@ async function exportExcel() {
 
         const book = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(book, sheet, 'Sheet1');
-        XLSX.writeFile(book, fileName(props.title, 'xlsx'));
+        XLSX.writeFile(book, fileName(heading.value, 'xlsx'));
     } catch (error) {
         // Same reasoning as the PDF catch: a mistake in this function is not a
         // network problem, and saying so sends the reader to the wrong place.
@@ -581,7 +595,7 @@ async function exportPdf() {
                 pageOrientation: exportColumns.value.length > 6 ? 'landscape' : 'portrait',
                 pageMargins: [20, 30, 20, 30],
                 content: [
-                    { text: props.title, style: 'title' },
+                    { text: heading.value, style: 'title' },
                     {
                         table: {
                             headerRows: 1,
@@ -605,7 +619,7 @@ async function exportPdf() {
                     head: { fontSize: 9, bold: true, fillColor: '#eef2ff' },
                 },
             })
-            .download(fileName(props.title, 'pdf'));
+            .download(fileName(heading.value, 'pdf'));
     } catch (error) {
         // Said "unavailable offline" for every failure including a mistake in this
         // function, which is how a typo looked like a network problem. The console
@@ -646,7 +660,7 @@ function print() {
         return;
     }
 
-    win.document.write(`<!doctype html><html><head><title>${escape(props.title)}</title><style>
+    win.document.write(`<!doctype html><html><head><title>${escape(heading.value)}</title><style>
         body { font: 12px/1.5 system-ui, sans-serif; margin: 24px; color: #111; }
         h1 { font-size: 16px; margin: 0 0 16px; }
         table { border-collapse: collapse; width: 100%; }
@@ -654,7 +668,7 @@ function print() {
         th { background: #eef2ff; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
         td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
         @page { margin: 12mm; }
-    </style></head><body><h1>${escape(props.title)}</h1>${table}</body></html>`);
+    </style></head><body><h1>${escape(heading.value)}</h1>${table}</body></html>`);
 
     win.document.close();
     win.focus();

@@ -128,6 +128,18 @@ class LongListsTest extends TestCase
         return $made->keys()->all();
     }
 
+    /**
+     * Dates the approval of every work on these folders: on $day, or on the
+     * day each folder came in.
+     */
+    private function approvedOn(array $fileNos, ?string $day = null): void
+    {
+        DB::table('work_file_item')
+            ->join('work_file', 'work_file.id', '=', 'work_file_item.work_file_id')
+            ->whereIn('work_file.file_no', $fileNos)
+            ->update(['work_file_item.approved_on' => $day ?? DB::raw('work_file.received_date')]);
+    }
+
     private function payload(string $url): array
     {
         return $this->actingAs($this->admin)->getJson($url)->assertOk()->json();
@@ -209,6 +221,94 @@ class LongListsTest extends TestCase
         }
     }
 
+    /**
+     * A vendor's Approval Done is paged too. Found in review: the vendor's
+     * view returned before the paging was reached until this change, and
+     * nothing would have said so had it gone back to that — every approved
+     * folder the vendor ever held drawn at once.
+     */
+    public function test_a_vendors_approval_done_on_the_board_is_paged_too(): void
+    {
+        $limit = WorkFileModel::LIST_LIMIT;
+        $made = $this->files($limit + 2, WorkFileModel::APPROVED, '1998-01-01', ['vendor_id' => $this->vendor->id]);
+        $newestFirst = array_reverse($made);
+
+        $url = route('workfile.status', ['status' => 'approval_done', 'vendor' => $this->vendor->id]);
+        $json = $this->payload($url);
+
+        $this->assertSame(array_slice($newestFirst, 0, $limit), $this->onBoard($json));
+        $this->assertSame($limit + 2, $json['page']['shown']['total'] ?? null);
+        // The older page is the same vendor's.
+        $this->assertStringContainsString('vendor='.$this->vendor->id, (string) $json['page']['shown']['older']);
+        $this->assertStringContainsString('page=2', (string) $json['page']['shown']['older']);
+
+        $this->assertSame(array_slice($newestFirst, $limit), $this->onBoard($this->payload($url.'&page=2')));
+    }
+
+    /**
+     * Approval Done is newest by the day it was approved: it is where an
+     * approval's date and screenshot are put right, and what was approved
+     * today is what is asked about. Found in review: by the day it came in, a
+     * file received long ago and approved today was pages down, and the
+     * board's search, which looks through its page alone, could not find it.
+     */
+    public function test_approval_done_on_the_board_is_latest_approved_first(): void
+    {
+        $limit = WorkFileModel::LIST_LIMIT;
+        $made = $this->files($limit + 2, WorkFileModel::APPROVED);
+        $this->approvedOn($made);
+        // The oldest of them all, approved after every other.
+        $this->approvedOn([$made[0]], '2001-06-01');
+
+        $url = route('workfile.status', ['status' => 'approval_done', 'work_type' => $this->type->id]);
+
+        $this->assertSame([$made[0], ...array_slice(array_reverse($made), 0, $limit - 1)], $this->onBoard($this->payload($url)));
+        $this->assertSame([$made[2], $made[1]], $this->onBoard($this->payload($url.'&page=2')));
+        $this->assertStringContainsString(
+            'Showing the newest '.number_format($limit).' of '.number_format($limit + 2).' files, latest approved first.',
+            $this->html($url)
+        );
+        $this->assertStringContainsString('latest approved first.', $this->html($url.'&page=2'));
+
+        // Everything else on the board is by the day it came in, as before.
+        $all = route('workfile.status', ['status' => 'all', 'work_type' => $this->type->id]);
+        $this->assertNotContains($made[0], $this->onBoard($this->payload($all)));
+        $this->assertStringNotContainsString('latest approved', $this->html($all));
+    }
+
+    /**
+     * A vendor's Approval Done is in the order their parts were approved: on
+     * the day their own last work was, not the folder's. A part of theirs
+     * approved years ago is not approved today because the office's work on
+     * the same folder was.
+     */
+    public function test_a_vendors_approval_done_is_latest_approved_first_by_their_own_works(): void
+    {
+        $limit = WorkFileModel::LIST_LIMIT;
+        $made = $this->files($limit + 2, WorkFileModel::APPROVED, '1998-01-01', ['vendor_id' => $this->vendor->id]);
+        $this->approvedOn($made);
+        $this->approvedOn([$made[0]], '2001-06-01');
+
+        // Older than all of them, the vendor's work approved the day it came
+        // in, and a work kept in the office approved after every other.
+        [$split] = $this->files(1, WorkFileModel::APPROVED, '1997-12-31', ['vendor_id' => $this->vendor->id]);
+        $this->approvedOn([$split]);
+        DB::table('work_file_item')->insert([
+            'work_file_id' => DB::table('work_file')->where('file_no', $split)->value('id'),
+            'work_type_id' => $this->type->id,
+            'customer_amount' => 100,
+            'status' => WorkFileModel::APPROVED,
+            'vendor_id' => null,
+            'approved_on' => '2001-07-01',
+        ]);
+
+        $url = route('workfile.status', ['status' => 'approval_done', 'vendor' => $this->vendor->id]);
+
+        $this->assertSame([$made[0], ...array_slice(array_reverse($made), 0, $limit - 1)], $this->onBoard($this->payload($url)));
+        $this->assertSame([$made[2], $made[1], $split], $this->onBoard($this->payload($url.'&page=2')));
+        $this->assertStringContainsString('files, latest approved first.', $this->html($url));
+    }
+
     /** With nothing to page, the board says nothing about pages. */
     public function test_a_short_list_of_finished_work_is_shown_whole_and_says_nothing(): void
     {
@@ -273,6 +373,35 @@ class LongListsTest extends TestCase
             'on 0 of the '.number_format($limit).' files shown &mdash; '.$limit.' awaiting a price',
             $html
         );
+    }
+
+    /**
+     * Approved Files, and All Work Files narrowed to approved work, by the day
+     * each was approved. Found in review: by the day it came in, a file
+     * received long ago and approved today was pages down, and sorting the
+     * Approved On column sorted only the page it was not on.
+     */
+    public function test_approved_files_are_latest_approved_first(): void
+    {
+        $limit = WorkFileModel::LIST_LIMIT;
+        $made = $this->files($limit + 2, WorkFileModel::APPROVED);
+        $this->approvedOn($made);
+        // The oldest of them all, approved after every other.
+        $this->approvedOn([$made[0]], '2001-06-01');
+
+        foreach ([
+            route('workfile.approved', ['from' => '1998-01-01', 'to' => '1999-12-31']),
+            route('workfile.index', ['status' => WorkFileModel::APPROVED, 'from' => '1998-01-01', 'to' => '1999-12-31']),
+        ] as $url) {
+            $this->assertSame([$made[0], ...array_slice(array_reverse($made), 0, $limit - 1)], $this->listed($this->payload($url)), $url);
+            $this->assertSame([$made[2], $made[1]], $this->listed($this->payload($url.'&page=2')), "$url, older");
+            $this->assertStringContainsString('files, latest approved first.', $this->html($url), $url);
+        }
+
+        // Every status together is by the day each came in, as before.
+        $everything = route('workfile.index', ['from' => '1998-01-01', 'to' => '1999-12-31']);
+        $this->assertNotContains($made[0], $this->listed($this->payload($everything)));
+        $this->assertStringNotContainsString('latest approved', $this->html($everything));
     }
 
     public function test_work_in_hand_on_all_work_files_is_still_whole(): void
@@ -366,5 +495,39 @@ class LongListsTest extends TestCase
             'on 0 of the '.number_format($limit).' files shown &mdash; '.$limit.' awaiting a price',
             $this->html($url)
         );
+    }
+
+    // ----------------------------------------------------------------- Exports
+
+    /**
+     * The PDF, the print and the files exported from a page say which page.
+     * Found in review: they were headed as the whole list — a customer's Work
+     * Report printed as "All dates · All statuses" over 500 of their files,
+     * with nothing on the sheet to say there were more.
+     */
+    public function test_an_export_of_a_page_says_which_page_it_is(): void
+    {
+        $limit = WorkFileModel::LIST_LIMIT;
+        $this->files($limit + 2, WorkFileModel::APPROVED);
+        $newest = 'newest '.number_format($limit).' of '.number_format($limit + 2).' files';
+        $older = 'files '.number_format($limit + 1).'–'.number_format($limit + 2).' of '.number_format($limit + 2);
+
+        $url = route('workfile.index', ['from' => '1998-01-01', 'to' => '1999-12-31']);
+        $files = $this->payload($url)['props'];
+        $this->assertSame('Work Files — '.$newest, $files['exportTitle']);
+        // The title stays: the grid remembers its open column bands by it.
+        $this->assertSame('Work Files', $files['title']);
+        $this->assertSame('Work Files — '.$older, $this->payload($url.'&page=2')['props']['exportTitle']);
+
+        $url = route('report.files', ['party_type' => 'customer', 'party_id' => $this->customer->id]);
+        $report = $this->payload($url)['props'];
+        $this->assertSame($report['title'].' — '.$newest, $report['exportTitle']);
+        $this->assertStringNotContainsString($newest, $report['title']);
+        $this->assertSame($report['title'].' — '.$older, $this->payload($url.'&page=2')['props']['exportTitle']);
+
+        // A list on one page is headed as it always was.
+        $this->assertSame('Work Files', $this->payload(route('workfile.index', ['from' => '1998-01-01', 'to' => '1998-01-31']))['props']['exportTitle']);
+        $whole = $this->payload(route('report.files', ['party_type' => 'customer', 'party_id' => $this->customer->id, 'from' => '1998-01-01', 'to' => '1998-01-31']))['props'];
+        $this->assertSame($whole['title'], $whole['exportTitle']);
     }
 }

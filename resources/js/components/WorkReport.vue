@@ -21,6 +21,7 @@ const props = defineProps({
     // Bands of columns the reader can turn on; see DataGrid.
     groups: { type: Array, default: () => [] },
     title: { type: String, default: 'Export' },
+    exportTitle: { type: String, default: '' },
     groupBy: { type: String, default: '' },
     groupLabel: { type: String, default: '' },
     totals: { type: Object, default: () => ({}) },
@@ -62,6 +63,7 @@ const gridProps = computed(() => ({
     rows: props.rows,
     groups: props.groups,
     title: props.title,
+    exportTitle: props.exportTitle,
     groupBy: props.groupBy,
     groupLabel: props.groupLabel,
     totals: props.totals,

@@ -870,8 +870,17 @@ class ReportController extends Controller
          * confusion was reported once already on screen; it must not come back
          * in the export.
          */
+        $title = $partyLabel.'-wise Work Report — '.$periodText.' · '.$statusText;
+
         $props = [
-            'title' => $partyLabel.'-wise Work Report — '.$periodText.' · '.$statusText,
+            'title' => $title,
+            /*
+             * What heads the PDF and the print sheet and names the file: on a
+             * page of a longer report, which page — headed as the report, the
+             * newest 500 of a customer's 1,200 files printed as all of them.
+             * The title is left as it is, for the column bands it keys.
+             */
+            'exportTitle' => ListPage::heading($title, $shown),
 
             /*
              * What the update dialog needs. The statuses and the rules come

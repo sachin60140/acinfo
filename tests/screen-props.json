@@ -601,6 +601,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -679,6 +680,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -757,6 +759,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -835,6 +838,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -913,6 +917,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -955,6 +960,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -1033,6 +1039,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -1572,6 +1579,7 @@
             ],
             "csrf": "string",
             "emptyText": "string",
+            "exportTitle": "string",
             "groupBy": "string",
             "groupLabel": "string",
             "groups": {
@@ -1679,6 +1687,7 @@
             ],
             "csrf": "string",
             "emptyText": "string",
+            "exportTitle": "string",
             "groupBy": "string",
             "groupLabel": "string",
             "groups": {

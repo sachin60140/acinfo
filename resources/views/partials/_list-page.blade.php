@@ -4,7 +4,9 @@
     A list of finished work is drawn a page at a time, newest first; see
     WorkFileModel::LIST_LIMIT. A page that does not say so reads as everything
     there is, and its totals as the whole answer — so it says how many it
-    shows, of how many, and leads to the newer and the older ones.
+    shows, of how many, and leads to the newer and the older ones. A list of
+    approved work is newest by the day it was approved, and says so: its
+    received dates would otherwise read as out of order.
 
     @param array|null  $shown  App\Support\ListPage::of(); nothing is drawn
                                when the whole list is on the page
@@ -14,10 +16,10 @@
     <div class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2 py-2 mb-3 list-page">
         <span>
             @if ($shown['first'] === 1)
-                Showing the newest {{ number_format($shown['last']) }} of {{ number_format($shown['total']) }} files.
+                Showing the newest {{ number_format($shown['last']) }} of {{ number_format($shown['total']) }} files{{ $shown['byApproval'] ? ', latest approved first' : '' }}.
             @else
                 Showing files {{ number_format($shown['first']) }}&ndash;{{ number_format($shown['last']) }}
-                of {{ number_format($shown['total']) }}, newest first.
+                of {{ number_format($shown['total']) }}, {{ $shown['byApproval'] ? 'latest approved' : 'newest' }} first.
             @endif
             {{ $note ?? '' }}
         </span>
