@@ -81,6 +81,8 @@
         @else
             <form id="receive_form" action="{{ route('workfile.receive') }}" method="POST">
                 @csrf
+                {{-- So the same batch sent twice is saved once; see WorkFileController::receivedBefore(). --}}
+                <input type="hidden" name="once" value="{{ $once }}">
 
                 <div class="ui">
                     <div class="ui-card">

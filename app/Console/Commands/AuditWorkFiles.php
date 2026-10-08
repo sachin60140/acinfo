@@ -212,30 +212,38 @@ class AuditWorkFiles extends Command
         }
 
         /*
-         * A write-off whose bill is no longer charged that much: the papers
-         * went back, the work was struck off, or the price came down under it.
-         * The forgiveness settles nothing now and sits on the account until it
-         * is taken back, so it is named here rather than left to be noticed in
-         * a balance.
+         * A write-off that settles less of its bill than it gave up: the
+         * papers went back, the work was struck off, the price came down under
+         * it, or a payment adjusted against the same bill took it first. What
+         * it cannot take settles nothing — forgiveness is never pooled — and
+         * sits on the account until it is taken back, so it is named here
+         * rather than left to be noticed in a balance.
+         *
+         * So it is asked of the engine, which is what decides what it settles
+         * — bills()'s "took", line by line — and not of what the bill is still
+         * charged. Found in the health check of 2026-10-07: 950 paid for a
+         * 1,000 bill and the last 50 given up, then the bill re-priced to 950
+         * or part-refunded down to 400. The payment came first and took all
+         * there was, so the 50 settled nothing; but it was smaller than the
+         * charge, and nothing was said while Not Yet Collected asked for the
+         * 50 on another file.
          */
-        $forgiven = $lines->filter(fn ($line) => $line->entry_kind === \App\Models\PartyLedgerModel::WRITEOFF);
+        $forgiven = $lines->filter(fn ($line) => $line->entry_kind === PartyLedgerModel::WRITEOFF);
 
-        if ($forgiven->isNotEmpty()) {
-            $charges = \Illuminate\Support\Facades\DB::table('party_ledger')
-                ->whereIn('work_file_id', $forgiven->pluck('work_file_id')->unique())
-                ->whereNotNull('file_role')
-                ->get(['work_file_id', 'party_id', 'file_role', 'amount'])
-                ->groupBy(fn ($row) => $row->work_file_id.':'.$row->party_id)
-                ->map(fn ($rows) => round($rows->sum(fn ($row) => str_ends_with($row->file_role, '_return')
-                    ? -(float) $row->amount
-                    : (float) $row->amount), 2));
+        foreach ($forgiven->groupBy('party_id') as $partyId => $theirs) {
+            $took = PartyLedgerModel::bills((int) $partyId, $theirs->first()->party_type === 'customer' ? 'debit' : 'credit')['took'];
 
-            foreach ($forgiven as $line) {
-                $left = (float) ($charges[$line->work_file_id.':'.$line->party_id] ?? 0);
+            foreach ($theirs->groupBy(fn ($line) => $line->entry_id.':'.$line->work_file_id) as $same) {
+                $line = $same->first();
+                $given = round($same->sum(fn ($one) => (float) $one->amount), 2);
+                $settles = (float) ($took[$line->entry_id][$line->work_file_id] ?? 0);
 
-                if ((float) $line->amount > $left + 0.005) {
-                    $note($line->file_no, "was given a discount of {$line->amount} by entry #{$line->entry_id}, "
-                        ."but only $left is charged on it now — the discount settles nothing and is sitting on the account. Take it back on the statement.");
+                if ($given > $settles + 0.005) {
+                    $note($line->file_no, 'was given a discount of '.number_format($given, 2)." by entry #{$line->entry_id}, but "
+                        .($settles > 0.005
+                            ? 'only '.number_format($settles, 2).' of it settles anything now — the other '.number_format($given - $settles, 2)
+                            : 'the discount')
+                        .' settles nothing and is sitting on the account. Take it back on the statement.');
                 }
             }
         }

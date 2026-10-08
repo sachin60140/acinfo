@@ -13,6 +13,7 @@ use App\Models\WorkTypeModel;
 use App\Support\Screen;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -297,6 +298,8 @@ class WorkFileController extends Controller
                 // evidenced, so the screenshot has to be reachable from the list
                 // as it was from the paperclip — a statement of it is not evidence.
                 'screenshot_url' => $f->approval_screenshot ? route('workfile.approval', $f->id) : null,
+                // Which the preview cannot read from that address; see isPdf().
+                'screenshot_is_pdf' => WorkFileModel::isPdf($f->approval_screenshot),
 
                 'action' => 'Edit',
 
@@ -390,11 +393,13 @@ class WorkFileController extends Controller
                  */
                 $approvals
                     ? ['key' => 'works_done', 'label' => 'Approved Works',
-                        'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url', 'subPreview' => true]
+                        'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url', 'subPreview' => true,
+                        'subPdf' => 'screenshot_is_pdf']
                     : ['key' => 'status', 'label' => 'Status', 'type' => 'badge',
                         'note' => 'works_note', 'sub' => 'screenshot', 'subLinkTo' => 'screenshot_url',
-                        // An image or a PDF, so it opens over the list.
-                        'subPreview' => true],
+                        // An image or a PDF, so it opens over the list — and
+                        // the row says which, so a PDF gets the viewer.
+                        'subPreview' => true, 'subPdf' => 'screenshot_is_pdf'],
 
                 // Exported from both screens, drawn only where they answer the
                 // question. See exportOnly in DataGrid, and workSplit().
@@ -488,6 +493,8 @@ class WorkFileController extends Controller
                 // again on purpose. See the check below.
                 'rows.*.duplicate_ok' => 'nullable|boolean',
                 'remarks' => 'nullable|string|max:255',
+                // The page's own token, so one page saves once; see receivedBefore().
+                'once' => 'nullable|string|max:64',
             ], [
                 'rows.required' => 'Add at least one file.',
                 'rows.*.works.required' => 'Every file needs at least one work.',
@@ -556,41 +563,63 @@ class WorkFileController extends Controller
                 );
             }
 
-            /*
-             * And the same work already in hand from before — the counter's
-             * real mistake, which is the same papers entered a second time.
-             * Refused unless the row says it is deliberate: work finished long
-             * ago does not count, so what is left is a file already open for
-             * this vehicle and this job.
-             */
-            $inHand = [];
+            $outcome = DB::transaction(function () use ($req) {
+                /*
+                 * One batch for a customer at a time.
+                 *
+                 * Found in the health check: two presses in flight together
+                 * were both checked against the vehicle before either had
+                 * written a file, and both went in — two files for one
+                 * envelope, and the customer charged for both. Locked first,
+                 * before anything is read: the second press waits here until
+                 * the first has written its files, and only then looks, and
+                 * finds them.
+                 */
+                PartyModel::whereKey($req->customer_id)->lockForUpdate()->first();
 
-            foreach ($req->input('rows') as $index => $row) {
-                if (filter_var($row['duplicate_ok'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
-                    continue;
+                // This page's batch, sent again: nothing more is written. Asked
+                // before the vehicles are, which the first press has just filled.
+                if ($before = self::receivedBefore($req)) {
+                    return $before['same']
+                        ? ['files' => $before['files'], 'again' => true]
+                        : ['used' => true, 'refused' => 'This page already received '.implode(', ', array_map(fn ($file) => $file->file_no, $before['files']))
+                            .', so nothing was saved this time. What you typed is below: check it, and press Receive Files again to take it in as new files.'];
                 }
 
-                $clashes = WorkFileModel::workAlreadyInHand(
-                    $row['registration_no'] ?? null,
-                    collect($row['works'] ?? [])->pluck('work_type_id')->all()
-                );
+                /*
+                 * And the same work already in hand from before — the
+                 * counter's real mistake, which is the same papers entered a
+                 * second time. Refused unless the row says it is deliberate:
+                 * work finished long ago does not count, so what is left is a
+                 * file already open for this vehicle and this job.
+                 *
+                 * Asked here, under the lock, rather than before the save
+                 * began; see above.
+                 */
+                $inHand = [];
 
-                foreach ($clashes as $clash) {
-                    $inHand[] = WorkFileModel::normaliseRegistration($row['registration_no'] ?? null)
-                        .' — '.$clash->work_type.' is already in hand on '.$clash->file_no
-                        .' ('.(WorkFileModel::STATUSES[$clash->status] ?? $clash->status).')';
+                foreach ($req->input('rows') as $index => $row) {
+                    if (filter_var($row['duplicate_ok'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                        continue;
+                    }
+
+                    $clashes = WorkFileModel::workAlreadyInHand(
+                        $row['registration_no'] ?? null,
+                        collect($row['works'] ?? [])->pluck('work_type_id')->all()
+                    );
+
+                    foreach ($clashes as $clash) {
+                        $inHand[] = WorkFileModel::normaliseRegistration($row['registration_no'] ?? null)
+                            .' — '.$clash->work_type.' is already in hand on '.$clash->file_no
+                            .' ('.(WorkFileModel::STATUSES[$clash->status] ?? $clash->status).')';
+                    }
                 }
-            }
 
-            if ($inHand) {
-                return back()->withInput()->with(
-                    'error',
-                    'This work is already open for this vehicle: '.implode('; ', array_unique($inHand))
-                        .'. Tick "take it in anyway" on that file if it really is coming in again.'
-                );
-            }
+                if ($inHand) {
+                    return ['refused' => 'This work is already open for this vehicle: '.implode('; ', array_unique($inHand))
+                        .'. Tick "take it in anyway" on that file if it really is coming in again.'];
+                }
 
-            $saved = DB::transaction(function () use ($req) {
                 $files = [];
 
                 foreach ($req->input('rows') as $row) {
@@ -647,13 +676,46 @@ class WorkFileController extends Controller
                     $files[] = $file;
                 }
 
-                return $files;
+                self::rememberReceived($req, $files);
+
+                return ['files' => $files, 'again' => false];
             });
+
+            if (isset($outcome['refused'])) {
+                /*
+                 * Sent back without its "take it in anyway" ticks when the
+                 * refusal is that this page already received a batch. A tick
+                 * was given for the files open when the box was ticked; put
+                 * back here, it would also cover the file this same page has
+                 * just opened, and the next press would open the envelope a
+                 * second time with nobody having been asked. Found in review:
+                 * every clash, that one included, is ticked again on purpose.
+                 */
+                if (! empty($outcome['used'])) {
+                    $input = $req->except('_token');
+
+                    foreach (array_keys($input['rows'] ?? []) as $index) {
+                        unset($input['rows'][$index]['duplicate_ok']);
+                    }
+
+                    return back()->withInput($input)->with('error', $outcome['refused']);
+                }
+
+                return back()->withInput()->with('error', $outcome['refused']);
+            }
+
+            $saved = $outcome['files'];
 
             $numbers = implode(', ', array_map(fn ($file) => $file->file_no, $saved));
 
+            /*
+             * A second press is answered as the first was, file numbers and
+             * all: its answer is the page the browser shows, and the first
+             * one's is never seen.
+             */
             return redirect()->route('workfile.index')
-                ->with('success', count($saved).' '.Str::plural('file', count($saved)).' received: '.$numbers);
+                ->with('success', count($saved).' '.Str::plural('file', count($saved)).' received: '.$numbers
+                    .($outcome['again'] ? '. Receive Files was pressed twice, so the second press saved nothing more.' : ''));
         }
 
         $workTypes = WorkTypeModel::selectList();
@@ -680,6 +742,13 @@ class WorkFileController extends Controller
                     'work_type_id' => $work['work_type_id'] ?? '',
                     'amount' => $work['amount'] ?? '',
                 ])->values(),
+                /*
+                 * And its "take it in anyway" tick. Found in the health check:
+                 * left behind, a batch sent back for something else came back
+                 * without it, and the next save was refused for a tick on a box
+                 * the page no longer showed. Read as the save reads it.
+                 */
+                'duplicate_ok' => filter_var($row['duplicate_ok'] ?? false, FILTER_VALIDATE_BOOLEAN),
             ])->values(),
         ];
 
@@ -688,7 +757,97 @@ class WorkFileController extends Controller
             'customers' => $customers,
             // Nothing can be received without both a work type and a customer.
             'blocked' => $workTypes->isEmpty() || $customers->isEmpty(),
+            /*
+             * This page's own, posted back with the batch so the same batch
+             * sent twice is saved once; see receivedBefore(). New every time
+             * the page is drawn, a page sent back with a refusal included:
+             * pressed again, what is on it goes in.
+             */
+            'once' => Str::random(40),
         ])->toResponse($req);
+    }
+
+    /**
+     * The files this page received already, when it is sent again — Receive
+     * Files double-clicked, or the page come back to with Back and sent once
+     * more. Found in the health check: with no registration number on a card
+     * (it is optional) nothing told the second press from a new envelope, so
+     * the same papers were opened as two files and the customer was charged
+     * for both. With a number, the second press was refused as work already in
+     * hand, and told to tick "take it in anyway" — the one thing that would
+     * have opened the duplicate.
+     *
+     * The page is drawn with a token of its own (once), and what each save
+     * wrote is kept against it; see rememberReceived(). Asked under the
+     * customer's lock: the second press waits there for the first, then finds
+     * what it saved.
+     *
+     * 'same' says whether this is that batch, sent as it was. A page sent again
+     * with something changed on it is not, and told it was saved the office
+     * would believe the new papers were in; taken in unasked, a figure
+     * corrected on a page come back to opens every file on it a second time.
+     * So the caller refuses it, with what was typed put back on a new page, as
+     * the edit screen refuses a different change sent from the same old page.
+     * A page that sends no token — one opened before this came in — is saved
+     * as it always was.
+     *
+     * @return array{files: array<int, WorkFileModel>, same: bool}|null
+     */
+    private static function receivedBefore(Request $req): ?array
+    {
+        $once = (string) $req->input('once');
+
+        if ($once === '') {
+            return null;
+        }
+
+        $saved = Cache::get(self::receiveOnceKey($once));
+
+        if (! is_array($saved)) {
+            return null;
+        }
+
+        // Kept for a save that did not go through in the end, it names no file.
+        $files = WorkFileModel::whereIn('id', $saved['files'] ?? [])->orderBy('id')->get()->all();
+
+        if (! $files) {
+            return null;
+        }
+
+        return ['files' => $files, 'same' => hash_equals((string) ($saved['post'] ?? ''), self::postPrint($req))];
+    }
+
+    /**
+     * What this page's save wrote, kept against its token for receivedBefore().
+     * Last in the transaction, so only a batch that is written is kept; with
+     * the cache in the database, as it is unless the server says otherwise, it
+     * is written and undone with the files themselves.
+     *
+     * In the cache, not the session: the two presses arrive together, and the
+     * second has read its session before the first has written to it, while
+     * the cache is read under the lock, once the first is done. It is the store
+     * the sign-in throttle already uses, so the server needs nothing new. And
+     * not on the files, which would need a column — a deploy here is a git
+     * pull that does not run a migration. A day is far longer than any second
+     * press, or a page come back to with Back the same afternoon.
+     *
+     * @param  array<int, WorkFileModel>  $files
+     */
+    private static function rememberReceived(Request $req, array $files): void
+    {
+        $once = (string) $req->input('once');
+
+        if ($once !== '') {
+            Cache::put(self::receiveOnceKey($once), [
+                'files' => array_map(fn ($file) => (int) $file->id, $files),
+                'post' => self::postPrint($req),
+            ], now()->addDay());
+        }
+    }
+
+    private static function receiveOnceKey(string $once): string
+    {
+        return 'receive-once.'.$once;
     }
 
     /**
@@ -773,7 +932,12 @@ class WorkFileController extends Controller
                  *
                  * By the works: a folder half of which is already with somebody
                  * is still here for the other half.
+                 *
+                 * Locked first, so a second press of the same batch waits for
+                 * this one and then finds the work gone; see lockFolders().
                  */
+                WorkFileModel::lockFolders($req->input('files'));
+
                 $files = WorkFileModel::whereIn('id', $req->input('files'))
                     ->where(fn ($outer) => $outer
                         ->whereHas('items', fn ($q) => WorkFileModel::canBeGivenOut($q))
@@ -1122,7 +1286,11 @@ class WorkFileController extends Controller
              * page cannot keep work that has since been given away: work with a
              * vendor is with them, and saying it is being done here would be a
              * second answer to a question already settled.
+             *
+             * Locked first, as Give to Vendor is; see lockFolders().
              */
+            WorkFileModel::lockFolders($req->input('files'));
+
             $files = WorkFileModel::whereIn('id', $req->input('files'))
                 ->where('status', '!=', WorkFileModel::CANCELLED)
                 ->with('items.workType')
@@ -1309,7 +1477,7 @@ class WorkFileController extends Controller
      */
     /**
      * What an edit form posted, as one short string: the same page pressed
-     * twice posts the same thing.
+     * twice posts the same thing. Receive Files asks it too, of a batch.
      *
      * The files attached count as much as the fields typed. Found in review:
      * left out, a reader who went Back, picked a different PDF or a different
@@ -1498,7 +1666,13 @@ class WorkFileController extends Controller
                  * The same rule the screen listed by, asked again here. The
                  * page a file was ticked on may have been open since before it
                  * was approved, and the post is what moves the money.
+                 *
+                 * Locked first: a second press read the file as not yet
+                 * returned, and wrote the refund again into the ledger's unique
+                 * key — a 500, the return already saved. See lockFolders().
                  */
+                WorkFileModel::lockFolders($req->input('files'));
+
                 $files = WorkFileModel::whereIn('id', $req->input('files'))
                     ->withoutApprovedWork()
                     ->get();
@@ -2098,7 +2272,11 @@ class WorkFileController extends Controller
 
                 // Re-read under the same conditions the screen was built with,
                 // so a stale page cannot take a work back twice, or one that has
-                // since been cancelled or gone back to its customer.
+                // since been cancelled or gone back to its customer. Locked
+                // first, so a second press waits for this one and then finds
+                // the work back; see lockFolders().
+                WorkFileModel::lockFolders(array_keys($picks));
+
                 foreach (WorkFileModel::withVendor(array_keys($picks)) as $file) {
                     $held = $file->heldByVendor();
                     $taking = self::takingFrom($picks[$file->id], $held);
@@ -2329,7 +2507,7 @@ class WorkFileController extends Controller
                 'remarks' => 'nullable|array',
                 'remarks.*' => 'nullable|string|max:255',
                 'screenshots' => 'nullable|array',
-                'screenshots.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,pdf|max:4096',
+                'screenshots.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,pdf|max:'.WorkFileModel::SCREENSHOT_MAX_KB,
 
                 /*
                  * The day the RTO approved it, which is not always the day
@@ -2867,6 +3045,8 @@ class WorkFileController extends Controller
                     'status' => $item->status,
                     'has_screenshot' => (bool) $item->approval_screenshot,
                     'screenshot_url' => $item->approval_screenshot ? route('workfile.approval', ['id' => $item->work_file_id, 'item' => $item->id]) : null,
+                    // Which that address cannot say; see isPdf().
+                    'screenshot_is_pdf' => WorkFileModel::isPdf($item->approval_screenshot),
                     'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
                     // The box is filled with today, which is right far more
                     // often than it is wrong, and can be typed over.
@@ -2967,7 +3147,7 @@ class WorkFileController extends Controller
 
                 'status' => ['required', Rule::in(array_keys(WorkFileModel::STATUSES))],
                 'returned_amount' => 'nullable|numeric|gt:0|lte:customer_amount',
-                'approval_screenshot' => 'nullable|file|mimes:jpg,jpeg,png,webp,pdf|max:4096',
+                'approval_screenshot' => 'nullable|file|mimes:jpg,jpeg,png,webp,pdf|max:'.WorkFileModel::SCREENSHOT_MAX_KB,
                 'description' => 'nullable|string|max:255',
                 'remarks' => 'nullable|string|max:255',
 
@@ -2984,6 +3164,8 @@ class WorkFileController extends Controller
                 'items.*.vendor_amount' => 'nullable|numeric|gte:0|max:99999999',
                 // Ticked, the office is doing this work itself; see keepInHouse().
                 'items.*.in_house' => 'nullable|boolean',
+                // The same, on a folder of one work, among its boxes above.
+                'in_house' => 'nullable|boolean',
                 // Why a price that was already agreed has moved. Office-only;
                 // see the check below.
                 'price_remark' => 'nullable|string|max:200',
@@ -3046,7 +3228,7 @@ class WorkFileController extends Controller
                  * name — is the spare one the form always offers, and is
                  * ignored.
                  */
-                'documents.*.file' => 'nullable|file|mimes:pdf|max:10240|required_with:documents.*.title',
+                'documents.*.file' => 'nullable|file|mimes:pdf|max:'.WorkFileDocumentModel::MAX_KB.'|required_with:documents.*.title',
                 'documents.*.title' => 'nullable|string|max:'.WorkFileDocumentModel::TITLE_MAX.'|required_with:documents.*.file',
 
                 // Names given to documents already on the file, by id.
@@ -3381,6 +3563,31 @@ class WorkFileController extends Controller
                     $item->customer_amount = $file->customer_amount;
                     $item->vendor_amount = $file->vendor_amount;
                     $item->status = $file->status;
+
+                    /*
+                     * Kept in-house, or let go of again, as on a folder of
+                     * several works below — here from a box among the ones
+                     * above, which are this work's.
+                     *
+                     * Found in the health check: the box lived only in the
+                     * table a folder of several works has, so a folder of one
+                     * kept in-house by a wrong press dropped off Give to
+                     * Vendor for good. The only way out was typing a vendor
+                     * here, past the papers check and the hand-over sheet.
+                     *
+                     * Only when the page sent the box, which it does only
+                     * while there is no vendor; and never once there is one,
+                     * on the work or on the folder as saved — work with a
+                     * vendor is with them, and a folder from before works
+                     * carried vendors names its vendor only on itself.
+                     */
+                    if ($req->has('in_house') && ! $item->vendor_id && ! $file->vendor_id) {
+                        $item->kept_in_house_on = $req->boolean('in_house')
+                            // Kept already, keep the day it was decided.
+                            ? ($item->kept_in_house_on ?: now()->toDateString())
+                            : null;
+                    }
+
                     $item->save();
                 }
 
@@ -3719,9 +3926,20 @@ class WorkFileController extends Controller
 
         $isEdit = (bool) $file;
         $timeline = $file->statusLog()->with('user')->get();
-        // Whatever this file already points at stays selectable even if it
-        // has since been deactivated, so an edit cannot silently reassign it.
-        $workTypes = WorkTypeModel::selectList($file->work_type_id);
+        /*
+         * Whatever this file already points at stays selectable even if it
+         * has since been deactivated, so an edit cannot silently reassign it.
+         *
+         * The type of every work on it, not only the folder's first. Found in
+         * the health check: with a second work's type switched off, that
+         * work's box had nothing to show, a box with no matching choice posts
+         * nothing, and every save of the folder was refused with "Every work
+         * on the file needs a type". Expense kinds were already offered this
+         * way; see expenseTypes below.
+         */
+        $workTypes = WorkTypeModel::selectList(
+            $file->items()->pluck('work_type_id')->push($file->work_type_id)->unique()->all()
+        );
         $customers = PartyModel::selectList('customer', $file->customer_id);
         $vendors = PartyModel::selectList('vendor', $file->vendor_id);
         $statuses = WorkFileModel::STATUSES;
@@ -3783,6 +4001,24 @@ class WorkFileController extends Controller
                 'vendor_id' => old('vendor_id', $isEdit ? $file->vendor_id : ''),
                 'vendor_amount' => old('vendor_amount', $isEdit ? $file->vendor_amount : ''),
                 'remarks' => old('remarks', $isEdit ? $file->remarks : ''),
+                // Whether the office said it is doing the work itself, on a
+                // folder of one work; a folder of several says it per work.
+                'in_house' => (bool) old('in_house', $isEdit
+                    && $file->items()->count() === 1
+                    && $file->items()->value('kept_in_house_on') !== null),
+            ],
+
+            /*
+             * What the file is priced at as stored, which a retyped price is
+             * compared against. Not the boxes above: a save sent back fills
+             * those with what was typed, and a price compared with itself
+             * looks unchanged — so the reason typed for it was neither shown
+             * nor sent again, and the next save was refused for the want of
+             * one, losing whatever PDF had been picked a second time.
+             */
+            'priced' => [
+                'customer_amount' => $isEdit ? (float) $file->customer_amount : 0.0,
+                'vendor_amount' => $isEdit && $file->vendor_amount !== null ? (float) $file->vendor_amount : null,
             ],
 
             // Rendered here rather than rebuilt in the component: both date
@@ -3804,6 +4040,8 @@ class WorkFileController extends Controller
                 ? number_format((float) $file->customer_amount, 2, '.', '')
                 : '0.00',
             'screenshotUrl' => $isEdit && $file->approval_screenshot ? route('workfile.approval', $file->id) : '',
+            // Which that address cannot say; see isPdf().
+            'screenshotIsPdf' => $isEdit && WorkFileModel::isPdf($file->approval_screenshot),
 
             /*
              * Whether the papers have gone back, and the way to take that back.
@@ -3872,6 +4110,7 @@ class WorkFileController extends Controller
                     'in_house' => $item->isKeptInHouse(),
                     'has_vendor' => (bool) $item->vendor_id,
                     'screenshot_url' => $item->approval_screenshot ? route('workfile.approval', ['id' => $item->work_file_id, 'item' => $item->id]) : null,
+                    'screenshot_is_pdf' => WorkFileModel::isPdf($item->approval_screenshot),
                     'approved_on' => $item->approved_on ? date('d-m-Y', strtotime($item->approved_on)) : null,
                 ])->values()
                 : [],
@@ -3928,6 +4167,30 @@ class WorkFileController extends Controller
                 ])->values()
                 : [],
 
+            /*
+             * The largest PDF and screenshot the save takes, in kilobytes. The
+             * page checks a file against these when it is picked, so a scan
+             * too large is said there and then rather than by a refusal.
+             */
+            'pdfMaxKb' => WorkFileDocumentModel::MAX_KB,
+            'screenshotMaxKb' => WorkFileModel::SCREENSHOT_MAX_KB,
+
+            /*
+             * What a save sent back had typed, for the form to start from.
+             *
+             * The boxes above have always come back as typed. Everything below
+             * them was read from the database again, so a save refused for a
+             * PDF over the limit came back without the corrected charges, the
+             * work and the expenses added, the reason for the price — and the
+             * next save said "updated successfully" without them. The customer's
+             * statement kept the old charge and the expense was never recorded.
+             *
+             * Null on a page drawn fresh, and on the one a stale page is sent
+             * to: that is redrawn without what was typed, on purpose (see the
+             * check at the top of the save).
+             */
+            'typed' => $isEdit && $req->session()->hasOldInput() ? self::typedEdit() : null,
+
             'today' => date('Y-m-d'),
 
             /*
@@ -3980,5 +4243,72 @@ class WorkFileController extends Controller
             'noWorkTypes' => $workTypes->isEmpty(),
             'noCustomers' => $customers->isEmpty(),
         ])->toResponse($req);
+    }
+
+    /**
+     * What a refused edit save posted, in the shape the form starts from.
+     *
+     * Read back from the session as it was posted, so it is taken apart with
+     * care rather than trusted: rows that are not rows are dropped, ids are
+     * ids, and every value is text, as it was in the box. Keyed by the work's
+     * or the expense's own id, the way the form names them, so a value goes
+     * back to the row it was typed in and to no other.
+     *
+     * The PDFs do not come back. No browser lets a page put a file into a
+     * file box, so what returns is the name typed for each, under the row it
+     * was typed in, for the PDF to be chosen again.
+     */
+    private static function typedEdit(): array
+    {
+        $text = fn ($value) => is_scalar($value) ? (string) $value : '';
+        $id = fn ($value) => is_numeric($value) ? (int) $value : '';
+        $rows = fn (string $key) => collect((array) old($key, []))->filter(fn ($row) => is_array($row));
+        $ids = fn (string $key) => collect((array) old($key, []))
+            ->map(fn ($one) => (int) $one)->filter()->unique()->values()->all();
+
+        return [
+            'items' => (object) $rows('items')->mapWithKeys(fn ($work, $key) => [(int) $key => [
+                'work_type_id' => $id($work['work_type_id'] ?? null),
+                'customer_amount' => $text($work['customer_amount'] ?? ''),
+                'vendor_amount' => $text($work['vendor_amount'] ?? ''),
+                // An unticked box posts nothing, so absent is unticked.
+                'in_house' => ! empty($work['in_house']),
+            ]])->all(),
+            'removeWorks' => $ids('remove_works'),
+            'newWorks' => $rows('new_works')->map(fn ($work) => [
+                'work_type_id' => $id($work['work_type_id'] ?? null),
+                'amount' => $text($work['amount'] ?? ''),
+                'vendor_amount' => $text($work['vendor_amount'] ?? ''),
+            ])->values()->all(),
+            'priceRemark' => $text(old('price_remark', '')),
+
+            'expenses' => (object) $rows('expenses')->mapWithKeys(fn ($paid, $key) => [(int) $key => [
+                'expense_type_id' => $id($paid['expense_type_id'] ?? null),
+                'amount' => $text($paid['amount'] ?? ''),
+                'spent_on' => $text($paid['spent_on'] ?? ''),
+                'remark' => $text($paid['remark'] ?? ''),
+            ]])->all(),
+            'removeExpenses' => $ids('remove_expenses'),
+            'newExpenses' => $rows('new_expenses')->map(fn ($paid) => [
+                'expense_type_id' => $id($paid['expense_type_id'] ?? null),
+                'amount' => $text($paid['amount'] ?? ''),
+                'spent_on' => $text($paid['spent_on'] ?? ''),
+                'remark' => $text($paid['remark'] ?? ''),
+            ])->values()->all(),
+
+            // A blank box leaves a name alone when saved, so a blank one is
+            // not put back over the name the page shows.
+            'documentNames' => (object) collect((array) old('document_names', []))
+                ->map($text)
+                ->filter(fn ($name) => trim($name) !== '')
+                ->mapWithKeys(fn ($name, $key) => [(int) $key => $name])
+                ->all(),
+            'removeDocuments' => $ids('remove_documents'),
+            'newDocuments' => $rows('documents')
+                ->map(fn ($row, $key) => ['key' => (int) $key, 'title' => $text($row['title'] ?? '')])
+                ->filter(fn ($row) => trim($row['title']) !== '')
+                ->values()
+                ->all(),
+        ];
     }
 }
