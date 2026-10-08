@@ -231,7 +231,7 @@ class WriteOffTest extends TestCase
         $this->assertSame('Discount', $rows[$entry->id]['particular']);
         $this->assertSame('Why: Rounded off, customer paid in full', $rows[$entry->id]['office_note']);
 
-        $said = $this->withSession(['customer_id' => $this->customer->id])
+        $said = $this->actingAsCustomer($this->customer)
             ->getJson(route('customer.statement'))->assertOk()->getContent();
 
         $this->assertStringContainsString('Discount', $said);

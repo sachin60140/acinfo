@@ -237,7 +237,7 @@ class ApprovalPdfTest extends TestCase
     {
         $file = $this->approvedWith($this->pdf());
 
-        $props = $this->withSession(['customer_id' => $this->customer->id])
+        $props = $this->actingAsCustomer($this->customer)
             ->getJson(route('customer.file', $file->id))
             ->assertOk()->json('props');
 

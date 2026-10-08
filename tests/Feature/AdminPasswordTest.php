@@ -216,7 +216,7 @@ class AdminPasswordTest extends TestCase
         $party->password = Hash::make(self::PASSWORD);
         $party->save();
 
-        $this->withSession(['customer_id' => $party->id])
+        $this->actingAsCustomer($party)
             ->get(route('adminpassword'))
             ->assertRedirect(url('/admin'));
     }

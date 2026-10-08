@@ -371,7 +371,7 @@ class BuildStampTest extends TestCase
         $request = match ($as) {
             'admin' => $this->actingAs($this->admin()),
             'client' => $this->withSession(['userid' => $this->client()->id]),
-            'customer' => $this->withSession(['customer_id' => $this->customer()->id]),
+            'customer' => $this->actingAsCustomer($this->customer()),
         };
 
         $body = $request->get($url)->assertOk()->getContent();

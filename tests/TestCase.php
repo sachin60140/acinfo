@@ -2,6 +2,7 @@
 
 namespace Tests;
 
+use App\Http\Middleware\CustomerAuthMiddleware;
 use App\Models\PartyModel;
 use App\Models\WorkTypeModel;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -83,5 +84,18 @@ abstract class TestCase extends BaseTestCase
         $party->save();
 
         return $party;
+    }
+
+    /**
+     * Signed in to the customer portal as this party, for the next request.
+     *
+     * Built by the same method the sign-in uses rather than by naming session
+     * keys here. A session holding only the customer's id is one the portal's
+     * gate ends — it has no note of the password it was opened with — so a
+     * test that wrote one by hand would be testing the sign-out.
+     */
+    protected function actingAsCustomer(PartyModel $customer): static
+    {
+        return $this->withSession(CustomerAuthMiddleware::signedInAs($customer));
     }
 }

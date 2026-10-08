@@ -192,7 +192,7 @@ class UploadAccessTest extends TestCase
         $file = $this->file($customer);
         $doc = $this->withDocument($file);
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->get(route('workfile.document', ['id' => $file->id, 'doc' => $doc->id]))
             ->assertRedirect(url('/admin'));
     }
