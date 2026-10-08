@@ -3196,8 +3196,8 @@ class WorkFileModel extends Model
 
     /**
      * A period's files, and how many wait on a price: counted once each, for
-     * the vendor cut's heading, whose rows count a shared folder under each
-     * holder of it.
+     * the headings of the vendor cut, whose rows count a shared folder under
+     * each holder of it, and of the work type cut, whose rows count works.
      *
      * @return array{files: int, unpriced: int}
      */
@@ -3317,9 +3317,11 @@ class WorkFileModel extends Model
      * what a transfer earned, because the folder carried one figure for all
      * three. Now each work carries its own.
      *
-     * Cancelled work is out — it charges nobody. So is a cancelled or returned
-     * file: a refund is agreed for the folder, and splitting it across the
-     * works on it would be inventing a precision nobody recorded.
+     * Cancelled work is out — it charges nobody — and so is a cancelled file.
+     * A returned file is kept off its works too: a refund is agreed for the
+     * folder, and splitting it across the works on it would be inventing a
+     * precision nobody recorded. It is on a line of its own instead; see
+     * returnedToCustomer().
      *
      * @return \Illuminate\Support\Collection<int, object>
      */
@@ -3389,10 +3391,72 @@ class WorkFileModel extends Model
             ->orderByRaw('billed desc')
             ->get();
 
+        $rows = $rows->when(
+            ($returned = self::returnedToCustomer($from, $to)) !== null,
+            fn ($all) => $all->push($returned)
+        );
+
         return self::withGivenUp($rows->when(
             ($counter = self::counterExpenses($from, $to)) !== null,
             fn ($all) => $all->push($counter)
         ), $from, $to, 'work_type');
+    }
+
+    /**
+     * The files returned to the customer, as a row of their own.
+     *
+     * Their refund is agreed for the folder, so no one work can carry it, and
+     * the works above leave them out. Left out of the cut altogether, which is
+     * what happened until a health check on 2026-10-07 found it, they took
+     * with them what the office kept of the charge and the vendor's rate that
+     * still stands on the vendor's statement — both of which every other cut
+     * counts — so the same period read lower here than on any other tab, with
+     * nothing on screen saying why. Their challans were on Counter expenses
+     * all along, so the tab did not even agree with itself.
+     *
+     * So they are a line, as counter expenses are, and the tab adds up to the
+     * same money as the others: billed is what was kept (EARNED), and cost is
+     * the vendor's rate that stands — SPENT less what was paid out over the
+     * counter, which is on that line already. Never awaiting a price: a
+     * returned file is settled; see OUTSTANDING.
+     */
+    private static function returnedToCustomer(?string $from, ?string $to): ?object
+    {
+        // Each file on its own, then added up, as profitBy() does each file.
+        $each = DB::table('work_file')
+            ->where('work_file.status', self::RETURNED)
+            ->selectRaw(self::EARNED.' as billed')
+            ->selectRaw('('.self::SPENT.') - '.self::PAID_OUT.' as cost')
+            ->selectRaw("(SELECT COUNT(*) FROM work_file_item AS rw
+                WHERE rw.work_file_id = work_file.id AND rw.status <> 'cancelled') as works");
+
+        self::betweenDates($each, $from, $to);
+
+        $returned = DB::query()
+            ->fromSub($each, 'each_file')
+            ->selectRaw('COUNT(*) as files')
+            ->selectRaw('COALESCE(SUM(works), 0) as works')
+            ->selectRaw('COALESCE(SUM(billed), 0) as billed')
+            ->selectRaw('COALESCE(SUM(cost), 0) as cost')
+            ->selectRaw('COALESCE(SUM(billed - cost), 0) as margin')
+            ->first();
+
+        if (! (int) $returned->files) {
+            return null;
+        }
+
+        return (object) [
+            // Apart from counter expenses (0) and the discounts (-1).
+            'group_key' => -2,
+            'group_label' => 'Returned to customer',
+            'note' => 'Kept after the refund, which is agreed for the file, so no one work carries it',
+            // Its works, as the rows above count theirs: taken in, and given back.
+            'files' => (int) $returned->works,
+            'billed' => (float) $returned->billed,
+            'cost' => (float) $returned->cost,
+            'margin' => (float) $returned->margin,
+            'unpriced' => 0,
+        ];
     }
 
     /**
@@ -3550,12 +3614,19 @@ class WorkFileModel extends Model
          * subqueries against the file, and inside an aggregate under a GROUP
          * BY that is something MySQL allows and MariaDB — the live server —
          * refuses ("work_file.id isn't in GROUP BY"). Found in review.
+         *
+         * What a file has cost is a cost whether or not every price on it is
+         * agreed, as the Profit report this chart opens counts it: only the
+         * margin waits. Found in a health check on 2026-10-07: zeroed with the
+         * margin, a rate already agreed on one of its works and on the
+         * vendor's statement, and a challan already paid, showed as nothing
+         * until the last price was in.
          */
         $each = DB::table('work_file')
             ->whereDate('received_date', '>=', $from->toDateString())
             ->selectRaw("DATE_FORMAT(received_date, '%Y-%m') as month")
             ->selectRaw("$earned as billed")
-            ->selectRaw("CASE WHEN $unsettled THEN 0 ELSE ($spent) END as cost")
+            ->selectRaw("$spent as cost")
             ->selectRaw("CASE WHEN $unsettled THEN 0 ELSE $earned - ($spent) END as margin");
 
         $rows = DB::query()
