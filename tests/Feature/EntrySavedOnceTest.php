@@ -299,7 +299,7 @@ class EntrySavedOnceTest extends TestCase
         return [$this->customer, $vendor];
     }
 
-    private function setOff(PartyModel $from, PartyModel $other, string $once, float $amount = 2000)
+    private function setOff(PartyModel $from, PartyModel $other, ?string $once, float $amount = 2000)
     {
         return $this->send($from, $once, [
             'entry_type' => $from->party_type === 'customer' ? 'credit' : 'debit',
@@ -519,5 +519,132 @@ class EntrySavedOnceTest extends TestCase
         $this->send($this->customer, null)->assertSessionHasNoErrors()->assertSessionHas('success');
 
         $this->assertCount(1, $this->typed($this->customer));
+    }
+
+    // ------------------------------------------- the doubles saved before this
+
+    /**
+     * The query the deploy step gives the owner to run on the server, for the
+     * doubles saved before this went in: two entries on one account alike in
+     * everything the Entry screen takes, saved within ten seconds of each
+     * other, neither a file's own nor a reversal. The office reverses the
+     * second of each pair from the statement. Kept here so that what the owner
+     * is given to run has been run.
+     *
+     * Found in review: it also listed a double the office had already put
+     * right — spotted on the statement and the first of the two reversed by
+     * hand, the only way there was before this. It said to reverse the second,
+     * and Reverse allows that, as the second has never been reversed: both
+     * payments taken back, and the customer shown owing, chased on the
+     * Collection List and quoted on WhatsApp the whole amount they had paid —
+     * the same error this puts right, the other way. So a pair either of whose
+     * entries has been reversed is left out.
+     *
+     * No GROUP BY and nothing inside an aggregate, so MariaDB on the server
+     * takes it as MySQL here does.
+     */
+    private const DOUBLES = <<<'SQL'
+        SELECT a.id AS first_entry, b.id AS second_entry, a.party_id, a.entry_type, a.amount, a.txn_date,
+               a.created_at AS first_saved, b.created_at AS second_saved
+        FROM party_ledger a
+        JOIN party_ledger b
+          ON b.party_id = a.party_id
+         AND b.id > a.id
+         AND b.entry_type = a.entry_type
+         AND b.amount = a.amount
+         AND b.txn_date = a.txn_date
+         AND b.payment_mode <=> a.payment_mode
+         AND b.ref_no <=> a.ref_no
+         AND b.particular <=> a.particular
+         AND b.entry_kind <=> a.entry_kind
+         AND b.created_at BETWEEN a.created_at AND a.created_at + INTERVAL 10 SECOND
+        WHERE a.work_file_id IS NULL AND b.work_file_id IS NULL
+          AND a.reverses_id IS NULL AND b.reverses_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM party_ledger r WHERE r.reverses_id IN (a.id, b.id))
+        ORDER BY a.id
+        SQL;
+
+    /** @return list<array{0: int, 1: int}> the pairs DOUBLES lists on these accounts, first entry then second */
+    private function doubles(PartyModel ...$parties): array
+    {
+        $ids = array_map(fn ($party) => (int) $party->id, $parties);
+
+        return collect(DB::select(self::DOUBLES))
+            ->filter(fn ($pair) => in_array((int) $pair->party_id, $ids, true))
+            ->map(fn ($pair) => [(int) $pair->first_entry, (int) $pair->second_entry])
+            ->values()
+            ->all();
+    }
+
+    /** Taken back from the statement, as the office did by hand when it spotted a double. */
+    private function reverse(PartyLedgerModel $entry): void
+    {
+        $this->actingAs($this->admin)
+            ->post(route('party.reverse', $entry->id), ['reason' => 'Saved twice'])
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('success');
+    }
+
+    /** Saved twice from a page opened before this: listed, the second to be reversed. */
+    public function test_the_deploy_query_finds_a_payment_saved_twice(): void
+    {
+        $this->owing($this->customer, 12000);
+
+        $this->send($this->customer, null);
+        $this->send($this->customer, null);
+
+        [$first, $second] = $this->typed($this->customer)->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $this->assertSame([[$first, $second]], $this->doubles($this->customer));
+    }
+
+    /**
+     * A double the office has already put right is not listed again, whether
+     * it reversed the first or the second: reversing the one left would take
+     * back a payment the customer really made.
+     */
+    public function test_the_deploy_query_leaves_out_a_double_already_reversed(): void
+    {
+        $this->owing($this->customer, 12000);
+
+        // 5,000 saved twice, and 1,000 saved twice.
+        $this->send($this->customer, null);
+        $this->send($this->customer, null);
+        $this->send($this->customer, null, ['amount' => 1000]);
+        $this->send($this->customer, null, ['amount' => 1000]);
+
+        [$fiveFirst, , , $oneSecond] = $this->typed($this->customer)->all();
+
+        $this->reverse($fiveFirst);
+        $this->reverse($oneSecond);
+
+        $this->assertSame([], $this->doubles($this->customer), 'a double already put right is listed to be reversed');
+
+        // 5,000 and 1,000 paid, once each, on 12,000.
+        $this->assertSame(6000.0, $this->balance($this->customer));
+    }
+
+    /**
+     * A set-off saved twice is listed on both accounts, each half beside its
+     * double. Reversing either takes back its other half with it, so once the
+     * office has reversed one, neither account lists it.
+     */
+    public function test_the_deploy_query_leaves_out_a_set_off_already_reversed(): void
+    {
+        [$customer, $vendor] = $this->dealer();
+
+        $this->setOff($customer, $vendor, null, 1000)->assertSessionHasNoErrors();
+        $this->setOff($customer, $vendor, null, 1000)->assertSessionHasNoErrors();
+
+        $this->assertCount(2, $this->doubles($customer, $vendor), 'a set-off saved twice is not listed on both accounts');
+
+        $this->reverse(PartyLedgerModel::where('party_id', $customer->id)
+            ->where('entry_kind', PartyLedgerModel::SETOFF)->orderBy('id')->first());
+
+        $this->assertSame([], $this->doubles($customer, $vendor), 'a set-off already put right is listed to be reversed');
+
+        // 1,000 set off, once: owes 4,000 as a customer, and is owed 2,000 as a vendor.
+        $this->assertSame(4000.0, $this->balance($customer));
+        $this->assertSame(-2000.0, $this->balance($vendor));
     }
 }
