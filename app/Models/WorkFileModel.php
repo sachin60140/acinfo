@@ -1378,7 +1378,7 @@ class WorkFileModel extends Model
             ->get(['i.work_file_id', 't.name'])
             ->groupBy('work_file_id');
 
-        return $files->map(function ($file) use ($owed, $works) {
+        $rows = $files->map(function ($file) use ($owed, $works) {
             $outstanding = (float) ($owed[$file->customer_id][$file->id] ?? 0);
 
             /*
@@ -1419,6 +1419,43 @@ class WorkFileModel extends Model
         })
             // Longest owed first: the list is read to decide who to ring.
             ->sortByDesc('days')
+            ->values();
+
+        /*
+         * Never more than the statement says. A write-off that no longer
+         * settles its bill — returned, struck off, re-priced under it, or
+         * left nothing by a payment for the same bill — takes nothing from any
+         * file but still comes off the balance, so the files can say more is
+         * due than the customer owes; files:audit names it for the office to
+         * take back. Until then each customer's rows are cut to what their
+         * statement says, as the Collection List cuts what it asks for on
+         * finished work. The rows owed the shortest time give it up first, so
+         * the longest owed — the ones this list is read for — still say what
+         * the ledger says, and a row cut to nothing is not asked for at all.
+         * Found in the health check of 2026-10-07: the rows, the dashboard
+         * tile and the WhatsApp message made from them asked for 50 more than
+         * the statement and the Collection List did.
+         */
+        $balances = PartyLedgerModel::balancesFor($rows->pluck('customer_id')->unique()->values()->all());
+
+        $over = $rows->groupBy('customer_id')
+            ->map(fn ($mine, $customer) => round($mine->sum('outstanding') - ($balances[$customer] ?? 0), 2))
+            ->all();
+
+        return $rows->reverse()
+            ->map(function ($row) use (&$over) {
+                $cut = min($row['outstanding'], $over[$row['customer_id']]);
+
+                if ($cut > 0.005) {
+                    $over[$row['customer_id']] -= $cut;
+                    $row['outstanding'] = round($row['outstanding'] - $cut, 2);
+                    $row['part_paid'] = 'part paid';
+                }
+
+                return $row;
+            })
+            ->filter(fn ($row) => $row['outstanding'] > 0.005)
+            ->reverse()
             ->values();
     }
     /**
