@@ -612,13 +612,39 @@ class AuthController extends Controller
              * future edit could drop without anything looking wrong.
              */
             $user->password = Hash::make($req->post('password'));
+
+            /*
+             * Every other device signed in with the old password is signed out
+             * by this. A Remember me cookie finds the account by this token, so
+             * a new one leaves every cookie issued before it pointing at
+             * nothing: a phone that ticked Remember me was otherwise good for
+             * another 400 days. A browser with a session still open is caught
+             * by the auth.session check on the office pages (bootstrap/app.php),
+             * which compares the password it signed in with against this one.
+             *
+             * That check reads the password in the cookie too, but it cannot
+             * stand in for the new token. It runs on the office pages only. The
+             * sign-in page asks just whether anybody is signed in, so it would
+             * take the old cookie, start a session from it and send the phone
+             * on to the dashboard; and a session that new has no password noted
+             * yet, so the check would note the current one and let it in.
+             */
+            $user->setRememberToken(Str::random(60));
             $user->save();
 
-            // A new session id for the person who just proved themselves.
-            $req->session()->regenerate();
+            /*
+             * Except this one. Signed in again, which is also a new session id
+             * for the person who just proved themselves; and if this browser
+             * ticked Remember me, it is handed a new cookie with the new token.
+             * Its old one went with everybody else's, and would have signed it
+             * out too the next time its session ran out. The password noted in
+             * its session is brought up to date by the auth.session check
+             * itself, on the way out of this request.
+             */
+            Auth::login($user, $req->hasCookie(Auth::guard()->getRecallerName()));
 
             return redirect('admin/dashboard')
-                ->with('success', 'Your password has been changed. Use it the next time you sign in.');
+                ->with('success', 'Your password has been changed, and any other phone or computer signed in with the old one has been signed out.');
         }
 
         $props = [
@@ -631,7 +657,7 @@ class AuthController extends Controller
             'clientMobile' => $user->email,
             'hasPassword' => true,
             'requireCurrent' => true,
-            'intro' => 'You will use the new password the next time you sign in to the admin area.',
+            'intro' => 'You will use the new password the next time you sign in to the admin area. Any other phone or computer signed in with the old one will be signed out.',
             'errors' => (object) array_map(fn ($messages) => $messages[0], session('errors') ? session('errors')->messages() : []),
         ];
 

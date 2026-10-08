@@ -6,6 +6,7 @@ use App\Http\Middleware\UserAuthMiddleware;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Session\Middleware\AuthenticateSession;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -29,7 +30,6 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->encryptCookies(except: ['nav_collapsed']);
 
         $middleware->alias([
-            'admin' => AdminMiddleware::class,
             'userAuth' => UserAuthMiddleware::class,
 
             // The customer portal. Its own gate on its own session key — see
@@ -37,6 +37,39 @@ return Application::configure(basePath: dirname(__DIR__))
             // with a party id put into it.
             'customerAuth' => CustomerAuthMiddleware::class,
         ]);
+
+        /*
+         * The office's gate, on every office page.
+         *
+         * AdminMiddleware lets in only a signed-in office account.
+         * AuthenticateSession (Laravel's auth.session) checks that the password
+         * the session, or the Remember me cookie, was signed in with is still
+         * the account's password, and signs that browser out if it is not. It
+         * is what makes changing the password reach every other browser:
+         * without it one left open on the old password kept going for as long
+         * as somebody kept clicking.
+         *
+         * Laravel runs AuthenticateSession first, whatever the order here: its
+         * own list of what runs before what puts it ahead of AdminMiddleware.
+         * That changes nothing. It waves a guest through untouched, for
+         * AdminMiddleware to send to the sign-in page as before.
+         *
+         * A group rather than an alias, so that every route group saying
+         * 'admin' gets both, and an office page added later cannot be given
+         * the one without the other.
+         */
+        $middleware->group('admin', [
+            AdminMiddleware::class,
+            AuthenticateSession::class,
+        ]);
+
+        // Where AuthenticateSession sends a browser it has signed out: the
+        // office sign-in page. Without this Laravel looks for a page named
+        // 'login', which there is not, and the signed-out browser gets an
+        // error page instead. Nothing else here uses Laravel's own sign-in
+        // checks; the two portals keep their own (userAuth and customerAuth
+        // above).
+        $middleware->redirectGuestsTo('/admin');
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //
