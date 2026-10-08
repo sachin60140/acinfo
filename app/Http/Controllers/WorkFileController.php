@@ -3523,9 +3523,20 @@ class WorkFileController extends Controller
 
         $isEdit = (bool) $file;
         $timeline = $file->statusLog()->with('user')->get();
-        // Whatever this file already points at stays selectable even if it
-        // has since been deactivated, so an edit cannot silently reassign it.
-        $workTypes = WorkTypeModel::selectList($file->work_type_id);
+        /*
+         * Whatever this file already points at stays selectable even if it
+         * has since been deactivated, so an edit cannot silently reassign it.
+         *
+         * The type of every work on it, not only the folder's first. Found in
+         * the health check: with a second work's type switched off, that
+         * work's box had nothing to show, a box with no matching choice posts
+         * nothing, and every save of the folder was refused with "Every work
+         * on the file needs a type". Expense kinds were already offered this
+         * way; see expenseTypes below.
+         */
+        $workTypes = WorkTypeModel::selectList(
+            $file->items()->pluck('work_type_id')->push($file->work_type_id)->unique()->all()
+        );
         $customers = PartyModel::selectList('customer', $file->customer_id);
         $vendors = PartyModel::selectList('vendor', $file->vendor_id);
         $statuses = WorkFileModel::STATUSES;
