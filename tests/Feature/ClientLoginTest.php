@@ -40,7 +40,10 @@ class ClientLoginTest extends TestCase
         $client = new ClientModel;
         $client->name = 'Login Client '.uniqid();
         $client->mobile = '92800'.random_int(10000, 99999);
-        $client->password = $password === null ? null : Hash::make($password, ['rounds' => 12]);
+        // Never given one: empty, which the column takes however it was made —
+        // NOT NULL where the table was created with it, nullable where a later
+        // migration added it. The sign-in reads both alike; see filled().
+        $client->password = $password === null ? '' : Hash::make($password, ['rounds' => 12]);
         // Not nullable.
         $client->address = 'Near the RTO, Motihari';
         $client->save();
