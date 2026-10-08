@@ -719,6 +719,13 @@ class WorkFileController extends Controller
                     'work_type_id' => $work['work_type_id'] ?? '',
                     'amount' => $work['amount'] ?? '',
                 ])->values(),
+                /*
+                 * And its "take it in anyway" tick. Found in the health check:
+                 * left behind, a batch sent back for something else came back
+                 * without it, and the next save was refused for a tick on a box
+                 * the page no longer showed. Read as the save reads it.
+                 */
+                'duplicate_ok' => filter_var($row['duplicate_ok'] ?? false, FILTER_VALIDATE_BOOLEAN),
             ])->values(),
         ];
 

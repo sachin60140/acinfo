@@ -276,4 +276,37 @@ class ReceiveDuplicateTest extends TestCase
         // And the hypothecation addition on that folder is in hand too.
         $this->assertCount(1, WorkFileModel::workAlreadyInHand($this->plate, [$this->hpa->id]));
     }
+
+    // ------------------------------------------------------- a batch sent back
+
+    /*
+     * Found in the health check: a batch refused for something else — here the
+     * same vehicle and work on two other cards — came back without the "take
+     * it in anyway" tick on the file that had it. Sent again with the third
+     * card taken off, it was refused once more, asking for a tick on a box the
+     * page no longer showed.
+     */
+    public function test_a_batch_sent_back_keeps_its_take_it_in_anyway_ticks(): void
+    {
+        $this->existing($this->tr);
+        $other = 'BR01RX'.random_int(1000, 9999);
+
+        $this->receive([
+            $this->row($this->tr, null, true),
+            $this->row($this->tr, $other),
+            $this->row($this->tr, $other),
+        ])->assertSessionHas('error', fn ($message) => str_contains($message, 'twice'));
+
+        $rows = $this->actingAs($this->admin)->getJson(route('workfile.receive'))->json('props.oldRows');
+
+        $this->assertTrue($rows[0]['duplicate_ok'] ?? null, 'the tick was dropped');
+        $this->assertFalse($rows[1]['duplicate_ok'] ?? null);
+        $this->assertFalse($rows[2]['duplicate_ok'] ?? null);
+
+        // Sent again as it came back, without the third card, it goes in.
+        $this->receive([$this->row($this->tr, null, $rows[0]['duplicate_ok']), $this->row($this->tr, $other)])
+            ->assertSessionMissing('error');
+
+        $this->assertSame(2, $this->filesFor($this->plate));
+    }
 }

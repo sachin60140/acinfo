@@ -331,6 +331,22 @@ function onRegInput(row) {
     timers.set(row, window.setTimeout(() => lookup(row), 400));
 }
 
+/*
+ * A batch the server sent back comes back with its numbers, and with any "take
+ * it in anyway" tick it carried. But the warning that tick answers is drawn
+ * from a lookup, and nothing typed the numbers this time. Found in the health
+ * check: sent back for something else, a ticked file came back with no warning
+ * and no tick, and the next save was refused for a box the page no longer
+ * showed. So every number brought back is looked up again as the page opens.
+ */
+onMounted(() => {
+    for (const row of rows) {
+        if (row.registration_no) {
+            lookup(row);
+        }
+    }
+});
+
 watch(total, (value) => {
     // The panel above this one shows where the customer's balance lands. It
     // listens for the running total rather than reaching into this markup.
