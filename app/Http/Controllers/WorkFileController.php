@@ -928,7 +928,12 @@ class WorkFileController extends Controller
                  *
                  * By the works: a folder half of which is already with somebody
                  * is still here for the other half.
+                 *
+                 * Locked first, so a second press of the same batch waits for
+                 * this one and then finds the work gone; see lockFolders().
                  */
+                WorkFileModel::lockFolders($req->input('files'));
+
                 $files = WorkFileModel::whereIn('id', $req->input('files'))
                     ->where(fn ($outer) => $outer
                         ->whereHas('items', fn ($q) => WorkFileModel::canBeGivenOut($q))
@@ -1277,7 +1282,11 @@ class WorkFileController extends Controller
              * page cannot keep work that has since been given away: work with a
              * vendor is with them, and saying it is being done here would be a
              * second answer to a question already settled.
+             *
+             * Locked first, as Give to Vendor is; see lockFolders().
              */
+            WorkFileModel::lockFolders($req->input('files'));
+
             $files = WorkFileModel::whereIn('id', $req->input('files'))
                 ->where('status', '!=', WorkFileModel::CANCELLED)
                 ->with('items.workType')
@@ -1629,7 +1638,13 @@ class WorkFileController extends Controller
                  * The same rule the screen listed by, asked again here. The
                  * page a file was ticked on may have been open since before it
                  * was approved, and the post is what moves the money.
+                 *
+                 * Locked first: a second press read the file as not yet
+                 * returned, and wrote the refund again into the ledger's unique
+                 * key — a 500, the return already saved. See lockFolders().
                  */
+                WorkFileModel::lockFolders($req->input('files'));
+
                 $files = WorkFileModel::whereIn('id', $req->input('files'))
                     ->withoutApprovedWork()
                     ->get();
@@ -2198,7 +2213,11 @@ class WorkFileController extends Controller
 
                 // Re-read under the same conditions the screen was built with,
                 // so a stale page cannot take a work back twice, or one that has
-                // since been cancelled or gone back to its customer.
+                // since been cancelled or gone back to its customer. Locked
+                // first, so a second press waits for this one and then finds
+                // the work back; see lockFolders().
+                WorkFileModel::lockFolders(array_keys($picks));
+
                 foreach (WorkFileModel::withVendor(array_keys($picks)) as $file) {
                     $held = $file->heldByVendor();
                     $taking = self::takingFrom($picks[$file->id], $held);
