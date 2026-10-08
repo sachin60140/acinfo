@@ -130,6 +130,7 @@ const form = reactive({
     vendor_id: props.values.vendor_id ?? '',
     vendor_amount: props.values.vendor_amount ?? '',
     remarks: props.values.remarks ?? '',
+    in_house: Boolean(props.values.in_house),
 });
 
 /*
@@ -142,6 +143,21 @@ const form = reactive({
  * boxes still write straight through to it.
  */
 const multiWork = computed(() => props.items.length > 1);
+
+/*
+ * The in-house box of a folder of one work, among its own boxes.
+ *
+ * A folder of several works has it per work, in Works on This File. A folder
+ * of one had it nowhere, so one kept in-house by a wrong press on Give to
+ * Vendor could not be offered to a vendor again from any screen — found in the
+ * health check. It sits beside the vendor it is the other answer to, and only
+ * while there is none: work with a vendor is with them, and a vendor chosen in
+ * the box above is the answer being given instead.
+ */
+const soleWorkFree = computed(() => props.isEdit
+    && props.items.length === 1
+    && ! props.items[0].has_vendor
+    && ! form.vendor_id);
 
 /*
  * A save sent back, and what it had typed.
@@ -724,6 +740,35 @@ const statusHint = computed(() => {
     return '';
 });
 
+/*
+ * What the in-house box of a folder of one work does, said beside it.
+ *
+ * Found in review: the box is on every folder of one work with no vendor,
+ * finished or not, and a folder kept in-house usually ends up approved from
+ * In-house Work. Its hint still said the folder was listed there and would be
+ * offered to a vendor again if unticked. Neither list holds finished work —
+ * WorkFileModel::inHouseWork() and ::canBeGivenOut() both pass over approved,
+ * returned and cancelled — so an operator who believed it unticked the box,
+ * found nothing on Give to Vendor, and had wiped the day the work was kept.
+ *
+ * Read from the status in the box above rather than the one stored, because
+ * that is the status the save writes through to the work: a folder approved
+ * on this save leaves In-house Work with it, and one reopened comes back.
+ */
+const soleWorkHint = computed(() => {
+    if (settled.value) {
+        return form.in_house
+            ? 'Recorded as work the office kept for itself. A finished file is on neither In-house Work '
+                + 'nor Give to Vendor, so unticking it only takes that record off.'
+            : 'A finished file is on neither In-house Work nor Give to Vendor, ticked or not. '
+                + 'Tick it only to record that the office kept the work for itself.';
+    }
+
+    return form.in_house
+        ? 'Kept off Give to Vendor and listed on In-house Work. Untick it to offer the file to a vendor again.'
+        : 'Tick it if the office is doing this work, so Give to Vendor stops offering the file.';
+});
+
 const charged = computed(() => Number(form.customer_amount) || 0);
 
 // A blank refund gives the whole charge back, and the server reads it the same
@@ -1211,6 +1256,18 @@ onMounted(() => {
                             <div v-if="errors.vendor_date" class="ui-hint ui-hint--error">
                                 {{ errors.vendor_date }}
                             </div>
+                        </div>
+
+                        <!-- The hidden nought first: an unticked box posts
+                             nothing, and nothing is also what a page without
+                             the box sends, which must leave the mark alone. -->
+                        <div v-if="soleWorkFree" class="ui-field wf-full">
+                            <input type="hidden" name="in_house" value="0">
+                            <label class="wf-works__keep">
+                                <input type="checkbox" name="in_house" value="1" v-model="form.in_house">
+                                <span>In-house &mdash; the office is doing this work itself</span>
+                            </label>
+                            <div class="ui-hint">{{ soleWorkHint }}</div>
                         </div>
 
                         <div class="ui-field wf-full wf-section">
