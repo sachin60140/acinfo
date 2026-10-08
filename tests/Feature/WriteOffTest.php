@@ -10,6 +10,7 @@ use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkTypeModel;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
@@ -158,6 +159,36 @@ class WriteOffTest extends TestCase
             ->where('entry_kind', PartyLedgerModel::WRITEOFF)->latest('id')->first();
     }
 
+    /** Its price put right on the edit screen: the works and the folder together. */
+    private function reprice(WorkFileModel $file, float $charge): void
+    {
+        WorkFileItemModel::where('work_file_id', $file->id)->update(['customer_amount' => $charge]);
+        $file->customer_amount = $charge;
+        $file->save();
+        $file->fresh()->syncLedger();
+    }
+
+    /** Every work on it approved, $daysAgo days ago. */
+    private function finish(WorkFileModel $file, int $daysAgo): void
+    {
+        WorkFileItemModel::where('work_file_id', $file->id)->update([
+            'status' => WorkFileModel::APPROVED,
+            'approved_on' => now()->subDays($daysAgo)->toDateString(),
+        ]);
+        $file->status = WorkFileModel::APPROVED;
+        $file->save();
+    }
+
+    /** What files:audit says about one file, line by line. */
+    private function audit(WorkFileModel $file): string
+    {
+        Artisan::call('files:audit');
+
+        return collect(explode("\n", Artisan::output()))
+            ->filter(fn ($line) => str_contains($line, $file->file_no))
+            ->implode("\n");
+    }
+
     // ------------------------------------------------------------- the point
 
     /** The 50 left on a 5,000 bill, given up: the bill closes and nothing is owed. */
@@ -200,7 +231,7 @@ class WriteOffTest extends TestCase
         $this->assertSame('Discount', $rows[$entry->id]['particular']);
         $this->assertSame('Why: Rounded off, customer paid in full', $rows[$entry->id]['office_note']);
 
-        $said = $this->withSession(['customer_id' => $this->customer->id])
+        $said = $this->actingAsCustomer($this->customer)
             ->getJson(route('customer.statement'))->assertOk()->getContent();
 
         $this->assertStringContainsString('Discount', $said);
@@ -257,12 +288,157 @@ class WriteOffTest extends TestCase
         $file->items()->update(['status' => WorkFileModel::RETURNED]);
         $file->fresh()->syncLedger();
 
+        $this->assertStringContainsString('settles nothing', $this->audit($file), 'the premise: the audit names it');
+
         $this->actingAs($this->admin)
             ->post(route('party.reverse', $this->written()->id), ['reason' => 'The papers went back'])
             ->assertSessionHas('success');
 
         // 4,950 came in and 5,000 went back out: the office owes 4,950.
         $this->assertEqualsWithDelta(-4950, PartyLedgerModel::currentBalance($this->customer->id), 0.005);
+
+        // And the audit has nothing more to say about it.
+        $this->assertStringNotContainsString('discount', $this->audit($file));
+    }
+
+    /**
+     * A discount a payment for the same bill has left nothing to take.
+     *
+     * 950 paid for a 1,000 bill and the last 50 given up; then the bill is put
+     * right to 950. The payment was made first, so it takes the whole bill,
+     * and the 50 — which settles nothing but its own bill — settles nothing at
+     * all. Found in the health check of 2026-10-07: the audit judged the 50
+     * against the 950 still charged, found it smaller, and said nothing.
+     */
+    public function test_a_discount_a_payment_left_nothing_to_take_is_named(): void
+    {
+        $this->file(1000);
+        $file = $this->file(1000, '2026-08-05');
+
+        $this->pay(950, [$file->id => 950])->assertSessionHas('success');
+        $this->writeOff(50, [$file->id => 50])->assertSessionHas('success');
+
+        $this->assertStringNotContainsString('discount', $this->audit($file), 'a discount that settles its bill in full was named');
+
+        $this->reprice($file, 950);
+
+        $entry = $this->written();
+        $this->assertSame(0.0, PartyLedgerModel::bills($this->customer->id)['took'][$entry->id][$file->id] ?? 0.0, 'the premise: it takes nothing');
+
+        $said = $this->audit($file);
+
+        $this->assertStringContainsString('was given a discount of 50.00 by entry #'.$entry->id, $said);
+        $this->assertStringContainsString('settles nothing', $said);
+    }
+
+    /**
+     * And one a part refund has left nothing to take.
+     *
+     * 950 paid for a 1,000 bill and 50 given up; then the papers go back with
+     * 600 refunded. The refund comes off the bill first, the payment takes the
+     * 400 left, and the 50 settles nothing: the statement says the office owes
+     * 600 where 550 was agreed. Judged against the 400 still charged, the audit
+     * said nothing.
+     */
+    public function test_a_discount_a_part_refund_left_nothing_to_take_is_named(): void
+    {
+        $file = $this->file(1000);
+
+        $this->pay(950, [$file->id => 950]);
+        $this->writeOff(50, [$file->id => 50])->assertSessionHas('success');
+
+        $file->status = WorkFileModel::RETURNED;
+        $file->returned_on = now()->toDateString();
+        $file->returned_amount = 600;
+        $file->save();
+        $file->items()->update(['status' => WorkFileModel::RETURNED]);
+        $file->fresh()->syncLedger();
+
+        $this->assertEqualsWithDelta(-600, PartyLedgerModel::currentBalance($this->customer->id), 0.005, 'the premise');
+
+        $said = $this->audit($file);
+
+        $this->assertStringContainsString('was given a discount of 50.00', $said);
+        $this->assertStringContainsString('settles nothing', $said);
+    }
+
+    /** Left part of its bill, it says how much of it still settles anything. */
+    public function test_a_discount_that_settles_only_part_of_itself_says_how_much(): void
+    {
+        $file = $this->file(1000);
+
+        $this->pay(900, [$file->id => 900]);
+        $this->writeOff(100, [$file->id => 100])->assertSessionHas('success');
+
+        $this->reprice($file, 960);
+
+        $said = $this->audit($file);
+
+        $this->assertStringContainsString('was given a discount of 100.00', $said);
+        $this->assertStringContainsString('only 60.00 of it settles anything now — the other 40.00 settles nothing', $said);
+    }
+
+    /**
+     * Never asked for more than the statement says.
+     *
+     * A discount that settles nothing still comes off the balance, so the
+     * files say 50 more is due than the customer owes. Until the office takes
+     * it back, Not Yet Collected — its rows, the dashboard tile that adds them
+     * up and the WhatsApp message made from them — asks for what the statement
+     * says, as the Collection List does. The file owed the shortest time gives
+     * up the difference, and the longest owed still says what it is.
+     */
+    public function test_not_yet_collected_never_asks_for_more_than_the_statement(): void
+    {
+        $older = $this->file(1000);
+        $paid = $this->file(1000, '2026-08-05');
+        $newer = $this->file(300, '2026-08-10');
+
+        $this->pay(950, [$paid->id => 950]);
+        $this->writeOff(50, [$paid->id => 50])->assertSessionHas('success');
+        $this->reprice($paid, 950);
+
+        $this->finish($older, 40);
+        $this->finish($newer, 5);
+
+        $this->assertSame([$older->id => 1000.0, $newer->id => 300.0], $this->owed(), 'the premise: the files say 1,300');
+        $this->assertEqualsWithDelta(1250, PartyLedgerModel::currentBalance($this->customer->id), 0.005, 'and the statement 1,250');
+
+        foreach (['finished', 'all'] as $show) {
+            $rows = collect($this->actingAs($this->admin)->getJson(route('report.uncollected', ['show' => $show]))
+                ->assertOk()->json('props.rows'))->where('customer_id', $this->customer->id)->keyBy('id');
+
+            $this->assertEquals(1000, $rows[$older->id]['outstanding'], "$show: the longest owed was cut");
+            $this->assertEquals(250, $rows[$newer->id]['outstanding'], "$show: asked for more than the statement says");
+            $this->assertSame('part paid', $rows[$newer->id]['part_paid']);
+        }
+
+        // The tile adds up the same rows.
+        $this->assertEqualsWithDelta(1250, WorkFileModel::uncollected()->where('customer_id', $this->customer->id)->sum('outstanding'), 0.005);
+
+        // And the Collection List says the same of the same customer.
+        $row = collect($this->actingAs($this->admin)->getJson(route('report.collection'))->assertOk()->json('props.rows'))
+            ->firstWhere('id', $this->customer->id);
+
+        $this->assertEquals(1250, $row['owes']);
+        $this->assertEquals(1250, $row['finished']);
+    }
+
+    /** Nor asked for anything when the statement says the office owes them. */
+    public function test_a_customer_the_office_owes_is_asked_for_nothing(): void
+    {
+        $small = $this->file(30);
+        $paid = $this->file(1000, '2026-08-05');
+
+        $this->pay(950, [$paid->id => 950]);
+        $this->writeOff(50, [$paid->id => 50])->assertSessionHas('success');
+        $this->reprice($paid, 950);
+        $this->finish($small, 10);
+
+        $this->assertSame([$small->id => 30.0], $this->owed(), 'the premise: the files say 30');
+        $this->assertEqualsWithDelta(-20, PartyLedgerModel::currentBalance($this->customer->id), 0.005, 'and the office owes 20');
+
+        $this->assertSame(0, WorkFileModel::uncollected($this->customer->id, true)->count());
     }
 
     /** Entered again after a reversal, a write-off comes back as one. */

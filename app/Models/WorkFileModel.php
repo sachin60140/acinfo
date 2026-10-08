@@ -1395,7 +1395,7 @@ class WorkFileModel extends Model
             ->get(['i.work_file_id', 't.name'])
             ->groupBy('work_file_id');
 
-        return $files->map(function ($file) use ($owed, $works) {
+        $rows = $files->map(function ($file) use ($owed, $works) {
             $outstanding = (float) ($owed[$file->customer_id][$file->id] ?? 0);
 
             /*
@@ -1436,6 +1436,43 @@ class WorkFileModel extends Model
         })
             // Longest owed first: the list is read to decide who to ring.
             ->sortByDesc('days')
+            ->values();
+
+        /*
+         * Never more than the statement says. A write-off that no longer
+         * settles its bill — returned, struck off, re-priced under it, or
+         * left nothing by a payment for the same bill — takes nothing from any
+         * file but still comes off the balance, so the files can say more is
+         * due than the customer owes; files:audit names it for the office to
+         * take back. Until then each customer's rows are cut to what their
+         * statement says, as the Collection List cuts what it asks for on
+         * finished work. The rows owed the shortest time give it up first, so
+         * the longest owed — the ones this list is read for — still say what
+         * the ledger says, and a row cut to nothing is not asked for at all.
+         * Found in the health check of 2026-10-07: the rows, the dashboard
+         * tile and the WhatsApp message made from them asked for 50 more than
+         * the statement and the Collection List did.
+         */
+        $balances = PartyLedgerModel::balancesFor($rows->pluck('customer_id')->unique()->values()->all());
+
+        $over = $rows->groupBy('customer_id')
+            ->map(fn ($mine, $customer) => round($mine->sum('outstanding') - ($balances[$customer] ?? 0), 2))
+            ->all();
+
+        return $rows->reverse()
+            ->map(function ($row) use (&$over) {
+                $cut = min($row['outstanding'], $over[$row['customer_id']]);
+
+                if ($cut > 0.005) {
+                    $over[$row['customer_id']] -= $cut;
+                    $row['outstanding'] = round($row['outstanding'] - $cut, 2);
+                    $row['part_paid'] = 'part paid';
+                }
+
+                return $row;
+            })
+            ->filter(fn ($row) => $row['outstanding'] > 0.005)
+            ->reverse()
             ->values();
     }
     /**
@@ -1903,6 +1940,14 @@ class WorkFileModel extends Model
      * one kind of thing.
      */
     public const DOC_DIR = 'uploads/documents';
+
+    /**
+     * The largest approval screenshot taken, in kilobytes — the unit the
+     * validator's max rule counts in. The edit screen is handed the same
+     * figure and checks it when a screenshot is picked, so it is said before
+     * the save rather than after it.
+     */
+    public const SCREENSHOT_MAX_KB = 4096;
 
     /**
      * Store an approval screenshot against this file, replacing any earlier one.
@@ -2668,6 +2713,47 @@ class WorkFileModel extends Model
     }
 
     /**
+     * Lock these folders for the rest of the transaction, before anything
+     * about them is read in it.
+     *
+     * Give to Vendor, Keep in-house, Papers Returned by Vendor and Return to
+     * Customer each read the ticked folders again inside their transaction, so
+     * a stale page cannot act on work that has moved since. Found in the health
+     * check of 2026-10-07: that read did not wait for a post of the same
+     * folders that was still saving — a double click. The second read them as
+     * they were, wrote what the first had just written, and so saw nothing
+     * change; then it rebuilt the vendor's lines from the old state and deleted
+     * the one the first had made. Both said they had worked, and the vendor's
+     * statement lost its credit for work they hold, or its reversal for work
+     * they handed back. Return to Customer, hit the same way, was a 500 on the
+     * ledger's unique key with the return already saved.
+     *
+     * Locked, the second waits for the first to finish, reads what it did, and
+     * is refused the way a stale page is.
+     *
+     * Taken alone and first, rather than by locking the re-read itself as Hand
+     * Over does. The first plain read in a transaction fixes what every later
+     * one sees, and the re-read asks about each folder's works as well, which
+     * its lock need not cover: locking folder by folder, it can read the works
+     * of one before it has waited for the next, and then sees that one as it
+     * was. Whether it does depends on how the database plans the query — on a
+     * MariaDB copy, a take-back of two folders posted a moment after a
+     * take-back of one of them still lost that one's reversal (found testing
+     * this fix). A lock on the folders alone reads nothing else, so everything
+     * after it is read once the wait is over. In id order, so two batches
+     * sharing folders queue for them the same way rather than each holding one
+     * the other wants.
+     */
+    public static function lockFolders(array $ids): void
+    {
+        self::query()
+            ->whereIn('id', array_map('intval', $ids))
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->pluck('id');
+    }
+
+    /**
      * Files currently out with a vendor and not yet returned — what the return
      * screen offers, and the same conditions are re-applied on save so a stale
      * page cannot return a file twice.
@@ -3164,8 +3250,8 @@ class WorkFileModel extends Model
 
     /**
      * A period's files, and how many wait on a price: counted once each, for
-     * the vendor cut's heading, whose rows count a shared folder under each
-     * holder of it.
+     * the headings of the vendor cut, whose rows count a shared folder under
+     * each holder of it, and of the work type cut, whose rows count works.
      *
      * @return array{files: int, unpriced: int}
      */
@@ -3285,9 +3371,11 @@ class WorkFileModel extends Model
      * what a transfer earned, because the folder carried one figure for all
      * three. Now each work carries its own.
      *
-     * Cancelled work is out — it charges nobody. So is a cancelled or returned
-     * file: a refund is agreed for the folder, and splitting it across the
-     * works on it would be inventing a precision nobody recorded.
+     * Cancelled work is out — it charges nobody — and so is a cancelled file.
+     * A returned file is kept off its works too: a refund is agreed for the
+     * folder, and splitting it across the works on it would be inventing a
+     * precision nobody recorded. It is on a line of its own instead; see
+     * returnedToCustomer().
      *
      * @return \Illuminate\Support\Collection<int, object>
      */
@@ -3357,10 +3445,72 @@ class WorkFileModel extends Model
             ->orderByRaw('billed desc')
             ->get();
 
+        $rows = $rows->when(
+            ($returned = self::returnedToCustomer($from, $to)) !== null,
+            fn ($all) => $all->push($returned)
+        );
+
         return self::withGivenUp($rows->when(
             ($counter = self::counterExpenses($from, $to)) !== null,
             fn ($all) => $all->push($counter)
         ), $from, $to, 'work_type');
+    }
+
+    /**
+     * The files returned to the customer, as a row of their own.
+     *
+     * Their refund is agreed for the folder, so no one work can carry it, and
+     * the works above leave them out. Left out of the cut altogether, which is
+     * what happened until a health check on 2026-10-07 found it, they took
+     * with them what the office kept of the charge and the vendor's rate that
+     * still stands on the vendor's statement — both of which every other cut
+     * counts — so the same period read lower here than on any other tab, with
+     * nothing on screen saying why. Their challans were on Counter expenses
+     * all along, so the tab did not even agree with itself.
+     *
+     * So they are a line, as counter expenses are, and the tab adds up to the
+     * same money as the others: billed is what was kept (EARNED), and cost is
+     * the vendor's rate that stands — SPENT less what was paid out over the
+     * counter, which is on that line already. Never awaiting a price: a
+     * returned file is settled; see OUTSTANDING.
+     */
+    private static function returnedToCustomer(?string $from, ?string $to): ?object
+    {
+        // Each file on its own, then added up, as profitBy() does each file.
+        $each = DB::table('work_file')
+            ->where('work_file.status', self::RETURNED)
+            ->selectRaw(self::EARNED.' as billed')
+            ->selectRaw('('.self::SPENT.') - '.self::PAID_OUT.' as cost')
+            ->selectRaw("(SELECT COUNT(*) FROM work_file_item AS rw
+                WHERE rw.work_file_id = work_file.id AND rw.status <> 'cancelled') as works");
+
+        self::betweenDates($each, $from, $to);
+
+        $returned = DB::query()
+            ->fromSub($each, 'each_file')
+            ->selectRaw('COUNT(*) as files')
+            ->selectRaw('COALESCE(SUM(works), 0) as works')
+            ->selectRaw('COALESCE(SUM(billed), 0) as billed')
+            ->selectRaw('COALESCE(SUM(cost), 0) as cost')
+            ->selectRaw('COALESCE(SUM(billed - cost), 0) as margin')
+            ->first();
+
+        if (! (int) $returned->files) {
+            return null;
+        }
+
+        return (object) [
+            // Apart from counter expenses (0) and the discounts (-1).
+            'group_key' => -2,
+            'group_label' => 'Returned to customer',
+            'note' => 'Kept after the refund, which is agreed for the file, so no one work carries it',
+            // Its works, as the rows above count theirs: taken in, and given back.
+            'files' => (int) $returned->works,
+            'billed' => (float) $returned->billed,
+            'cost' => (float) $returned->cost,
+            'margin' => (float) $returned->margin,
+            'unpriced' => 0,
+        ];
     }
 
     /**
@@ -3518,12 +3668,19 @@ class WorkFileModel extends Model
          * subqueries against the file, and inside an aggregate under a GROUP
          * BY that is something MySQL allows and MariaDB — the live server —
          * refuses ("work_file.id isn't in GROUP BY"). Found in review.
+         *
+         * What a file has cost is a cost whether or not every price on it is
+         * agreed, as the Profit report this chart opens counts it: only the
+         * margin waits. Found in a health check on 2026-10-07: zeroed with the
+         * margin, a rate already agreed on one of its works and on the
+         * vendor's statement, and a challan already paid, showed as nothing
+         * until the last price was in.
          */
         $each = DB::table('work_file')
             ->whereDate('received_date', '>=', $from->toDateString())
             ->selectRaw("DATE_FORMAT(received_date, '%Y-%m') as month")
             ->selectRaw("$earned as billed")
-            ->selectRaw("CASE WHEN $unsettled THEN 0 ELSE ($spent) END as cost")
+            ->selectRaw("$spent as cost")
             ->selectRaw("CASE WHEN $unsettled THEN 0 ELSE $earned - ($spent) END as margin");
 
         $rows = DB::query()
@@ -5243,6 +5400,24 @@ class WorkFileModel extends Model
             || str_starts_with($path, self::DOC_DIR.'/');
 
         return $ours && is_file(public_path($path));
+    }
+
+    /**
+     * Whether a stored approval is a PDF, said beside every link to one.
+     *
+     * The screens cannot tell for themselves. An approval is served through a
+     * route — /admin/file/{id}/approval/{item} — so the address they are handed
+     * has no extension, and the preview that looked for ".pdf" on the end drew
+     * every PDF as an image, which would not load, and then told the office the
+     * RTO's evidence had been removed from the server.
+     *
+     * The stored name does know. Its extension is guessed from the content when
+     * it is saved (see storeUpload and storeScreenshot), never taken from the
+     * browser, so this is the file's own word for what it is.
+     */
+    public static function isPdf(?string $path): bool
+    {
+        return is_string($path) && strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'pdf';
     }
 
     public static function workBreakdown(array $fileIds): array

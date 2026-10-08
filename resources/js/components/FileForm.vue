@@ -39,11 +39,27 @@ const props = defineProps({
     customers: { type: Array, default: () => [] },
     vendors: { type: Array, default: () => [] },
     values: { type: Object, default: () => ({}) },
+    /*
+     * What the file is priced at as stored: { customer_amount, vendor_amount }.
+     * A retyped price is compared with this rather than with values, which a
+     * save sent back fills with what was typed.
+     */
+    priced: { type: Object, default: null },
+    /*
+     * What a save sent back had typed, or null on a page drawn fresh. The form
+     * starts from it; see WorkFileController::typedEdit() for its shape.
+     */
+    typed: { type: Object, default: null },
+    // The largest PDF and approval screenshot the save takes, in kilobytes.
+    pdfMaxKb: { type: Number, default: 10240 },
+    screenshotMaxKb: { type: Number, default: 4096 },
     // Both date boxes arrive as server-rendered markup; see the template.
     receivedDateField: { type: String, default: '' },
     vendorDateField: { type: String, default: '' },
     refundPlaceholder: { type: String, default: '0.00' },
     screenshotUrl: { type: String, default: '' },
+    // Whether that is a PDF, which its address cannot say; see FilePreview.
+    screenshotIsPdf: { type: Boolean, default: false },
     // The works this file is for, each with its own price and approval.
     items: { type: Array, default: () => [] },
     alreadyPosted: { type: Object, default: () => ({}) },
@@ -116,6 +132,7 @@ const form = reactive({
     vendor_id: props.values.vendor_id ?? '',
     vendor_amount: props.values.vendor_amount ?? '',
     remarks: props.values.remarks ?? '',
+    in_house: Boolean(props.values.in_house),
 });
 
 /*
@@ -129,14 +146,53 @@ const form = reactive({
  */
 const multiWork = computed(() => props.items.length > 1);
 
+/*
+ * The in-house box of a folder of one work, among its own boxes.
+ *
+ * A folder of several works has it per work, in Works on This File. A folder
+ * of one had it nowhere, so one kept in-house by a wrong press on Give to
+ * Vendor could not be offered to a vendor again from any screen — found in the
+ * health check. It sits beside the vendor it is the other answer to, and only
+ * while there is none: work with a vendor is with them, and a vendor chosen in
+ * the box above is the answer being given instead.
+ */
+const soleWorkFree = computed(() => props.isEdit
+    && props.items.length === 1
+    && ! props.items[0].has_vendor
+    && ! form.vendor_id);
+
+/*
+ * A save sent back, and what it had typed.
+ *
+ * Found in the health check: a save refused for a PDF over the limit came back
+ * with only the boxes at the top as typed. The charge corrected on a second
+ * work, the work and the expense added and the reason for the price were read
+ * from the file again, and the next save said "updated successfully" without
+ * them. So everything below starts from what was typed when there is any —
+ * while a price is still compared with what is stored (props.items, priced),
+ * so a price typed and sent back is a price still moving, and asks its reason.
+ *
+ * An empty object on a page drawn fresh, so every row below starts from the
+ * file as it always did.
+ */
+const sentBack = props.typed ?? {};
+
 const works = reactive(
-    props.items.map((item) => ({
-        ...item,
-        customer_amount: item.customer_amount ?? '',
-        vendor_amount: item.vendor_amount ?? '',
-        // Whether the office already said this one is theirs.
-        in_house: Boolean(item.in_house),
-    }))
+    props.items.map((item) => {
+        const again = sentBack.items?.[item.id] ?? null;
+
+        return {
+            ...item,
+            // A work's type has no blank to choose, so a blank sent back is a
+            // type that did not post, and the work keeps its own.
+            work_type_id: again?.work_type_id || item.work_type_id,
+            customer_amount: (again ? again.customer_amount : item.customer_amount) ?? '',
+            vendor_amount: (again ? again.vendor_amount : item.vendor_amount) ?? '',
+            // Whether the office already said this one is theirs. Work with a
+            // vendor has no box to have typed in.
+            in_house: again && ! item.has_vendor ? Boolean(again.in_house) : Boolean(item.in_house),
+        };
+    })
 );
 
 /*
@@ -160,7 +216,17 @@ const moved = (was, now) => {
     return typed === '' || Math.abs(Number(was) - Number(typed)) > 0.005;
 };
 
-const priceRemark = ref('');
+const priceRemark = ref(sentBack.priceRemark ?? '');
+
+/*
+ * What the boxes at the top are compared with: the file as stored. Not
+ * props.values, which a save sent back fills with what was typed — a price
+ * compared with itself looks unchanged, so the box for its reason was not on
+ * the page, the reason typed in it was not sent again, and the next save was
+ * refused for the want of one. A page without it falls back to the values,
+ * which on a page drawn fresh are the same thing.
+ */
+const stored = props.priced ?? props.values;
 
 const priceChanges = computed(() => {
     const said = [];
@@ -182,11 +248,11 @@ const priceChanges = computed(() => {
             }
         });
     } else if (props.isEdit) {
-        if (moved(props.values.customer_amount, form.customer_amount)) {
+        if (moved(stored.customer_amount, form.customer_amount)) {
             said.push('the charge');
         }
 
-        if (moved(props.values.vendor_amount, form.vendor_amount)) {
+        if (moved(stored.vendor_amount, form.vendor_amount)) {
             said.push('the vendor rate');
         }
     }
@@ -197,9 +263,11 @@ const priceChanges = computed(() => {
 /*
  * A refusal coming back from the server.
  *
- * The screen is filled from what was typed, so by then the price on it and the
- * price it is being compared against are the same figure and nothing looks
- * changed. Without this the box the refusal asks for would not be on the page.
+ * The screen is filled from what was typed, so on a page not told what is
+ * stored the price on it and the price it is compared against are the same
+ * figure and nothing looks changed. Without this the box the refusal asks for
+ * would not be on the page. Kept as the server's word for it even where the
+ * page is told: it is the server that refuses.
  */
 const serverAsked = computed(() => Boolean(props.errors.price_remark));
 
@@ -299,8 +367,14 @@ const worksCost = computed(() =>
  * These are rows on a form until the file is saved, so one added by mistake is
  * simply taken off again. A work that has been saved is struck off on the
  * board, where cancelling asks why and keeps the record.
+ *
+ * A save sent back brings its rows back with it.
  */
-const newWorks = reactive([]);
+const newWorks = reactive((sentBack.newWorks ?? []).map((work) => ({
+    work_type_id: work.work_type_id ?? '',
+    amount: work.amount ?? '',
+    vendor_amount: work.vendor_amount ?? '',
+})));
 
 // One vehicle has one transfer: a work already on the file, or already being
 // added on another line, is not offered again.
@@ -318,6 +392,10 @@ function worksLeftFor(index) {
     return props.workTypes.filter((type) => ! taken.has(String(type.id)));
 }
 
+// An approved work has a date and a document behind it, recording something
+// that happened at the RTO. Striking it off is cancelling, on the board.
+const canRemove = (work) => work.status !== props.approvedKey;
+
 /*
  * Work being taken off the file.
  *
@@ -328,12 +406,13 @@ function worksLeftFor(index) {
  * Marked rather than removed from the page: the row stays, struck through, with
  * a way back — a row that vanished on a click would take its charge off the
  * total with nothing to undo and nothing left to say what had gone.
+ *
+ * Marked again after a save sent back — only work still on this page, and
+ * still free to come off, or the mark would have no button to undo it.
  */
-const removing = reactive(new Set());
-
-// An approved work has a date and a document behind it, recording something
-// that happened at the RTO. Striking it off is cancelling, on the board.
-const canRemove = (work) => work.status !== props.approvedKey;
+const removing = reactive(new Set(
+    (sentBack.removeWorks ?? []).filter((id) => works.some((work) => work.id === id && canRemove(work)))
+));
 
 const going = (work) => removing.has(work.id);
 
@@ -356,10 +435,23 @@ const keeping = computed(() => works.filter((work) => ! going(work)));
  * goes to nobody this application keeps a ledger for. It raises what the file
  * cost, which is the whole reason it is recorded: every margin shown before
  * this existed was too high by exactly the amount nobody was tracking.
+ *
+ * A save sent back brings back each row as it was typed: a correction against
+ * the row it was made on, the lines being added, and the ones marked to come
+ * off — only those still on this page.
  */
-const paid = reactive(props.expenses.map((one) => ({ ...one })));
-const newPaid = reactive([]);
-const droppedPaid = reactive(new Set());
+const paid = reactive(props.expenses.map((one) => ({ ...one, ...(sentBack.expenses?.[one.id] ?? {}) })));
+
+const newPaid = reactive((sentBack.newExpenses ?? []).map((one) => ({
+    expense_type_id: one.expense_type_id ?? '',
+    amount: one.amount ?? '',
+    spent_on: one.spent_on ?? '',
+    remark: one.remark ?? '',
+})));
+
+const droppedPaid = reactive(new Set(
+    (sentBack.removeExpenses ?? []).filter((id) => props.expenses.some((one) => one.id === id))
+));
 
 const typeAmount = (id) =>
     props.expenseTypes.find((type) => String(type.id) === String(id))?.amount ?? '';
@@ -407,11 +499,61 @@ function dropExpense(one) {
  * meant choosing all five again; a row can simply be removed, and its file goes
  * with it.
  */
-const droppedDocs = reactive(new Set());
+const droppedDocs = reactive(new Set(
+    (sentBack.removeDocuments ?? []).filter((id) => props.documents.some((doc) => doc.id === id))
+));
 
-let docKey = 0;
-const blankDoc = () => ({ key: docKey++, title: '', chosen: '' });
-const newDocs = reactive([blankDoc()]);
+/*
+ * The names of the documents already here, held by the page.
+ *
+ * A box bound only to the name it was drawn with is written back to that name
+ * whenever its section redraws — Vue sets an input's value on every render,
+ * changed or not (see the note on the date boxes in the template). So a name
+ * typed into one was undone by picking a PDF in the row below it. Held here it
+ * stays as typed, and a save sent back puts back the names it carried.
+ */
+const docNames = reactive(Object.fromEntries(
+    props.documents.map((doc) => [doc.id, sentBack.documentNames?.[doc.id] ?? doc.name])
+));
+
+/*
+ * A row a save sent back: the name typed for it, under the key it was posted
+ * with, so a refusal naming documents.3.file is said on the row it was about.
+ * The PDF itself cannot come back — no browser lets a page put a file into a
+ * file box — so the row asks for it again.
+ */
+const returnedDocs = sentBack.newDocuments ?? [];
+
+let docKey = returnedDocs.reduce((next, row) => Math.max(next, row.key + 1), 0);
+const blankDoc = () => ({ key: docKey++, title: '', chosen: '', again: false, tooLarge: '' });
+const newDocs = reactive([
+    ...returnedDocs.map((row) => ({ key: row.key, title: row.title, chosen: '', again: true, tooLarge: '' })),
+    blankDoc(),
+]);
+
+/*
+ * A file larger than the save takes, said when it is picked.
+ *
+ * Found in the health check: a scan over 10 MB was refused only after it had
+ * been uploaded, by a save that came back without the rest of what was typed.
+ * The figures are the server's own, counted as its validator counts them, so
+ * the page turns away exactly what the save would and nothing it would take.
+ * Rounded up, so a file a shade over the limit never reads as the limit itself.
+ */
+const MB = 1024 * 1024;
+
+const megabytes = (bytes) => `${Math.ceil((bytes / MB) * 10) / 10} MB`;
+
+function tooLarge(file, maxKb, what) {
+    if (! file || file.size <= maxKb * 1024) {
+        return '';
+    }
+
+    return `${file.name} is ${megabytes(file.size)}. ${what} must be ${megabytes(maxKb * 1024)} or smaller.`;
+}
+
+// What the server said about a row it sent back, on that row.
+const docRefusal = (row) => props.errors[`documents.${row.key}.file`] ?? '';
 
 /** A starting point for the name, from the file: "Form-34.pdf" reads "Form 34". */
 function suggestName(filename) {
@@ -420,6 +562,17 @@ function suggestName(filename) {
 
 function onDocPicked(row, event) {
     const file = event.target.files && event.target.files[0];
+
+    // Let go of at once, so the save does not carry it up only for it to be
+    // refused — and nothing is made of it: no name, no spare row.
+    row.tooLarge = tooLarge(file, props.pdfMaxKb, 'Each PDF');
+
+    if (row.tooLarge) {
+        event.target.value = '';
+        row.chosen = '';
+
+        return;
+    }
 
     row.chosen = file ? file.name : '';
 
@@ -466,6 +619,26 @@ const addingDocs = computed(() => newDocs.filter((row) => row.chosen).length);
 
 // A row with a file and no name is refused on save; said here first, in place.
 const unnamedDocs = computed(() => newDocs.filter((row) => row.chosen && ! row.title.trim()).length);
+
+// A row sent back with its name and still waiting for its PDF, which holds the
+// section open: a name with no file is refused too.
+const awaitingPdf = computed(() => newDocs.filter((row) => row.again && ! row.chosen).length);
+
+/*
+ * The approval screenshot, checked the same way when it is picked. Its box is
+ * off the page unless the file is being approved; see the template.
+ */
+const shotTooLarge = ref('');
+
+function onShotPicked(event) {
+    const file = event.target.files && event.target.files[0];
+
+    shotTooLarge.value = tooLarge(file, props.screenshotMaxKb, 'An approval screenshot');
+
+    if (shotTooLarge.value) {
+        event.target.value = '';
+    }
+}
 
 function dropDoc(doc) {
     droppedDocs.has(doc.id) ? droppedDocs.delete(doc.id) : droppedDocs.add(doc.id);
@@ -567,6 +740,35 @@ const statusHint = computed(() => {
     }
 
     return '';
+});
+
+/*
+ * What the in-house box of a folder of one work does, said beside it.
+ *
+ * Found in review: the box is on every folder of one work with no vendor,
+ * finished or not, and a folder kept in-house usually ends up approved from
+ * In-house Work. Its hint still said the folder was listed there and would be
+ * offered to a vendor again if unticked. Neither list holds finished work —
+ * WorkFileModel::inHouseWork() and ::canBeGivenOut() both pass over approved,
+ * returned and cancelled — so an operator who believed it unticked the box,
+ * found nothing on Give to Vendor, and had wiped the day the work was kept.
+ *
+ * Read from the status in the box above rather than the one stored, because
+ * that is the status the save writes through to the work: a folder approved
+ * on this save leaves In-house Work with it, and one reopened comes back.
+ */
+const soleWorkHint = computed(() => {
+    if (settled.value) {
+        return form.in_house
+            ? 'Recorded as work the office kept for itself. A finished file is on neither In-house Work '
+                + 'nor Give to Vendor, so unticking it only takes that record off.'
+            : 'A finished file is on neither In-house Work nor Give to Vendor, ticked or not. '
+                + 'Tick it only to record that the office kept the work for itself.';
+    }
+
+    return form.in_house
+        ? 'Kept off Give to Vendor and listed on In-house Work. Untick it to offer the file to a vendor again.'
+        : 'Tick it if the office is doing this work, so Give to Vendor stops offering the file.';
 });
 
 const charged = computed(() => Number(form.customer_amount) || 0);
@@ -818,20 +1020,22 @@ onMounted(() => {
                                 type="file"
                                 name="approval_screenshot"
                                 class="ui-input wf-file"
-                                :class="{ 'ui-input--invalid': errors.approval_screenshot }"
-                                accept="image/*,application/pdf">
+                                :class="{ 'ui-input--invalid': errors.approval_screenshot || shotTooLarge }"
+                                accept="image/*,application/pdf"
+                                @change="onShotPicked">
                             <div v-if="screenshotUrl" class="ui-hint">
                                 <i class="bi bi-paperclip"></i>
                                 <a
                                     :href="screenshotUrl"
                                     class="ui-link"
-                                    @click.prevent="preview = { src: screenshotUrl, title: 'Approval screenshot' }">Screenshot on file</a>
+                                    @click.prevent="preview = { src: screenshotUrl, title: 'Approval screenshot', pdf: screenshotIsPdf }">Screenshot on file</a>
                                 &mdash; choose a file only if you want to replace it.
                             </div>
                             <div v-else class="ui-hint">
-                                Required to mark this file approved. JPG, PNG, WEBP or PDF, up to 4&nbsp;MB.
+                                Required to mark this file approved. JPG, PNG, WEBP or PDF, up to {{ megabytes(screenshotMaxKb * 1024) }}.
                             </div>
-                            <div v-if="errors.approval_screenshot" class="ui-hint ui-hint--error">
+                            <div v-if="shotTooLarge" class="ui-hint ui-hint--error">{{ shotTooLarge }}</div>
+                            <div v-else-if="errors.approval_screenshot" class="ui-hint ui-hint--error">
                                 {{ errors.approval_screenshot }}
                             </div>
                         </div>
@@ -1056,6 +1260,18 @@ onMounted(() => {
                             </div>
                         </div>
 
+                        <!-- The hidden nought first: an unticked box posts
+                             nothing, and nothing is also what a page without
+                             the box sends, which must leave the mark alone. -->
+                        <div v-if="soleWorkFree" class="ui-field wf-full">
+                            <input type="hidden" name="in_house" value="0">
+                            <label class="wf-works__keep">
+                                <input type="checkbox" name="in_house" value="1" v-model="form.in_house">
+                                <span>In-house &mdash; the office is doing this work itself</span>
+                            </label>
+                            <div class="ui-hint">{{ soleWorkHint }}</div>
+                        </div>
+
                         <div class="ui-field wf-full wf-section">
                             <label class="ui-label" for="remarks">Remarks</label>
                             <textarea
@@ -1186,7 +1402,7 @@ onMounted(() => {
                                             v-if="work.screenshot_url"
                                             :href="work.screenshot_url"
                                             class="ui-link"
-                                            @click.prevent="preview = { src: work.screenshot_url, title: (work.work_type || 'Work') + ' — approval' }">
+                                            @click.prevent="preview = { src: work.screenshot_url, title: (work.work_type || 'Work') + ' — approval', pdf: work.screenshot_is_pdf }">
                                             <i class="bi bi-paperclip"></i> View
                                         </a>
                                         <span v-else class="ui-hint">&mdash;</span>
@@ -1413,7 +1629,7 @@ onMounted(() => {
                 hint="PDFs for this file. The customer can download every one, under the name you give it here."
                 :summary="docsSummary"
                 :open="documents.length > 0"
-                :force-open="unnamedDocs > 0 || errorIn('documents', 'document_names', 'remove_documents')"
+                :force-open="unnamedDocs > 0 || awaitingPdf > 0 || errorIn('documents', 'document_names', 'remove_documents')"
                 remember="file.documents">
                 <div class="wf-docs">
 
@@ -1426,10 +1642,10 @@ onMounted(() => {
                                  for removal, so a document on its way out is not
                                  renamed on the way. -->
                             <input
+                                v-model="docNames[doc.id]"
                                 type="text"
                                 class="ui-input wf-docs__title"
                                 :name="`document_names[${doc.id}]`"
-                                :value="doc.name"
                                 maxlength="120"
                                 :disabled="droppedDocs.has(doc.id)"
                                 :aria-label="`Name of the document uploaded as ${doc.arrived}`">
@@ -1482,6 +1698,15 @@ onMounted(() => {
                                 <i class="bi bi-x-lg"></i>
                             </button>
                             <span v-else class="wf-docs__spacer" aria-hidden="true"></span>
+
+                            <!-- Said on the row it is about, under both boxes. -->
+                            <div v-if="row.tooLarge" class="ui-hint ui-hint--error wf-docs__note">
+                                {{ row.tooLarge }} Choose a smaller scan.
+                            </div>
+                            <div v-else-if="row.again && ! row.chosen" class="ui-hint ui-hint--error wf-docs__note">
+                                <template v-if="docRefusal(row)">{{ docRefusal(row) }} </template>
+                                Choose the PDF again — a page cannot hold on to a file when its save is refused.
+                            </div>
                         </div>
 
                         <span v-if="unnamedDocs" class="ui-hint wf-docs__warn">
@@ -1761,7 +1986,7 @@ onMounted(() => {
             </template>
         </aside>
 
-        <FilePreview :src="preview?.src" :title="preview?.title" @close="preview = null" />
+        <FilePreview :src="preview?.src" :title="preview?.title" :pdf="preview?.pdf" @close="preview = null" />
     </div>
 </template>
 
@@ -2489,6 +2714,12 @@ onMounted(() => {
 
 .wf-docs__title.is-invalid {
     border-color: var(--cr-600);
+}
+
+/* What is wrong with a row, across the whole of it rather than squeezed into
+   one column beside the boxes. */
+.wf-docs__note {
+    grid-column: 1 / -1;
 }
 
 .wf-docs__warn {

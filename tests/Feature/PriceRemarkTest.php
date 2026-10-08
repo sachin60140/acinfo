@@ -301,10 +301,8 @@ class PriceRemarkTest extends TestCase
         $latest = WorkFileModel::latestCustomerUpdates([$file->id])[$file->id]['remark'] ?? '';
         $this->assertStringNotContainsString('Vendor put the rate up', (string) $latest);
 
-        $session = ['customer_id' => $this->customer->id];
-
         foreach ([route('customer.file', $file->id), route('customer.files'), route('customer.statement')] as $url) {
-            $body = $this->withSession($session)->get($url)->assertOk()->getContent();
+            $body = $this->actingAsCustomer($this->customer)->get($url)->assertOk()->getContent();
 
             $this->assertStringNotContainsString('Vendor put the rate up', $body, "$url shows the office's reason");
         }

@@ -498,7 +498,7 @@ class SetOffTest extends TestCase
 
         $this->setOff(3000, [$mine->id => 3000], [$work->id => 3000]);
 
-        $body = $this->withSession(['customer_id' => $this->customer->id])
+        $body = $this->actingAsCustomer($this->customer)
             ->getJson(route('customer.statement'))
             ->assertOk()
             ->getContent();

@@ -41,7 +41,11 @@ function onSubLink(event, column, row) {
 
     event.preventDefault();
 
-    preview.value = { src: row[column.subLinkTo], title: row[column.sub] };
+    preview.value = {
+        src: row[column.subLinkTo],
+        title: row[column.sub],
+        pdf: Boolean(column.subPdf && row[column.subPdf]),
+    };
 }
 
 import {
@@ -69,7 +73,7 @@ const emit = defineEmits(['action']);
 const props = defineProps({
     /*
      * { key, label, type, sortable, exportable, searchable, hidden, width,
-     *   sub, note, subLinkTo, class, linkTo, newTab, sortBy, exportOnly }
+     *   sub, note, subLinkTo, subPdf, class, linkTo, newTab, sortBy, exportOnly }
      *
      * type: text | money | balance | count | badge | link
      * sortBy   sort this column on another field's value — a date shown as
@@ -83,6 +87,10 @@ const props = defineProps({
      *          the list instead of replacing it. Only for something a viewer can
      *          show: a page opened this way lands in a frame with none of its own
      *          navigation, which is how a party statement came to be unreadable
+     * subPdf   the field of the row saying its sub link's document is a PDF, so
+     *          subPreview gives it the browser's viewer. Said by the server,
+     *          because the address cannot: an approval is served by a route,
+     *          with no extension on it to read
      * exportOnly  kept out of the table but written to every export. For detail
      *          a spreadsheet can sort and filter and a screen has no room for:
      *          the works on a file, which are summarised in a cell here and
@@ -991,7 +999,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
             </button>
         </div>
 
-        <FilePreview :src="preview?.src" :title="preview?.title" @close="preview = null" />
+        <FilePreview :src="preview?.src" :title="preview?.title" :pdf="preview?.pdf" @close="preview = null" />
     </div>
 </template>
 
