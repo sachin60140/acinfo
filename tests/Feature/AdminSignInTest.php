@@ -88,6 +88,7 @@ class AdminSignInTest extends TestCase
      * Nobody is signed out by this check arriving. A session signed in before
      * the office pages began checking has no password noted in it; the first
      * office page it opens notes the one the account has, and it carries on.
+     * The sign-in page, which checks too, steps aside for it as before.
      */
     public function test_a_session_from_before_the_check_carries_on(): void
     {
@@ -99,6 +100,15 @@ class AdminSignInTest extends TestCase
 
         $this->nextPage();
         $this->get('admin/files')->assertOk();
+
+        $this->flushSession();
+        $this->nextPage();
+        $this->withSession([Auth::guard()->getName() => $user->id])
+            ->get('/admin')
+            ->assertRedirect('admin/dashboard');
+
+        $this->nextPage();
+        $this->get('admin/dashboard')->assertOk();
     }
 
     public function test_the_wrong_password_does_not(): void

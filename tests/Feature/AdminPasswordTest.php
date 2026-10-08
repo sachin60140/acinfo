@@ -3,11 +3,13 @@
 namespace Tests\Feature;
 
 use App\Http\Middleware\AdminMiddleware;
+use App\Http\Middleware\AdminSessionMiddleware;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
-use Illuminate\Session\Middleware\AuthenticateSession;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /**
@@ -97,6 +99,19 @@ class AdminPasswordTest extends TestCase
     private function nextPage(): void
     {
         $this->app['auth']->forgetGuards();
+    }
+
+    /**
+     * A browser coming back with its session cookie and nothing else. The
+     * session is read from wherever sessions are kept, as on the server,
+     * rather than handed over from the last request by the test client: only
+     * for a test that keeps them in the sessions table, which is where a
+     * session can be ended from outside it.
+     */
+    private function comeBackWith(string $session): void
+    {
+        $this->anotherDevice();
+        $this->withCookie(config('session.cookie'), $session);
     }
 
     public function test_an_admin_can_change_their_own_password(): void
@@ -260,10 +275,9 @@ class AdminPasswordTest extends TestCase
 
         /*
          * Nor by way of the sign-in page, which is where a phone's bookmark
-         * most likely points. That page asks only whether anybody is signed
-         * in. A cookie still naming the account would have signed the phone in
-         * there, and the office pages, finding a session with no password
-         * noted in it yet, would have taken the one there is now.
+         * most likely points, and which signs a browser in from its cookie by
+         * itself, then sends it on to the dashboard. The cookie names nobody
+         * now, whichever page reads it.
          */
         $this->anotherDevice();
         $this->withCookie($this->recaller(), $phone->getValue())
@@ -302,6 +316,144 @@ class AdminPasswordTest extends TestCase
         $this->signIn($user, 'a-brand-new-one')->assertRedirect('admin/dashboard');
         $this->nextPage();
         $this->get('admin/dashboard')->assertOk();
+    }
+
+    /*
+     * The check compares the password a session noted against the account's,
+     * and a session with none noted yet is taken on trust: it notes the one
+     * the account has when it next asks. After a change that is the new one.
+     * So a session has to have its password noted from the moment it is
+     * signed in, not from the first office page it happens to open; and a
+     * session signed in before the check went live, which noted nothing, has
+     * to be ended by the change rather than checked.
+     */
+
+    /**
+     * Signed in, and sent on to the dashboard it never opened: a browser
+     * closed straight after, or somebody keeping a session warm on the old
+     * password on purpose.
+     */
+    public function test_a_browser_that_signed_in_and_went_no_further_is_signed_out_too(): void
+    {
+        $user = $this->admin();
+
+        $this->signIn($user, self::PASSWORD)->assertRedirect('admin/dashboard');
+        $elsewhere = $this->app['session']->all();
+
+        // The office PC changes the password.
+        $this->anotherDevice();
+        $this->signIn($user, self::PASSWORD);
+        $this->post(route('adminpassword'), $this->newPassword())->assertRedirect('admin/dashboard');
+
+        $this->anotherDevice();
+        $this->withSession($elsewhere)->get('admin/dashboard')->assertRedirect(url('/admin'));
+
+        $this->assertGuest();
+    }
+
+    /**
+     * The same for a phone the sign-in page let in on its Remember me cookie.
+     * That page starts a session from the cookie and sends the phone on to the
+     * dashboard; the phone may never get there.
+     */
+    public function test_a_phone_the_sign_in_page_let_in_is_signed_out_too(): void
+    {
+        $user = $this->admin();
+
+        $cookie = $this->signIn($user, self::PASSWORD, remember: true)->getCookie($this->recaller());
+
+        // A day later, the browser closed and opened again on the sign-in page.
+        $this->anotherDevice();
+        $this->withCookie($this->recaller(), $cookie->getValue())
+            ->get('/admin')
+            ->assertRedirect('admin/dashboard');
+        $phone = $this->app['session']->all();
+
+        // The office PC changes the password.
+        $this->anotherDevice();
+        $this->signIn($user, self::PASSWORD);
+        $this->post(route('adminpassword'), $this->newPassword())->assertRedirect('admin/dashboard');
+
+        // The phone's next page, with the session the sign-in page started and
+        // the cookie, as a browser sends them.
+        $this->anotherDevice();
+        $this->withSession($phone)
+            ->withCookie($this->recaller(), $cookie->getValue())
+            ->get('admin/dashboard')
+            ->assertRedirect(url('/admin'));
+
+        $this->assertGuest();
+    }
+
+    /**
+     * A browser signed in before the check went live, and kept in use since:
+     * its session holds who signed in and no password, so it would note the new
+     * one at its next click. The change ends it outright instead, with every
+     * other session the account has in the sessions table, which is where the
+     * server keeps them.
+     */
+    public function test_a_session_from_before_the_check_is_ended_by_the_change(): void
+    {
+        // As on the server. The tests otherwise keep sessions in memory, where
+        // one browser's session cannot be reached from another's request.
+        config(['session.driver' => 'database']);
+
+        $user = $this->admin();
+
+        // The phone's session, as one written before this went live.
+        $phone = Str::random(40);
+        DB::table(config('session.table'))->insert([
+            'id' => $phone,
+            'user_id' => $user->id,
+            'payload' => base64_encode(serialize([Auth::guard()->getName() => $user->id])),
+            'last_activity' => now()->getTimestamp(),
+        ]);
+
+        // The office PC signs in and changes the password, sending its session
+        // cookie back each time, as a browser does.
+        $pc = $this->signIn($user, self::PASSWORD)->getCookie(config('session.cookie'))->getValue();
+        $this->comeBackWith($pc);
+        $pc = $this->post(route('adminpassword'), $this->newPassword())
+            ->assertRedirect('admin/dashboard')
+            ->getCookie(config('session.cookie'))
+            ->getValue();
+
+        // The phone's next click.
+        $this->comeBackWith($phone);
+        $this->get('admin/dashboard')->assertRedirect(url('/admin'));
+        $this->assertGuest();
+
+        // The PC's session is not one of the others.
+        $this->comeBackWith($pc);
+        $this->get('admin/dashboard')->assertOk();
+    }
+
+    /**
+     * A password changed before this went live signed nobody out, and gave the
+     * account no new token: a phone's Remember me cookie from before that
+     * change still names the account. It also carries the password it was
+     * issued under, and the sign-in page reads that now as the office pages
+     * do, rather than signing the phone in and sending it on.
+     */
+    public function test_a_cookie_from_before_an_earlier_change_is_turned_away_at_the_sign_in_page(): void
+    {
+        $user = $this->admin();
+
+        $phone = $this->signIn($user, self::PASSWORD, remember: true)->getCookie($this->recaller());
+
+        // Changed the way it was before this: a new password, the same token.
+        $user->password = Hash::make('changed-before-this');
+        $user->save();
+
+        $this->anotherDevice();
+        $this->withCookie($this->recaller(), $phone->getValue())
+            ->get('/admin')
+            ->assertRedirect(url('/admin'));
+
+        $this->assertGuest();
+
+        $this->nextPage();
+        $this->get('admin/dashboard')->assertRedirect(url('/admin'));
     }
 
     /**
@@ -381,7 +533,7 @@ class AdminPasswordTest extends TestCase
         $this->assertGreaterThan(50, $office->count());
 
         foreach ($office as [$uri, $middleware]) {
-            $this->assertContains(AuthenticateSession::class, $middleware, $uri);
+            $this->assertContains(AdminSessionMiddleware::class, $middleware, $uri);
         }
     }
 

@@ -1,12 +1,12 @@
 <?php
 
 use App\Http\Middleware\AdminMiddleware;
+use App\Http\Middleware\AdminSessionMiddleware;
 use App\Http\Middleware\CustomerAuthMiddleware;
 use App\Http\Middleware\UserAuthMiddleware;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
-use Illuminate\Session\Middleware\AuthenticateSession;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -36,20 +36,24 @@ return Application::configure(basePath: dirname(__DIR__))
             // the note in CustomerAuthMiddleware for why it is not userAuth
             // with a party id put into it.
             'customerAuth' => CustomerAuthMiddleware::class,
+
+            // The office's password check on its own, for the sign-in page
+            // and the sign-in, which are not office pages (routes/web.php).
+            'adminSession' => AdminSessionMiddleware::class,
         ]);
 
         /*
          * The office's gate, on every office page.
          *
          * AdminMiddleware lets in only a signed-in office account.
-         * AuthenticateSession (Laravel's auth.session) checks that the password
-         * the session, or the Remember me cookie, was signed in with is still
-         * the account's password, and signs that browser out if it is not. It
-         * is what makes changing the password reach every other browser:
-         * without it one left open on the old password kept going for as long
-         * as somebody kept clicking.
+         * AdminSessionMiddleware (Laravel's auth.session, and one thing more)
+         * checks that the password the session, or the Remember me cookie, was
+         * signed in with is still the account's password, and signs that
+         * browser out if it is not. It is what makes changing the password
+         * reach every other browser: without it one left open on the old
+         * password kept going for as long as somebody kept clicking.
          *
-         * Laravel runs AuthenticateSession first, whatever the order here: its
+         * Laravel runs the password check first, whatever the order here: its
          * own list of what runs before what puts it ahead of AdminMiddleware.
          * That changes nothing. It waves a guest through untouched, for
          * AdminMiddleware to send to the sign-in page as before.
@@ -60,10 +64,10 @@ return Application::configure(basePath: dirname(__DIR__))
          */
         $middleware->group('admin', [
             AdminMiddleware::class,
-            AuthenticateSession::class,
+            AdminSessionMiddleware::class,
         ]);
 
-        // Where AuthenticateSession sends a browser it has signed out: the
+        // Where the password check sends a browser it has signed out: the
         // office sign-in page. Without this Laravel looks for a page named
         // 'login', which there is not, and the signed-out browser gets an
         // error page instead. Nothing else here uses Laravel's own sign-in

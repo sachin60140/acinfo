@@ -619,18 +619,40 @@ class AuthController extends Controller
              * a new one leaves every cookie issued before it pointing at
              * nothing: a phone that ticked Remember me was otherwise good for
              * another 400 days. A browser with a session still open is caught
-             * by the auth.session check on the office pages (bootstrap/app.php),
+             * by the password check on the office pages (AdminSessionMiddleware),
              * which compares the password it signed in with against this one.
              *
-             * That check reads the password in the cookie too, but it cannot
-             * stand in for the new token. It runs on the office pages only. The
-             * sign-in page asks just whether anybody is signed in, so it would
-             * take the old cookie, start a session from it and send the phone
-             * on to the dashboard; and a session that new has no password noted
-             * yet, so the check would note the current one and let it in.
+             * That check reads the password in the cookie too, on the sign-in
+             * page as well as the office pages, so where it runs it would turn
+             * the old cookie away by itself. The new token does not depend on
+             * where it runs. Any page that asks who is signed in will sign a
+             * browser in from its cookie, and a page added later outside the
+             * office group would not check what password the cookie carries.
              */
             $user->setRememberToken(Str::random(60));
             $user->save();
+
+            /*
+             * And every other session the account has is ended outright, where
+             * sessions are kept in the database: Laravel's default, and what
+             * .env.example sets. The check catches a session that noted the old
+             * password. A session signed in before the check went live noted
+             * none, and would note the new one at its next click and carry on,
+             * for as long as somebody kept clicking. Each session's row says
+             * whose it is, so the other browsers are found without waiting for
+             * them to ask.
+             *
+             * Kept anywhere else, they cannot be found from here. Such a
+             * session lasts until two hours (SESSION_LIFETIME) go by without a
+             * click.
+             */
+            if (config('session.driver') === 'database') {
+                DB::connection(config('session.connection'))
+                    ->table(config('session.table'))
+                    ->where('user_id', $user->id)
+                    ->where('id', '!=', $req->session()->getId())
+                    ->delete();
+            }
 
             /*
              * Except this one. Signed in again, which is also a new session id
@@ -638,8 +660,8 @@ class AuthController extends Controller
              * ticked Remember me, it is handed a new cookie with the new token.
              * Its old one went with everybody else's, and would have signed it
              * out too the next time its session ran out. The password noted in
-             * its session is brought up to date by the auth.session check
-             * itself, on the way out of this request.
+             * its session is brought up to date by the password check itself,
+             * on the way out of this request.
              */
             Auth::login($user, $req->hasCookie(Auth::guard()->getRecallerName()));
 
