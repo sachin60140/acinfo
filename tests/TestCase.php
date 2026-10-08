@@ -4,10 +4,35 @@ namespace Tests;
 
 use App\Models\PartyModel;
 use App\Models\WorkTypeModel;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 
 abstract class TestCase extends BaseTestCase
 {
+    /**
+     * actingAs() as a sign-in, as far as the office pages can tell.
+     *
+     * Every office page checks that the password the session was signed in
+     * with is still the account's (AdminSessionMiddleware, in the 'admin' group
+     * in bootstrap/app.php). A real sign-in notes the password of whoever
+     * signed in, and a session with none noted notes it on the first office
+     * page it opens. actingAs() signs nobody in or out, though, and within one
+     * test the session lasts from request to request, so a test that acted as
+     * one admin and then another (a fresh admin for each request is common
+     * here) had the second turned away, carrying the first one's password. The
+     * note is let go of here, for the next office page to note the password of
+     * whoever this is, as a sign-in would.
+     *
+     * The tests of that check itself sign in through the sign-in page instead
+     * (AdminPasswordTest, AdminSignInTest), and are not touched by this.
+     */
+    public function be(Authenticatable $user, $guard = null)
+    {
+        $this->app['session']->forget('password_hash_'.$this->app['auth']->getDefaultDriver());
+
+        return parent::be($user, $guard);
+    }
+
     /**
      * The reference rows a work file cannot be built without.
      *

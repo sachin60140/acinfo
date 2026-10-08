@@ -203,8 +203,9 @@ class HandOverTest extends TestCase
     }
 
     /**
-     * And the work-type report — the one that leaves returned files out — still
-     * counts it. A handover recorded as a ₹0 return would have dropped it.
+     * And the work-type report — the one that keeps returned files off their
+     * works — still counts it under its work. A handover recorded as a ₹0
+     * return would have moved it to the Returned to customer line.
      */
     public function test_the_work_type_report_still_counts_it(): void
     {
