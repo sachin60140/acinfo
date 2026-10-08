@@ -578,7 +578,7 @@ class WorkFileController extends Controller
                 if ($before = self::receivedBefore($req)) {
                     return $before['same']
                         ? ['files' => $before['files'], 'again' => true]
-                        : ['refused' => 'This page already received '.implode(', ', array_map(fn ($file) => $file->file_no, $before['files']))
+                        : ['used' => true, 'refused' => 'This page already received '.implode(', ', array_map(fn ($file) => $file->file_no, $before['files']))
                             .', so nothing was saved this time. What you typed is below: check it, and press Receive Files again to take it in as new files.'];
                 }
 
@@ -678,6 +678,25 @@ class WorkFileController extends Controller
             });
 
             if (isset($outcome['refused'])) {
+                /*
+                 * Sent back without its "take it in anyway" ticks when the
+                 * refusal is that this page already received a batch. A tick
+                 * was given for the files open when the box was ticked; put
+                 * back here, it would also cover the file this same page has
+                 * just opened, and the next press would open the envelope a
+                 * second time with nobody having been asked. Found in review:
+                 * every clash, that one included, is ticked again on purpose.
+                 */
+                if (! empty($outcome['used'])) {
+                    $input = $req->except('_token');
+
+                    foreach (array_keys($input['rows'] ?? []) as $index) {
+                        unset($input['rows'][$index]['duplicate_ok']);
+                    }
+
+                    return back()->withInput($input)->with('error', $outcome['refused']);
+                }
+
                 return back()->withInput()->with('error', $outcome['refused']);
             }
 
@@ -719,6 +738,13 @@ class WorkFileController extends Controller
                     'work_type_id' => $work['work_type_id'] ?? '',
                     'amount' => $work['amount'] ?? '',
                 ])->values(),
+                /*
+                 * And its "take it in anyway" tick. Found in the health check:
+                 * left behind, a batch sent back for something else came back
+                 * without it, and the next save was refused for a tick on a box
+                 * the page no longer showed. Read as the save reads it.
+                 */
+                'duplicate_ok' => filter_var($row['duplicate_ok'] ?? false, FILTER_VALIDATE_BOOLEAN),
             ])->values(),
         ];
 
