@@ -309,4 +309,44 @@ class ReceiveDuplicateTest extends TestCase
 
         $this->assertSame(2, $this->filesFor($this->plate));
     }
+
+    /**
+     * But not on a page that already received its batch. Found in review: the
+     * tick put back there also covered the file that page had just opened, so
+     * Back, a corrected amount and two presses opened the same envelope twice
+     * without anyone being asked about it.
+     */
+    public function test_a_page_that_already_received_its_batch_comes_back_without_its_ticks(): void
+    {
+        $this->existing($this->tr);
+
+        $page = fn (array $rows, string $once) => $this->actingAs($this->admin)->post(route('workfile.receive'), [
+            'received_date' => now()->toDateString(),
+            'customer_id' => $this->customer->id,
+            'once' => $once,
+            'rows' => $rows,
+        ]);
+
+        $page([$this->row($this->tr, null, true)], 'page-one')->assertSessionMissing('error');
+        $this->assertSame(2, $this->filesFor($this->plate));
+
+        // Back, the amount corrected, and pressed again on the same page.
+        $corrected = $this->row($this->tr, null, true);
+        $corrected['works'][0]['amount'] = '6000';
+
+        $page([$corrected], 'page-one')
+            ->assertSessionHas('error', fn ($message) => str_contains($message, 'already received'));
+
+        $rows = $this->actingAs($this->admin)->getJson(route('workfile.receive'))->json('props.oldRows');
+
+        $this->assertFalse($rows[0]['duplicate_ok'] ?? null, 'the tick came back on a page that already received');
+
+        // Pressed again as it came back: asked again, naming both open files.
+        $corrected['duplicate_ok'] = $rows[0]['duplicate_ok'] ? '1' : null;
+
+        $page(array_map(fn ($row) => array_filter($row, fn ($value) => $value !== null), [$corrected]), 'page-two')
+            ->assertSessionHas('error', fn ($message) => str_contains($message, 'already open'));
+
+        $this->assertSame(2, $this->filesFor($this->plate), 'the envelope was opened a second time');
+    }
 }
