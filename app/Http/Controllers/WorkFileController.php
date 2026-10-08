@@ -1452,8 +1452,9 @@ class WorkFileController extends Controller
             ]);
 
             $amounts = $req->input('amounts', []);
+            $ticked = WorkFileModel::whereIn('id', $req->input('files'))->get();
 
-            $overRefunded = WorkFileModel::whereIn('id', $req->input('files'))->get()
+            $overRefunded = $ticked
                 ->filter(function ($file) use ($amounts) {
                     $amount = $amounts[$file->id] ?? null;
 
@@ -1466,6 +1467,29 @@ class WorkFileController extends Controller
                 return back()->withInput()->with(
                     'error',
                     'A refund cannot exceed what the customer was charged. Check: '.$overRefunded->implode(', ')
+                );
+            }
+
+            /*
+             * Nor can papers go back before they came in.
+             *
+             * The refund is dated the day they went back and the charge the
+             * day they came in, and the ledger reads a file's refund against
+             * that file's charges before it. Found in the health check: a file
+             * received on the 20th and returned "on the 2nd" had a refund that
+             * found nothing on its own file, went on account and paid off the
+             * customer's oldest other bill — so Not Yet Collected chased the
+             * file the customer had taken back, and called the unpaid one
+             * settled. The same day is fine: the charge was written first.
+             */
+            $tooEarly = $ticked
+                ->filter(fn ($file) => $req->returned_on < $file->received_date)
+                ->map(fn ($file) => $file->file_no.' (received '.date('d-m-Y', strtotime($file->received_date)).')');
+
+            if ($tooEarly->isNotEmpty()) {
+                return back()->withInput()->with(
+                    'error',
+                    'Papers cannot go back to the customer before they came in. Check: '.$tooEarly->implode(', ')
                 );
             }
 
@@ -2003,9 +2027,25 @@ class WorkFileController extends Controller
              */
             $refused = [];
 
+            /*
+             * Or work coming back before it went out.
+             *
+             * The vendor's side of the customer's rule; see customerReturn().
+             * Their reversal is dated the day it came back and their credit
+             * the day it went out, and their statement reads a file's reversal
+             * against that file's credits before it: dated earlier, it found
+             * nothing on its file and paid off their oldest other bill. Each
+             * work against its own day — two given a week apart cannot come
+             * back between them — and an older folder against its own. Where
+             * no day was written the credit is dated the day the papers came
+             * in, and so is this.
+             */
+            $early = [];
+
             foreach (WorkFileModel::withVendor(array_keys($picks)) as $file) {
                 $held = $file->heldByVendor();
                 $taking = self::takingFrom($picks[$file->id], $held);
+                $older = WorkFileModel::isOlderFolder($file->items);
 
                 /*
                  * Before the migration has run, a part is kept on the folder,
@@ -2014,7 +2054,7 @@ class WorkFileController extends Controller
                  * all of theirs reversed (found in review). Refused, rather.
                  */
                 $partKept = WorkFileItemModel::partReversals()
-                    || WorkFileModel::isOlderFolder($file->items)
+                    || $older
                     || ! array_diff_key($held, $taking);
 
                 foreach ($taking as $vendorId => $works) {
@@ -2028,6 +2068,14 @@ class WorkFileController extends Controller
                     } elseif ($typed !== null && (float) $typed > (float) $file->bookedFor($vendorId, $works)) {
                         $refused[] = $name;
                     }
+
+                    $given = $older
+                        ? ($file->vendor_date ?: $file->received_date)
+                        : $works->map(fn ($work) => $work->vendor_date ?: $file->received_date)->max();
+
+                    if ($req->returned_on < $given) {
+                        $early[] = $name.' given '.date('d-m-Y', strtotime($given));
+                    }
                 }
             }
 
@@ -2035,6 +2083,13 @@ class WorkFileController extends Controller
                 return back()->withInput()->with(
                     'error',
                     'A reversal cannot exceed what was booked to the vendor. Check: '.implode(', ', $refused)
+                );
+            }
+
+            if ($early) {
+                return back()->withInput()->with(
+                    'error',
+                    'Papers cannot come back from a vendor before they were given. Check: '.implode(', ', $early)
                 );
             }
 
@@ -2487,6 +2542,26 @@ class WorkFileController extends Controller
                 return back()->withInput()->with(
                     'error',
                     'Papers go back a whole file at a time. Use Return to Customer for: '.$partReturn->implode(', ')
+                );
+            }
+
+            /*
+             * Nor before they came in. A return made here is dated today, or
+             * the day it was first made where it is being put back (see
+             * WorkFileModel::booted) — and a file received after that would
+             * have its refund pay off another bill; see customerReturn().
+             */
+            $notIn = $items
+                ->filter(fn ($item) => $wanted[$item->id] === WorkFileModel::RETURNED
+                    && $item->status !== WorkFileModel::RETURNED
+                    && ($item->file->returned_on ?: now()->toDateString()) < $item->file->received_date)
+                ->map(fn ($item) => $item->file->file_no.' (received '.date('d-m-Y', strtotime($item->file->received_date)).')')
+                ->unique();
+
+            if ($notIn->isNotEmpty()) {
+                return back()->withInput()->with(
+                    'error',
+                    'Papers cannot go back to the customer before they came in. Check the received date of: '.$notIn->implode(', ')
                 );
             }
 
@@ -3128,6 +3203,71 @@ class WorkFileController extends Controller
                 && ! $req->hasFile('approval_screenshot')
                 && ! $file->approval_screenshot) {
                 return back()->withInput()->with('error', 'Approval Done needs a screenshot of the approval. Attach one and save again.');
+            }
+
+            /*
+             * Nor can papers have come in after they went back.
+             *
+             * Moving the received date past the return moves the customer's
+             * charge past its refund, and the refund then pays off another of
+             * their bills; see customerReturn(). The return date is the one
+             * the saving hook will leave: the file's own, or today's for a
+             * return made here.
+             *
+             * Asked when this save moves the received date or makes the
+             * return, not of every save. A file dated that way before this
+             * check — most likely a mistyped return date, which no screen can
+             * correct — is named by files:audit; refusing every save of it
+             * until somebody typed a received date they knew was wrong would
+             * only make it worse.
+             */
+            $returnedOn = $req->status === WorkFileModel::RETURNED
+                ? ($file->returned_on ?: now()->toDateString())
+                : null;
+
+            if ($returnedOn
+                && $req->received_date > $returnedOn
+                && ($req->received_date !== $file->received_date || ! $file->isReturned())) {
+                $on = date('d-m-Y', strtotime($returnedOn));
+
+                return back()->withInput()->withErrors([
+                    'received_date' => 'Not after '.$on.', the day this file was returned to the customer.',
+                ])->with('error', 'Returned to the customer on '.$on.', this file cannot have been received after that. Check the received date.');
+            }
+
+            /*
+             * And the vendor's side of it: work cannot have gone out after it
+             * came back.
+             *
+             * The Given On box re-dates the works that carried the folder's
+             * old day (see below), and the vendor's credit is dated from them.
+             * Moved past a take-back, the credit lands after its reversal, and
+             * their statement reads the reversal as money on account instead
+             * of against this file; see vendorReturn(). Asked only when the
+             * day changes, for the same vendor — a new vendor is refused above
+             * wherever anything came back — and only of the works it would
+             * move: one given on another day keeps its own.
+             */
+            if ($req->filled('vendor_id') && $req->filled('vendor_date')
+                && (int) $req->vendor_id === (int) $file->vendor_id
+                && $req->vendor_date !== $file->vendor_date) {
+                // Asked fresh, not of $file->items: loaded here, the works this
+                // save goes on to change would be read as they were.
+                $backOn = WorkFileModel::isOlderFolder($file->items()->get())
+                    ? $file->vendor_returned_on
+                    : $file->items()
+                        ->where('status', '<>', WorkFileModel::CANCELLED)
+                        ->where('vendor_id', $file->vendor_id)
+                        ->where(fn ($q) => $q->where('vendor_date', $file->vendor_date)->orWhereNull('vendor_date'))
+                        ->min('vendor_returned_on');
+
+                if ($backOn && $req->vendor_date > $backOn) {
+                    $on = date('d-m-Y', strtotime($backOn));
+
+                    return back()->withInput()->withErrors([
+                        'vendor_date' => 'Not after '.$on.', the day the work came back from the vendor.',
+                    ])->with('error', 'Work on this file came back from its vendor on '.$on.', so it cannot have been given after that. Check the Given On date.');
+                }
             }
 
             // The works not approved before this save, to tell which it
