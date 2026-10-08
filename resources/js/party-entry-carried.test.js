@@ -113,3 +113,30 @@ describe('entering a carried balance again', () => {
         expect(corrects(host)).toBe(null);
     });
 });
+
+/*
+ * Found in review: what Correct filled in lasted one page, and the right
+ * customer, if they had not been made, was added by leaving it — losing which
+ * old client it came from. The screen says what it is entering again, to leave
+ * its Particulars, and how to add the customer without losing it.
+ */
+describe('what the screen says of it', () => {
+    const note = (host) => [...host.querySelectorAll('.ui-note')].find((n) => n.textContent.includes('old Client Ledger'));
+    const said = (host) => note(host)?.textContent.replace(/\s+/g, ' ');
+
+    it('names the line, says to leave its Particulars, and how to add the right customer', async () => {
+        const host = mount({ corrects: '41' });
+        await nextTick();
+
+        expect(said(host)).toContain('Entering again entry #41, a balance carried from the old Client Ledger');
+        expect(said(host)).toContain('Leave its Particulars as they are');
+        expect(said(host)).toContain('add them in another tab, then reload this page');
+    });
+
+    it('and says nothing of the kind on an ordinary entry', async () => {
+        const host = mount({ particular: 'Typed by hand' });
+        await nextTick();
+
+        expect(note(host)).toBeUndefined();
+    });
+});

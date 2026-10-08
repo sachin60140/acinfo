@@ -7,6 +7,7 @@ use App\Models\PartyModel;
 use App\Models\WorkFileModel;
 use App\Support\Screen;
 use App\Support\WhatsApp;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
@@ -499,15 +500,13 @@ class PartyController extends Controller
                  * instead of from the old book's own charges; see
                  * PartyModel::dues(). It goes with it now — read from that
                  * line, never from the form, and only from one that was carried
-                 * and has been taken back, onto a customer's line that still
-                 * says where it was brought from, which is all dues() looks for.
+                 * and has been taken back and not yet entered again, onto a
+                 * customer's line that still says where it was brought from,
+                 * which is all dues() looks for. See carriedToEnterAgain().
                  */
-                $from = (int) $req->input('corrects');
-
-                if ($from && $type === 'customer' && PartyLedgerModel::reversible()
-                    && $entry->particular === CloseClientLedgerController::BROUGHT
-                    && PartyLedgerModel::where('reverses_id', $from)->exists()) {
-                    $entry->note = PartyLedgerModel::whereKey($from)->where('particular', CloseClientLedgerController::BROUGHT)->value('note');
+                if ($type === 'customer' && $entry->particular === CloseClientLedgerController::BROUGHT
+                    && ($from = self::carriedToEnterAgain((int) $req->input('corrects')))) {
+                    $entry->note = $from->note;
                 }
 
                 // Who typed it in, from the day it could be recorded.
@@ -523,7 +522,7 @@ class PartyController extends Controller
                 return $entry;
             });
 
-            $saved = back()->with('success', ucfirst($entry->entry_type).' entry saved successfully. Transaction ID: '.$entry->id);
+            $saved = self::savedBack($type)->with('success', ucfirst($entry->entry_type).' entry saved successfully. Transaction ID: '.$entry->id);
 
             /*
              * Money in from a customer: offer them a receipt on WhatsApp.
@@ -566,6 +565,30 @@ class PartyController extends Controller
             $defaultEntryType = self::paymentSide($type);
         }
 
+        /*
+         * A balance carried from the old Client Ledger, being entered again:
+         * Correct opens this screen at its own address, ?corrects= and the
+         * line taken back. Found in review: what Correct fills in lasts one
+         * page, so a reload, or a trip to Customers to add the right one —
+         * who must be on the list to be picked — lost which old client it came
+         * from, and no screen could find it again. Opened at that address the
+         * screen is filled in again from the line itself, as Correct filled it,
+         * until it has been entered again; see carriedToEnterAgain(). What a
+         * refused save or a Correct brings back still wins.
+         */
+        $carried = $type === 'customer' ? self::carriedToEnterAgain($req->integer('corrects')) : null;
+        $again = [];
+
+        if ($carried && ! $req->session()->hasOldInput()) {
+            $prefill = $prefill ?: (int) $carried->party_id;
+            $defaultEntryType = $carried->entry_type;
+            $again = [
+                'txn_date' => date('Y-m-d', strtotime($carried->txn_date)),
+                'amount' => (string) (float) $carried->amount,
+                'particular' => CloseClientLedgerController::BROUGHT,
+            ];
+        }
+
         $props = [
             'action' => route('party.entry', $type),
             'csrf' => csrf_token(),
@@ -591,7 +614,7 @@ class PartyController extends Controller
             // everywhere is the whole reason it exists.
             'dateField' => view('partials._datefield', [
                 'name' => 'txn_date',
-                'value' => old('txn_date', date('Y-m-d')),
+                'value' => old('txn_date', $again['txn_date'] ?? date('Y-m-d')),
                 'required' => true,
             ])->render(),
             // What Reset puts back, which is what the page loaded with —
@@ -599,15 +622,16 @@ class PartyController extends Controller
             'initial' => [
                 'party_id' => (string) old('party_id', $prefill),
                 'entry_type' => old('entry_type', $defaultEntryType),
-                'amount' => (string) old('amount'),
+                'amount' => (string) old('amount', $again['amount'] ?? null),
                 'payment_mode' => (string) old('payment_mode'),
                 'ref_no' => (string) old('ref_no'),
-                'particular' => (string) old('particular'),
+                'particular' => (string) old('particular', $again['particular'] ?? null),
                 'entry_kind' => (string) old('entry_kind'),
                 'reason' => (string) old('reason'),
                 // A carried balance being entered again on Correct: posted back
-                // as it came, for the server to read its client from.
-                'corrects' => (string) old('corrects'),
+                // as it came, for the server to read its client from — and
+                // kept at its address, see above.
+                'corrects' => (string) old('corrects', $carried?->id),
             ],
 
             /*
@@ -651,6 +675,51 @@ class PartyController extends Controller
     private static function paymentSide(string $type): string
     {
         return $type === 'customer' ? 'credit' : 'debit';
+    }
+
+    /**
+     * A balance carried from the old Client Ledger that Correct has taken back
+     * and that has not been entered again yet: the line taken back, or null.
+     *
+     * Its note says which client it came from. The line typed again takes the
+     * note from here, never from the form, so the Collection List still dates
+     * the debt from the old book's own charges; see PartyModel::dues(). Once a
+     * line still standing says the same, it has been entered again and is
+     * neither filled in nor lent again: found in review, the Entry screen
+     * could be opened at its address again after it was saved; see entry().
+     */
+    private static function carriedToEnterAgain(int $id): ?PartyLedgerModel
+    {
+        if ($id <= 0 || ! PartyLedgerModel::reversible()) {
+            return null;
+        }
+
+        $line = PartyLedgerModel::whereKey($id)->where('particular', CloseClientLedgerController::BROUGHT)->first();
+
+        if (! $line || trim((string) $line->note) === '' || ! PartyLedgerModel::where('reverses_id', $line->id)->exists()) {
+            return null;
+        }
+
+        $enteredAgain = PartyLedgerModel::where('particular', CloseClientLedgerController::BROUGHT)
+            ->where('note', $line->note)
+            ->whereKeyNot($line->id)
+            ->whereNotIn('id', PartyLedgerModel::whereNotNull('reverses_id')->select('reverses_id'))
+            ->exists();
+
+        return $enteredAgain ? null : $line;
+    }
+
+    /**
+     * Back to the Entry screen after a save — but not to a carried balance's
+     * own address, which would fill it in again as if it were still to be
+     * entered: saved under other Particulars, written off or set off, it reads
+     * as not entered yet, and could be saved twice. See entry().
+     */
+    private static function savedBack(string $type): RedirectResponse
+    {
+        parse_str((string) parse_url(url()->previous(), PHP_URL_QUERY), $came);
+
+        return isset($came['corrects']) ? redirect()->route('party.entry', $type) : back();
     }
 
     /**
@@ -835,7 +904,7 @@ class PartyController extends Controller
 
         $money = number_format($amount, 2, '.', ',');
 
-        return back()
+        return self::savedBack($type)
             ->with('success', 'Set off '.$money.': '.$customer->name.' owes '.$money.' less as a customer, and is owed '
                 .$money.' less as a vendor. Entry #'.$customerHalf->id.' on the customer, #'.$vendorHalf->id.' on the vendor.')
             /*
@@ -1684,11 +1753,19 @@ class PartyController extends Controller
              * the Receivable tile no longer held it. Correct reverses it and
              * opens the Entry screen with it, for the right customer or the
              * right amount, and with which client it came from; see entry().
+             *
+             * The Entry screen picks only a customer already on the list, and
+             * found in review, nothing said so: one carried to the wrong
+             * customer, because the right one had not been made, was taken
+             * back first and the right one added after, by leaving the screen.
+             * Said here, and in the statement's Change dialog, before anything
+             * is pressed.
              */
             if ($entry->particular === CloseClientLedgerController::BROUGHT && ! $req->boolean('correct')) {
                 throw ValidationException::withMessages([
                     'reason' => 'Entry #'.$entry->id.' is a balance carried from the old Client Ledger, which now shows it as carried. '
-                        .'Reversed on its own it would be in neither book. Use Reverse and enter it again, and type it for the right customer or amount.',
+                        .'Reversed on its own it would be in neither book. Use Reverse and enter it again, and type it for the right customer or amount. '
+                        .'If the right customer is not on the Customers list yet, add them first: the Entry screen can pick only a customer already on it.',
                 ]);
             }
 
@@ -1813,7 +1890,16 @@ class PartyController extends Controller
              */
             $setOff = $partner !== null;
 
-            return $told(redirect()->route('party.entry', $type))
+            /*
+             * A balance carried from the old Client Ledger, at its own address
+             * on the Entry screen: reloaded there, it is filled in again from
+             * the line, with which client it came from. Found in review: what
+             * is carried below lasts one page. Only one that says which client
+             * it came from: there is nothing else to keep. See entry().
+             */
+            $carried = self::carriedToEnterAgain((int) $entry->id) !== null;
+
+            return $told(redirect()->route('party.entry', $carried ? ['type' => $type, 'corrects' => $entry->id] : $type))
                 ->withInput([
                     'party_id' => (string) $entry->party_id,
                     'entry_type' => $entry->entry_type,
@@ -1841,7 +1927,7 @@ class PartyController extends Controller
                      * came from. Only its number goes in the form; entry()
                      * reads the client from the line itself.
                      */
-                    'corrects' => $entry->particular === CloseClientLedgerController::BROUGHT ? (string) $entry->id : '',
+                    'corrects' => $carried ? (string) $entry->id : '',
                 ])
                 ->with('success', $setOff
                     ? 'Set-off entries #'.$entry->id.' and #'.$partner->id.' have been reversed, on both accounts. Enter it again correctly below.'

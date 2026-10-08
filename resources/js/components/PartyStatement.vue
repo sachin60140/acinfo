@@ -208,11 +208,16 @@ const blocked = computed(() => reason.value.trim() === '');
 
                         <!-- Reversed on its own a carried balance would be in
                              neither book; the server refuses it. Said here,
-                             before anything is pressed. -->
+                             before anything is pressed. And found in review:
+                             the Entry screen picks only a customer already on
+                             the list, so one carried to the wrong customer
+                             because the right one had not been made was taken
+                             back first, and the screen left to add them. -->
                         <p v-if="entry.carried" class="ui-note ui-note--info">
                             This balance was carried from the old Client Ledger, which now shows it as carried. Reversed
                             on its own it would be in neither book, so it is taken back only to be entered again — for
-                            the right customer, or the right amount.
+                            the right customer, or the right amount. If the right customer is not on the Customers list
+                            yet, add them first: the Entry screen can pick only a customer already on it.
                         </p>
 
                         <div class="ui-field">

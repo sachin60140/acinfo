@@ -267,6 +267,25 @@ describe('a balance carried from the old Client Ledger', () => {
         expect(dialog().textContent).toContain('neither book');
     });
 
+    /*
+     * Found in review: carried to the wrong customer because the right one had
+     * not been made, it was taken back first and the Entry screen left to add
+     * them — losing which old client it came from. The Entry screen picks only
+     * a customer already on the list, and that is said before anything is
+     * pressed.
+     */
+    it('says to add the right customer first, if they are not on the list yet', async () => {
+        const host = mount([carried()]);
+
+        changeButtons(host)[0].click();
+        await nextTick();
+
+        const text = dialog().textContent.replace(/\s+/g, ' ');
+
+        expect(text).toContain('If the right customer is not on the Customers list yet, add them first');
+        expect(text).toContain('can pick only a customer already on it');
+    });
+
     it('and an ordinary entry keeps both, saying nothing of it', async () => {
         const host = mount([row(23, { carried: false })]);
 

@@ -360,6 +360,9 @@ class CloseClientLedgerTest extends TestCase
             ->assertSessionHasErrors('reason');
 
         $this->assertStringContainsString('Reverse and enter it again', session('errors')->first('reason'));
+        // Found in review: the Entry screen picks only a customer already on
+        // the list, and nothing said to add the right one before pressing it.
+        $this->assertStringContainsString('not on the Customers list yet, add them first', session('errors')->first('reason'));
         $this->assertFalse(PartyLedgerModel::where('reverses_id', $line->id)->exists());
         $this->assertEqualsWithDelta(2500, PartyLedgerModel::currentBalance($customer->id), 0.001);
         $this->assertSame(0.0, $this->oldBalance($client), 'the old book was changed');
@@ -381,7 +384,7 @@ class CloseClientLedgerTest extends TestCase
         $line = $this->brought($wrong);
 
         $this->takeBack($line, true)
-            ->assertRedirect(route('party.entry', 'customer'))
+            ->assertRedirect(route('party.entry', ['type' => 'customer', 'corrects' => $line->id]))
             ->assertSessionHasNoErrors();
 
         $initial = $this->actingAs($this->admin)->getJson(route('party.entry', 'customer'))->json('props.initial');
@@ -459,6 +462,116 @@ class CloseClientLedgerTest extends TestCase
 
         // Only a line's number is ever posted.
         $post($other, CloseClientLedgerController::BROUGHT, 'client #'.$client->id)->assertSessionHasErrors('corrects');
+    }
+
+    /**
+     * Carried to the wrong customer because the right one had not been made:
+     * taken back with Correct, and the Entry screen left to add them, or
+     * reloaded. Found in review: what Correct filled in lasted one page, so
+     * which old client it came from was lost on the way back, and the debt
+     * read as owed since the day it was typed again. Correct opens the screen
+     * at the carried line's own address, and there it is filled in again from
+     * the line — until it has been entered, and only once.
+     */
+    public function test_a_carried_balance_taken_back_outlasts_leaving_the_entry_screen(): void
+    {
+        $client = $this->client('Left Screen Client', -2500);
+        $wrong = $this->customer('Left Screen Wrong');
+        $this->carry($client, (string) $wrong->id)->assertSessionHasNoErrors();
+        $line = $this->brought($wrong);
+        $address = route('party.entry', ['type' => 'customer', 'corrects' => $line->id]);
+
+        $this->takeBack($line, true)->assertRedirect($address);
+
+        // Away to add the right customer: what Correct filled in is spent.
+        $this->actingAs($this->admin)->get(route('party.create', 'customer'))->assertOk();
+        $right = $this->customer('Left Screen Right');
+        $this->assertSame('', $this->actingAs($this->admin)->getJson(route('party.entry', 'customer'))->json('props.initial.corrects'));
+
+        // Back at its address, it is filled in again as Correct filled it.
+        $initial = $this->actingAs($this->admin)->getJson($address)->assertOk()->json('props.initial');
+
+        $this->assertSame((string) $line->id, $initial['corrects']);
+        $this->assertSame(CloseClientLedgerController::BROUGHT, $initial['particular']);
+        $this->assertSame('2500', $initial['amount']);
+        $this->assertSame('debit', $initial['entry_type']);
+        $this->assertSame((string) $wrong->id, $initial['party_id']);
+
+        $this->actingAs($this->admin)->from($address)->post(route('party.entry', 'customer'), [
+            'party_id' => $right->id,
+            'entry_type' => $initial['entry_type'],
+            'txn_date' => now()->toDateString(),
+            'amount' => $initial['amount'],
+            'particular' => $initial['particular'],
+            'corrects' => $initial['corrects'],
+        ])->assertSessionHasNoErrors()->assertRedirect(route('party.entry', 'customer'));
+
+        $this->assertSame($line->note, $this->brought($right)->note);
+        $this->assertSame('01-05-2026', $this->collectionRow($right)['since'], 'dated from the day it was typed again');
+
+        // Entered: its address fills in nothing more, and lends its client to no other line.
+        $initial = $this->actingAs($this->admin)->getJson($address)->json('props.initial');
+
+        $this->assertSame('', $initial['corrects']);
+        $this->assertSame('', $initial['particular']);
+        $this->assertSame('', $initial['amount']);
+
+        $other = $this->customer('Left Screen Other');
+
+        $this->actingAs($this->admin)->from($address)->post(route('party.entry', 'customer'), [
+            'party_id' => $other->id,
+            'entry_type' => 'debit',
+            'txn_date' => now()->toDateString(),
+            'amount' => '2500',
+            'particular' => CloseClientLedgerController::BROUGHT,
+            'corrects' => (string) $line->id,
+        ])->assertSessionHasNoErrors();
+
+        $this->assertNull($this->brought($other)->note, 'lent its client a second time');
+    }
+
+    /**
+     * Saved from a carried balance's address under other Particulars, it was
+     * not entered again as carried, and the address would fill it in again:
+     * the screen comes back without it, or it could be saved twice. A line not
+     * carried, or not taken back, fills in nothing there.
+     */
+    public function test_the_entry_screen_does_not_come_back_filled_in_with_it(): void
+    {
+        $client = $this->client('Other Words Client', -1200);
+        $customer = $this->customer('Other Words Customer');
+        $this->carry($client, (string) $customer->id)->assertSessionHasNoErrors();
+        $line = $this->brought($customer);
+        $address = route('party.entry', ['type' => 'customer', 'corrects' => $line->id]);
+
+        // Still standing: nothing to enter again.
+        $this->assertSame('', $this->actingAs($this->admin)->getJson($address)->json('props.initial.corrects'));
+
+        $this->takeBack($line, true)->assertRedirect($address);
+
+        $this->actingAs($this->admin)->from($address)->post(route('party.entry', 'customer'), [
+            'party_id' => $customer->id,
+            'entry_type' => 'debit',
+            'txn_date' => now()->toDateString(),
+            'amount' => '1200',
+            'particular' => 'Old balance',
+            'corrects' => (string) $line->id,
+        ])->assertSessionHasNoErrors()->assertRedirect(route('party.entry', 'customer'));
+
+        // An ordinary line's address is no carried balance's.
+        $typed = PartyLedgerModel::where('party_id', $customer->id)->where('particular', 'Old balance')->value('id');
+        $this->assertSame('', $this->actingAs($this->admin)->getJson(route('party.entry', ['type' => 'customer', 'corrects' => $typed]))
+            ->json('props.initial.corrects'));
+
+        // Any other save there still goes back where it came from.
+        $this->actingAs($this->admin)->from(route('party.entry', ['type' => 'customer', 'party_id' => $customer->id]))
+            ->post(route('party.entry', 'customer'), [
+                'party_id' => $customer->id,
+                'entry_type' => 'debit',
+                'txn_date' => now()->toDateString(),
+                'amount' => '10',
+                'particular' => 'Typed by hand',
+            ])->assertRedirect(route('party.entry', ['type' => 'customer', 'party_id' => $customer->id]));
     }
 
     /** The statement's Change dialog is told the line was carried, and says so before anything is pressed. */
