@@ -141,6 +141,65 @@ describe('a folder of one work', () => {
     });
 });
 
+/*
+ * Finished, which is where every folder kept in-house ends up.
+ *
+ * Found in review: the hint still said a finished folder was listed on In-house
+ * Work and would be offered to a vendor again if unticked. Neither list holds
+ * finished work, so an operator who believed it unticked the box, found nothing
+ * on Give to Vendor, and had wiped the day the work was kept.
+ */
+describe('a finished folder of one work', () => {
+    const hint = (host) => box(host).closest('.ui-field').querySelector('.ui-hint').textContent;
+
+    const finished = (status, inHouse = true) => mount({
+        values: { status, in_house: inHouse },
+        items: [{ ...ONE_WORK, status, in_house: inHouse }],
+    });
+
+    it.each(['approval_done', 'paper_returned', 'cancelled'])('does not promise either list when %s', (status) => {
+        const host = finished(status);
+
+        expect(hint(host)).not.toContain('listed on In-house Work');
+        expect(hint(host)).not.toContain('offer the file to a vendor again');
+        expect(hint(host)).toContain('only takes that record off');
+        // Still the box it was, posting what it says.
+        expect(posted(host)).toEqual(['0', '1']);
+    });
+
+    it('does not say ticking it takes the file off Give to Vendor', () => {
+        const host = finished('approval_done', false);
+
+        expect(hint(host)).not.toContain('Give to Vendor stops offering the file');
+        expect(hint(host)).toContain('Tick it only to record');
+    });
+
+    /*
+     * The status in the box above is the one the save writes to the work, so
+     * the hint follows it: approved here, the folder leaves In-house Work on
+     * this save; reopened, it comes back.
+     */
+    it('follows the status being saved', async () => {
+        const host = mount();
+        const status = host.querySelector('select[name="status"]');
+
+        expect(hint(host)).toContain('listed on In-house Work');
+
+        status.value = 'approval_done';
+        status.dispatchEvent(new Event('change'));
+        await nextTick();
+
+        expect(hint(host)).not.toContain('listed on In-house Work');
+        expect(hint(host)).toContain('only takes that record off');
+
+        status.value = 'in_office';
+        status.dispatchEvent(new Event('change'));
+        await nextTick();
+
+        expect(hint(host)).toContain('listed on In-house Work');
+    });
+});
+
 describe('elsewhere', () => {
     // Several works say it per work, in their own table.
     it('is not among the boxes of a folder of several works', () => {

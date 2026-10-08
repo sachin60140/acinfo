@@ -740,6 +740,35 @@ const statusHint = computed(() => {
     return '';
 });
 
+/*
+ * What the in-house box of a folder of one work does, said beside it.
+ *
+ * Found in review: the box is on every folder of one work with no vendor,
+ * finished or not, and a folder kept in-house usually ends up approved from
+ * In-house Work. Its hint still said the folder was listed there and would be
+ * offered to a vendor again if unticked. Neither list holds finished work —
+ * WorkFileModel::inHouseWork() and ::canBeGivenOut() both pass over approved,
+ * returned and cancelled — so an operator who believed it unticked the box,
+ * found nothing on Give to Vendor, and had wiped the day the work was kept.
+ *
+ * Read from the status in the box above rather than the one stored, because
+ * that is the status the save writes through to the work: a folder approved
+ * on this save leaves In-house Work with it, and one reopened comes back.
+ */
+const soleWorkHint = computed(() => {
+    if (settled.value) {
+        return form.in_house
+            ? 'Recorded as work the office kept for itself. A finished file is on neither In-house Work '
+                + 'nor Give to Vendor, so unticking it only takes that record off.'
+            : 'A finished file is on neither In-house Work nor Give to Vendor, ticked or not. '
+                + 'Tick it only to record that the office kept the work for itself.';
+    }
+
+    return form.in_house
+        ? 'Kept off Give to Vendor and listed on In-house Work. Untick it to offer the file to a vendor again.'
+        : 'Tick it if the office is doing this work, so Give to Vendor stops offering the file.';
+});
+
 const charged = computed(() => Number(form.customer_amount) || 0);
 
 // A blank refund gives the whole charge back, and the server reads it the same
@@ -1238,11 +1267,7 @@ onMounted(() => {
                                 <input type="checkbox" name="in_house" value="1" v-model="form.in_house">
                                 <span>In-house &mdash; the office is doing this work itself</span>
                             </label>
-                            <div class="ui-hint">
-                                {{ form.in_house
-                                    ? 'Kept off Give to Vendor and listed on In-house Work. Untick it to offer the file to a vendor again.'
-                                    : 'Tick it if the office is doing this work, so Give to Vendor stops offering the file.' }}
-                            </div>
+                            <div class="ui-hint">{{ soleWorkHint }}</div>
                         </div>
 
                         <div class="ui-field wf-full wf-section">
