@@ -1888,6 +1888,14 @@ class WorkFileModel extends Model
     public const DOC_DIR = 'uploads/documents';
 
     /**
+     * The largest approval screenshot taken, in kilobytes — the unit the
+     * validator's max rule counts in. The edit screen is handed the same
+     * figure and checks it when a screenshot is picked, so it is said before
+     * the save rather than after it.
+     */
+    public const SCREENSHOT_MAX_KB = 4096;
+
+    /**
      * Store an approval screenshot against this file, replacing any earlier one.
      *
      * The stored name is derived from the file number and a hash, never from the

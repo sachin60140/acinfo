@@ -2274,7 +2274,7 @@ class WorkFileController extends Controller
                 'remarks' => 'nullable|array',
                 'remarks.*' => 'nullable|string|max:255',
                 'screenshots' => 'nullable|array',
-                'screenshots.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,pdf|max:4096',
+                'screenshots.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,pdf|max:'.WorkFileModel::SCREENSHOT_MAX_KB,
 
                 /*
                  * The day the RTO approved it, which is not always the day
@@ -2892,7 +2892,7 @@ class WorkFileController extends Controller
 
                 'status' => ['required', Rule::in(array_keys(WorkFileModel::STATUSES))],
                 'returned_amount' => 'nullable|numeric|gt:0|lte:customer_amount',
-                'approval_screenshot' => 'nullable|file|mimes:jpg,jpeg,png,webp,pdf|max:4096',
+                'approval_screenshot' => 'nullable|file|mimes:jpg,jpeg,png,webp,pdf|max:'.WorkFileModel::SCREENSHOT_MAX_KB,
                 'description' => 'nullable|string|max:255',
                 'remarks' => 'nullable|string|max:255',
 
@@ -2971,7 +2971,7 @@ class WorkFileController extends Controller
                  * name — is the spare one the form always offers, and is
                  * ignored.
                  */
-                'documents.*.file' => 'nullable|file|mimes:pdf|max:10240|required_with:documents.*.title',
+                'documents.*.file' => 'nullable|file|mimes:pdf|max:'.WorkFileDocumentModel::MAX_KB.'|required_with:documents.*.title',
                 'documents.*.title' => 'nullable|string|max:'.WorkFileDocumentModel::TITLE_MAX.'|required_with:documents.*.file',
 
                 // Names given to documents already on the file, by id.
@@ -3589,6 +3589,19 @@ class WorkFileController extends Controller
                 'remarks' => old('remarks', $isEdit ? $file->remarks : ''),
             ],
 
+            /*
+             * What the file is priced at as stored, which a retyped price is
+             * compared against. Not the boxes above: a save sent back fills
+             * those with what was typed, and a price compared with itself
+             * looks unchanged — so the reason typed for it was neither shown
+             * nor sent again, and the next save was refused for the want of
+             * one, losing whatever PDF had been picked a second time.
+             */
+            'priced' => [
+                'customer_amount' => $isEdit ? (float) $file->customer_amount : 0.0,
+                'vendor_amount' => $isEdit && $file->vendor_amount !== null ? (float) $file->vendor_amount : null,
+            ],
+
             // Rendered here rather than rebuilt in the component: both date
             // boxes keep one markup contract, the one assets/js/datepicker.js
             // binds by class.
@@ -3732,6 +3745,30 @@ class WorkFileController extends Controller
                 ])->values()
                 : [],
 
+            /*
+             * The largest PDF and screenshot the save takes, in kilobytes. The
+             * page checks a file against these when it is picked, so a scan
+             * too large is said there and then rather than by a refusal.
+             */
+            'pdfMaxKb' => WorkFileDocumentModel::MAX_KB,
+            'screenshotMaxKb' => WorkFileModel::SCREENSHOT_MAX_KB,
+
+            /*
+             * What a save sent back had typed, for the form to start from.
+             *
+             * The boxes above have always come back as typed. Everything below
+             * them was read from the database again, so a save refused for a
+             * PDF over the limit came back without the corrected charges, the
+             * work and the expenses added, the reason for the price — and the
+             * next save said "updated successfully" without them. The customer's
+             * statement kept the old charge and the expense was never recorded.
+             *
+             * Null on a page drawn fresh, and on the one a stale page is sent
+             * to: that is redrawn without what was typed, on purpose (see the
+             * check at the top of the save).
+             */
+            'typed' => $isEdit && $req->session()->hasOldInput() ? self::typedEdit() : null,
+
             'today' => date('Y-m-d'),
 
             /*
@@ -3784,5 +3821,72 @@ class WorkFileController extends Controller
             'noWorkTypes' => $workTypes->isEmpty(),
             'noCustomers' => $customers->isEmpty(),
         ])->toResponse($req);
+    }
+
+    /**
+     * What a refused edit save posted, in the shape the form starts from.
+     *
+     * Read back from the session as it was posted, so it is taken apart with
+     * care rather than trusted: rows that are not rows are dropped, ids are
+     * ids, and every value is text, as it was in the box. Keyed by the work's
+     * or the expense's own id, the way the form names them, so a value goes
+     * back to the row it was typed in and to no other.
+     *
+     * The PDFs do not come back. No browser lets a page put a file into a
+     * file box, so what returns is the name typed for each, under the row it
+     * was typed in, for the PDF to be chosen again.
+     */
+    private static function typedEdit(): array
+    {
+        $text = fn ($value) => is_scalar($value) ? (string) $value : '';
+        $id = fn ($value) => is_numeric($value) ? (int) $value : '';
+        $rows = fn (string $key) => collect((array) old($key, []))->filter(fn ($row) => is_array($row));
+        $ids = fn (string $key) => collect((array) old($key, []))
+            ->map(fn ($one) => (int) $one)->filter()->unique()->values()->all();
+
+        return [
+            'items' => (object) $rows('items')->mapWithKeys(fn ($work, $key) => [(int) $key => [
+                'work_type_id' => $id($work['work_type_id'] ?? null),
+                'customer_amount' => $text($work['customer_amount'] ?? ''),
+                'vendor_amount' => $text($work['vendor_amount'] ?? ''),
+                // An unticked box posts nothing, so absent is unticked.
+                'in_house' => ! empty($work['in_house']),
+            ]])->all(),
+            'removeWorks' => $ids('remove_works'),
+            'newWorks' => $rows('new_works')->map(fn ($work) => [
+                'work_type_id' => $id($work['work_type_id'] ?? null),
+                'amount' => $text($work['amount'] ?? ''),
+                'vendor_amount' => $text($work['vendor_amount'] ?? ''),
+            ])->values()->all(),
+            'priceRemark' => $text(old('price_remark', '')),
+
+            'expenses' => (object) $rows('expenses')->mapWithKeys(fn ($paid, $key) => [(int) $key => [
+                'expense_type_id' => $id($paid['expense_type_id'] ?? null),
+                'amount' => $text($paid['amount'] ?? ''),
+                'spent_on' => $text($paid['spent_on'] ?? ''),
+                'remark' => $text($paid['remark'] ?? ''),
+            ]])->all(),
+            'removeExpenses' => $ids('remove_expenses'),
+            'newExpenses' => $rows('new_expenses')->map(fn ($paid) => [
+                'expense_type_id' => $id($paid['expense_type_id'] ?? null),
+                'amount' => $text($paid['amount'] ?? ''),
+                'spent_on' => $text($paid['spent_on'] ?? ''),
+                'remark' => $text($paid['remark'] ?? ''),
+            ])->values()->all(),
+
+            // A blank box leaves a name alone when saved, so a blank one is
+            // not put back over the name the page shows.
+            'documentNames' => (object) collect((array) old('document_names', []))
+                ->map($text)
+                ->filter(fn ($name) => trim($name) !== '')
+                ->mapWithKeys(fn ($name, $key) => [(int) $key => $name])
+                ->all(),
+            'removeDocuments' => $ids('remove_documents'),
+            'newDocuments' => $rows('documents')
+                ->map(fn ($row, $key) => ['key' => (int) $key, 'title' => $text($row['title'] ?? '')])
+                ->filter(fn ($row) => trim($row['title']) !== '')
+                ->values()
+                ->all(),
+        ];
     }
 }
