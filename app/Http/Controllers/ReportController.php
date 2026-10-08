@@ -9,6 +9,7 @@ use App\Models\PartyModel;
 use App\Models\WorkFileExpenseModel;
 use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
+use App\Support\ListPage;
 use App\Support\Screen;
 use App\Support\WhatsApp;
 use Carbon\Carbon;
@@ -671,7 +672,14 @@ class ReportController extends Controller
             $partyId = null;
         }
 
-        $rows = WorkFileModel::report($partyType, $partyId, $status, $from, $to);
+        // Finished work, a page at a time; see WorkFileModel::LIST_LIMIT.
+        $rows = WorkFileModel::report($partyType, $partyId, $status, $from, $to, page: max(1, (int) $req->query('page', 1)));
+
+        /*
+         * Where this page stands, when the report is too long for one. Every
+         * figure on it is then of this page alone, and says so.
+         */
+        $shown = ListPage::of($rows);
 
         $balances = PartyLedgerModel::balancesFor($rows->pluck('party_id')->unique()->filter()->all());
 
@@ -905,8 +913,17 @@ class ReportController extends Controller
          * confusion was reported once already on screen; it must not come back
          * in the export.
          */
+        $title = $partyLabel.'-wise Work Report — '.$periodText.' · '.$statusText;
+
         $props = [
-            'title' => $partyLabel.'-wise Work Report — '.$periodText.' · '.$statusText,
+            'title' => $title,
+            /*
+             * What heads the PDF and the print sheet and names the file: on a
+             * page of a longer report, which page — headed as the report, the
+             * newest 500 of a customer's 1,200 files printed as all of them.
+             * The title is left as it is, for the column bands it keys.
+             */
+            'exportTitle' => ListPage::heading($title, $shown),
 
             /*
              * What the update dialog needs. The statuses and the rules come
@@ -939,6 +956,9 @@ class ReportController extends Controller
             'groupBy' => 'party_id',
             'groupLabel' => 'party_band',
             'totals' => ['billed' => 'sum', 'cost' => 'sum', 'expenses' => 'sum', 'margin' => 'sum'],
+            // On a page of a longer report, each total says it is that page's:
+            // a party's older files may be on the next.
+            'totalLabel' => $shown ? 'Total of those shown' : 'Total',
             // Paging off in all but name: a party split across two pages would be
             // banded twice and subtotalled twice, each time on half its files.
             'perPage' => max(count($reportRows), 1),
@@ -1057,6 +1077,7 @@ class ReportController extends Controller
             'from' => $from,
             'to' => $to,
             'totals' => $totals,
+            'shown' => $shown,
             'statuses' => $statuses,
             'parties' => PartyModel::selectList($partyType, $partyId),
             'maxDate' => now()->toDateString(),

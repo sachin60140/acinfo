@@ -613,6 +613,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -660,6 +661,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -691,6 +693,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -738,6 +741,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -769,6 +773,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -816,6 +821,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -847,6 +853,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -894,6 +901,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -925,6 +933,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -935,6 +944,7 @@
             "rowClass": "string",
             "rows": "[]",
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -966,6 +976,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -1013,6 +1024,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -1044,6 +1056,7 @@
                 "pending_papers:text"
             ],
             "emptyText": "string",
+            "exportTitle": "string",
             "groups": {
                 "list_of": {
                     "key": "string",
@@ -1054,6 +1067,7 @@
             "rowClass": "string",
             "rows": "[]",
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -1586,6 +1600,7 @@
             ],
             "csrf": "string",
             "emptyText": "string",
+            "exportTitle": "string",
             "groupBy": "string",
             "groupLabel": "string",
             "groups": {
@@ -1656,6 +1671,7 @@
             "title": "string",
             "today": "string",
             "todayLabel": "string",
+            "totalLabel": "string",
             "totals": {
                 "billed": "string",
                 "cost": "string",
@@ -1692,6 +1708,7 @@
             ],
             "csrf": "string",
             "emptyText": "string",
+            "exportTitle": "string",
             "groupBy": "string",
             "groupLabel": "string",
             "groups": {
@@ -1762,6 +1779,7 @@
             "title": "string",
             "today": "string",
             "todayLabel": "string",
+            "totalLabel": "string",
             "totals": {
                 "billed": "string",
                 "cost": "string",

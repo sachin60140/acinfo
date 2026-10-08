@@ -1153,6 +1153,8 @@ class ReportTest extends TestCase
         WorkFileModel::workTypeCounts('open', WorkFileModel::IN_HOUSE);
         WorkFileModel::statusCounts(null, WorkFileModel::IN_HOUSE);
         WorkFileModel::forStatusBoard('open', null, WorkFileModel::IN_HOUSE);
+        // And a tab of finished work a page at a time, counted first.
+        WorkFileModel::forStatusBoard('all', null, WorkFileModel::IN_HOUSE, 1);
         WorkFileModel::summary();
         // The dashboard's Money by month chart, grouped by month.
         WorkFileModel::monthlyMoney(12);
@@ -1216,6 +1218,10 @@ class ReportTest extends TestCase
         $this->assertNotNull(WorkFileModel::report('customer'));
         $this->assertNotNull(WorkFileModel::report('vendor'));
         $this->assertNotNull(WorkFileModel::listing());
+        // A page at a time, as the screens ask for finished work.
+        $this->assertNotNull(WorkFileModel::report('customer', page: 1));
+        $this->assertNotNull(WorkFileModel::report('vendor', page: 1));
+        $this->assertNotNull(WorkFileModel::listing(page: 1));
         $this->assertNotNull(WorkFileModel::summary());
     }
 
