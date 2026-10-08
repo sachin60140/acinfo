@@ -45,8 +45,11 @@ class CustomerPortalController extends Controller
      * same as checking against a real one.
      *
      * A real bcrypt hash of 32 random bytes nobody kept, so it matches nothing.
+     *
+     * Public because the old client login at /user has the same thing to hide,
+     * and borrows this one rather than keeping a second.
      */
-    private const DUMMY_HASH = '$2y$12$YH9gt.eIuEVZszHMLXZ.PeVyWCozHV6j.2M6ikdhcBc2aZQqbzM4.';
+    public const DUMMY_HASH = '$2y$12$YH9gt.eIuEVZszHMLXZ.PeVyWCozHV6j.2M6ikdhcBc2aZQqbzM4.';
 
     public function login()
     {
