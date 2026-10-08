@@ -336,10 +336,54 @@ watch(total, (value) => {
     // listens for the running total rather than reaching into this markup.
     document.dispatchEvent(new CustomEvent('receive-total', { detail: value }));
 });
+
+/*
+ * One batch per press.
+ *
+ * A double click sent the batch twice, and a card with no registration number
+ * on it was opened as two files with the customer charged for both. So the
+ * second submit is stopped here; the server tells a repeat it was already
+ * saved as well, for a press this cannot see. Released when the browser brings
+ * the page back from its history, or the button would stay dead on a page
+ * returned to with Back.
+ *
+ * The form is the page's, drawn around this component, so its submit is
+ * listened for rather than bound in the template.
+ */
+const root = ref(null);
+const submitting = ref(false);
+let form = null;
+
+function onSubmit(event) {
+    if (submitting.value) {
+        event.preventDefault();
+
+        return;
+    }
+
+    submitting.value = true;
+}
+
+function onPageShow(event) {
+    if (event.persisted) {
+        submitting.value = false;
+    }
+}
+
+onMounted(() => {
+    form = root.value?.closest('form') ?? null;
+    form?.addEventListener('submit', onSubmit);
+    window.addEventListener('pageshow', onPageShow);
+});
+
+onBeforeUnmount(() => {
+    form?.removeEventListener('submit', onSubmit);
+    window.removeEventListener('pageshow', onPageShow);
+});
 </script>
 
 <template>
-    <div class="ui rcv">
+    <div ref="root" class="ui rcv">
         <div class="ui-card">
             <div class="ui-card__head">
                 <div>
@@ -629,7 +673,7 @@ watch(total, (value) => {
 
                 <div class="rcv-actions">
                     <a v-if="cancelUrl" :href="cancelUrl" class="ui-btn">Cancel</a>
-                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="unconfirmed.length > 0">
+                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="unconfirmed.length > 0 || submitting">
                         <i class="bi bi-check2-circle"></i> Receive Files
                     </button>
                 </div>
