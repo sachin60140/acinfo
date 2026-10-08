@@ -331,7 +331,18 @@ class PartyController extends Controller
             $party->mobile = $req->mobile;
             $party->whatsapp = $req->whatsapp;
             $party->address = $req->address;
-            $party->is_active = $req->boolean('is_active');
+
+            /*
+             * 1 or 0, as the column holds it, not true or false. Eloquent reads
+             * true written over a stored 1 as a change, so every Save — of a
+             * record nobody had touched as much as any other — moved
+             * updated_at. That now signs a customer out of the portal (see
+             * CustomerAuthMiddleware::fingerprint), and opening the record and
+             * saving it as it was should not. Switching a customer off, or on
+             * again, is a change and does move it: that is what ends every
+             * session opened before, used in between or not.
+             */
+            $party->is_active = $req->boolean('is_active') ? 1 : 0;
 
             if ($linking) {
                 $vendorId = $req->filled('linked_vendor_id') ? (int) $req->linked_vendor_id : null;

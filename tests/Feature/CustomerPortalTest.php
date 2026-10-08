@@ -286,6 +286,100 @@ class CustomerPortalTest extends TestCase
     }
 
     /**
+     * Switched off and back on while the phone holding the session opened
+     * nothing.
+     *
+     * The test above has the phone open a page while the customer is off, and
+     * that page ends its session. A phone left in a drawer, or kept by
+     * whoever should not have it, opens none. Switched back on, the customer
+     * is exactly what they were when it signed in — a customer, active, the
+     * same password — so a gate that looked only at those would let it
+     * straight back in. The office having saved the record since is what
+     * gives it away.
+     */
+    public function test_switching_a_customer_off_and_on_ends_a_session_that_opened_nothing_meanwhile(): void
+    {
+        $customer = $this->party('customer', '9000000306');
+
+        $this->signIn('9000000306', self::PASSWORD);
+        $this->get(route('customer.statement'))->assertOk();
+
+        $phone = session()->all();
+
+        // Off on the edit screen, and on again twenty minutes later.
+        $admin = $this->admin();
+        $this->travel(1)->minutes();
+        $this->officeSaves($admin, $customer, ['is_active' => null]);
+        $this->assertSame(0, (int) $customer->fresh()->is_active);
+
+        $this->travel(20)->minutes();
+        $this->officeSaves($admin, $customer, ['is_active' => '1']);
+        $this->assertSame(1, (int) $customer->fresh()->is_active);
+
+        $this->flushSession();
+        $this->withSession($phone)
+            ->get(route('customer.statement'))
+            ->assertRedirect(route('customer.login'));
+
+        $this->assertNull(session('customer_id'), 'the session is ended, not let back in');
+
+        // The customer signs in again and carries on.
+        $this->signIn('9000000306', self::PASSWORD)->assertRedirect(route('customer.dashboard'));
+        $this->get(route('customer.statement'))->assertOk();
+    }
+
+    /**
+     * The office opening a customer's record and saving it as it was.
+     *
+     * Not a change, so nobody is signed out. The edit screen used to write the
+     * Active tick back as true over the 1 the database holds, which Eloquent
+     * counts as a change: every Save moved updated_at, and would have signed
+     * the customer out for nothing.
+     */
+    public function test_the_office_saving_a_customer_unchanged_signs_nobody_out(): void
+    {
+        $customer = $this->party('customer', '9000000307');
+
+        $this->signIn('9000000307', self::PASSWORD);
+        $this->get(route('customer.statement'))->assertOk();
+
+        $phone = session()->all();
+        $before = $customer->fresh()->updated_at;
+
+        $this->travel(5)->minutes();
+        $this->officeSaves($this->admin(), $customer, []);
+        $this->assertEquals($before, $customer->fresh()->updated_at, 'an unchanged save is not an edit');
+
+        $this->flushSession();
+        $this->withSession($phone)
+            ->get(route('customer.statement'))
+            ->assertOk();
+    }
+
+    /**
+     * The office saving a customer's record on its Edit screen, as the form
+     * posts it, with these fields changed. Null leaves a field out, which is
+     * how an unticked box arrives.
+     */
+    private function officeSaves(User $admin, PartyModel $customer, array $changes): void
+    {
+        $fields = array_filter($changes + [
+            'name' => $customer->name,
+            'mobile' => $customer->mobile,
+            'whatsapp' => $customer->whatsapp,
+            'address' => $customer->address,
+            'is_active' => '1',
+        ], fn ($value) => $value !== null);
+
+        $this->flushSession();
+        $this->actingAs($admin)
+            ->from(route('party.edit', $customer->id))
+            ->post(route('party.edit', $customer->id), $fields)
+            ->assertSessionHasNoErrors()
+            ->assertRedirect(route('party.index', 'customer'));
+    }
+
+    /**
      * Every way a session can stop belonging to a customer who may use the
      * portal, each ending it at the next page.
      */

@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use App\Models\PartyModel;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -30,7 +31,10 @@ class CustomerAuthMiddleware
      */
     public const SESSION_KEY = 'customer_id';
 
-    /** Where the session keeps a fingerprint of the password it was opened with. */
+    /**
+     * Where the session keeps a fingerprint of what it was opened with: the
+     * password, and the customer's record as the office last saved it.
+     */
     public const PASSWORD_KEY = 'customer_password';
 
     /**
@@ -51,17 +55,37 @@ class CustomerAuthMiddleware
     }
 
     /**
-     * What stands in the session for the password it was opened with.
+     * What stands in the session for the login it was opened with.
      *
-     * Taken from the stored hash, never from anything typed. Bcrypt salts every
-     * hash afresh, so a new password — even the same one set again — makes a
-     * new hash and so a new fingerprint, which is all this needs to notice. The
-     * hash itself is not what is kept: there is no reason for a second copy of
-     * it to sit in the sessions table.
+     * The password, taken from the stored hash, never from anything typed.
+     * Bcrypt salts every hash afresh, so a new password — even the same one set
+     * again — makes a new hash and so a new fingerprint. The hash itself is not
+     * what is kept: there is no reason for a second copy of it to sit in the
+     * sessions table.
+     *
+     * And updated_at, for the one change that leaves nothing else behind. A
+     * customer switched off and on again is, by the time anybody looks, the
+     * customer they were — active, the same password — and a phone that opened
+     * no page while they were off would find nothing to tell the two apart.
+     * Each switch is a save from the office, and every save from the office
+     * moves updated_at; a sign-in and the customer's own password change are
+     * written without moving it (see CustomerPortalController). So any change
+     * the office makes to the record signs the customer out as well — a new
+     * mobile number or a corrected name as much as a switch off and on. That
+     * is the price of noticing the switch without a column of its own, and it
+     * is paid with a sign-in.
+     *
+     * Read from the attributes, not through the model's date cast: a model
+     * with timestamps = false — the customer's own change saves it that way —
+     * stops casting updated_at at all and hands back the bare string. Made a
+     * Unix time either way, so a model just saved and the same row read back
+     * give the same figure whatever form each happens to hold it in.
      */
     private static function fingerprint(PartyModel $party): string
     {
-        return hash('sha256', (string) $party->password);
+        $saved = Carbon::make($party->getAttributes()['updated_at'] ?? null)?->getTimestamp();
+
+        return hash('sha256', $party->password.'|'.$saved);
     }
 
     /**
@@ -69,15 +93,17 @@ class CustomerAuthMiddleware
      *
      * Having the key is not enough. The party behind it is read again on every
      * page, and the session is ended when that party has gone, is no longer a
-     * customer, has been switched off, or has a different password from the
-     * one this session was opened with.
+     * customer, has been switched off, or no longer matches the fingerprint
+     * this session was opened with: a different password, or a save from the
+     * office since. The last is what catches a customer switched off and on
+     * again while the phone holding the session opened nothing.
      *
      * Ended, not just turned away, because a refusal leaves the session
-     * standing. The office switching a customer back on would then let
-     * whoever held it straight back in. And a customer who changes their
-     * password because somebody else knows it, or asks the office to set a
-     * new one, has no other way to turn that somebody's phone out: there is no
-     * list of sessions to end, and one kept in use never expires.
+     * standing, to be let back in the moment whatever refused it is put back.
+     * And a customer who changes their password because somebody else knows
+     * it, or asks the office to set a new one or to switch them off, has no
+     * other way to turn that somebody's phone out: there is no list of
+     * sessions to end, and one kept in use never expires.
      *
      * Here, for every route behind this gate, rather than in each screen. The
      * screens did ask whether the customer was still active — all but the one
@@ -95,7 +121,7 @@ class CustomerAuthMiddleware
 
         $party = PartyModel::query()
             ->whereKey(session(self::SESSION_KEY))
-            ->first(['id', 'party_type', 'is_active', 'password']);
+            ->first(['id', 'party_type', 'is_active', 'password', 'updated_at']);
 
         $current = $party !== null
             && $party->party_type === 'customer'

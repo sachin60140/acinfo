@@ -98,7 +98,9 @@ class CustomerPortalController extends Controller
          * A visit is not an edit to the customer's record, so updated_at stays
          * where it is — the office screens read that column to mean "when did
          * somebody last change this", and every sign-in moving it would make it
-         * mean nothing.
+         * mean nothing. The portal's gate reads it too: the session was noted
+         * with it above, and a sign-in that moved it would have the gate end
+         * the session it had only just opened.
          *
          * timestamps = false, not saveQuietly(): that one suppresses model
          * events and touches the timestamps regardless, which is a distinction
