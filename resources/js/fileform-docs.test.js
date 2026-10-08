@@ -180,6 +180,22 @@ describe('the PDFs already on the file', () => {
         ]);
     });
 
+    /*
+     * Found while bringing a refused save's names back: the box was bound only
+     * to the name it was drawn with, and Vue sets an input's value on every
+     * render, so picking a PDF in the row below put the old name back over the
+     * one typed — and the save sent the old name.
+     */
+    it('keep a name typed into them when a PDF is picked below', async () => {
+        const host = mount(DOCS);
+
+        await type(host.querySelector('input[name="document_names[40]"]'), 'RC');
+        await pick(fileIn(rows(host)[0]), 'form-29.pdf');
+
+        expect(rows(host)).toHaveLength(2);
+        expect(host.querySelector('input[name="document_names[40]"]').value).toBe('RC');
+    });
+
     it('still say what the scanner called them, where that differs from the name', () => {
         const host = mount(DOCS);
 

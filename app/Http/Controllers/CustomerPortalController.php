@@ -450,6 +450,8 @@ class CustomerPortalController extends Controller
                 'screenshot_url' => WorkFileModel::isStoredUpload($work->approval_screenshot)
                     ? route('customer.file.approval', ['id' => $file->id, 'item' => $work->id])
                     : null,
+                // Which that address cannot say; see WorkFileModel::isPdf().
+                'screenshot_is_pdf' => WorkFileModel::isPdf($work->approval_screenshot),
             ];
         }
 
@@ -466,6 +468,8 @@ class CustomerPortalController extends Controller
                     // A document, so it opens over the page rather than
                     // replacing it — checking an approval is a glance.
                     'subPreview' => true,
+                    // And a PDF in the viewer, as the row says it is one.
+                    'subPdf' => 'screenshot_is_pdf',
                 ],
                 ['key' => 'approved_on', 'label' => 'Approved On'],
                 ['key' => 'charged', 'label' => 'Amount', 'type' => 'money'],

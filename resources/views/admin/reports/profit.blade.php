@@ -122,6 +122,9 @@
                         @if ($totals['unpriced'] && isset($totals['parts']))
                             {{-- The vendor cut: a file shared between holders is a part under each. --}}
                             <span class="stat-note">on {{ $totals['parts'] - $totals['unpriced'] }} of {{ $totals['parts'] }} {{ Str::plural('part', $totals['parts']) }} &mdash; {{ $totals['unpriced'] }} awaiting a price</span>
+                        @elseif ($totals['unpriced'] && isset($totals['works']))
+                            {{-- The work type cut: what waits on a price is a work, not a file. --}}
+                            <span class="stat-note">on {{ $totals['works'] - $totals['unpriced'] }} of {{ $totals['works'] }} {{ Str::plural('work', $totals['works']) }} &mdash; {{ $totals['unpriced'] }} awaiting a price</span>
                         @elseif ($totals['unpriced'])
                             <span class="stat-note">on {{ $totals['files'] - $totals['unpriced'] }} of {{ $totals['files'] }} files &mdash; {{ $totals['unpriced'] }} awaiting a price</span>
                         @endif
