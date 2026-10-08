@@ -262,9 +262,15 @@
                 }
             },
             "papers": "null",
+            "pdfMaxKb": "number",
+            "priced": {
+                "customer_amount": "number",
+                "vendor_amount": "number"
+            },
             "receivedDateField": "string",
             "refundPlaceholder": "string",
             "returnedKey": "string",
+            "screenshotMaxKb": "number",
             "screenshotUrl": "string",
             "statuses": {
                 "approval_done": "string",
@@ -290,6 +296,7 @@
                 }
             },
             "today": "string",
+            "typed": "null",
             "values": {
                 "customer_amount": "string",
                 "customer_id": "number",
