@@ -450,7 +450,7 @@ describe('after a save the server refused', () => {
                 was: { 11: 'in_office' },
                 remarks: { 11: 'Buyer backed out' },
                 approved_on: {},
-                reason: 'Nothing was saved: this work has changed since the page was opened. Reload the page to see where it stands now, then try again: F-00044 · HPA (now File Dispatch)',
+                reason: 'Nothing was saved: this work has changed since the page was opened. It is shown below as it stands now; choose again for it and save: F-00044 · HPA (now File Dispatch)',
             },
         });
         await settle();

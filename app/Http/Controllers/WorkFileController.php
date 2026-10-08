@@ -2368,10 +2368,17 @@ class WorkFileController extends Controller
                 ->map(fn ($item) => $name($item).' (now '.(WorkFileModel::STATUSES[$item->status] ?? $item->status)
                     .($item->approved_on && $item->isApproved() ? ', approved '.date('d-m-Y', strtotime($item->approved_on)) : '').')');
 
+            /*
+             * Not "reload the page". The board and the Update dialog both come
+             * back drawn as the work stands now, with what was typed put back;
+             * a reload is a plain visit, which has nothing to put back, and it
+             * threw away everything the page had just been handed. Found in
+             * review.
+             */
             if ($stale->isNotEmpty()) {
                 return back()->withInput()->with(
                     'error',
-                    'Nothing was saved: this work has changed since the page was opened. Reload the page to see where it stands now, then try again: '.$stale->implode(', ')
+                    'Nothing was saved: this work has changed since the page was opened. It is shown below as it stands now; choose again for it and save: '.$stale->implode(', ')
                 );
             }
 

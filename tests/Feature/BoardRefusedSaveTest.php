@@ -203,6 +203,33 @@ class BoardRefusedSaveTest extends TestCase
         $this->assertSame('called the vendor', $restore['remarks'][$chasing->id]);
     }
 
+    /**
+     * Refused because a colleague moved one of the works meanwhile: the board
+     * comes back as the work stands now with the rest put back, so the message
+     * must not send the reader to reload — a reload draws a blank board and
+     * throws away what was just put back (found in review).
+     */
+    public function test_a_work_moved_meanwhile_is_not_answered_with_reload_the_page(): void
+    {
+        $moved = $this->job();
+        $chasing = $this->job();
+
+        // A colleague sends it out after this board was drawn.
+        $moved->status = WorkFileModel::DISPATCHED;
+        $moved->save();
+
+        $this->actingAs($this->admin)->from($this->board())->post(route('workfile.status'), [
+            'statuses' => [$moved->id => WorkFileModel::CANCELLED, $chasing->id => WorkFileModel::IN_OFFICE],
+            'was' => [$moved->id => WorkFileModel::IN_OFFICE, $chasing->id => WorkFileModel::IN_OFFICE],
+            'remarks' => [$moved->id => 'buyer backed out', $chasing->id => 'handed to runner'],
+        ])->assertRedirect($this->board())->assertSessionHas('error', fn ($message) => str_contains($message, 'changed since')
+            && str_contains($message, 'shown below as it stands now')
+            && ! str_contains(strtolower($message), 'reload'));
+
+        // And the board that comes back has the rest of the sitting.
+        $this->assertSame('handed to runner', $this->props()['restore']['remarks'][$chasing->id] ?? null);
+    }
+
     public function test_a_board_drawn_fresh_has_nothing_to_put_back(): void
     {
         $this->job();
