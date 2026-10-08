@@ -69,6 +69,20 @@ describe('the approval document', () => {
         expect(document.querySelector('.preview__image')).toBe(null);
     });
 
+    /*
+     * Approvals are served by a route, /admin/file/{id}/approval/{item}, so
+     * the address has no extension for anything to read. The server says what
+     * it stored, and a PDF goes to the viewer that can show it.
+     */
+    it('gives a PDF the server says is one the viewer, though its address has no extension', async () => {
+        mount(FilePreview, { src: '/admin/file/12/approval/34', pdf: true });
+        await nextTick();
+
+        expect(document.querySelector('.preview__frame').getAttribute('src'))
+            .toBe('/admin/file/12/approval/34');
+        expect(document.querySelector('.preview__image')).toBe(null);
+    });
+
     it('closes on Escape, so the keyboard is not a dead end', async () => {
         const src = ref('/uploads/approval/file-3.png');
 
@@ -107,20 +121,48 @@ describe('the approval document', () => {
     });
 
     /*
-     * A document that will not load says so. An empty box reads as the page
-     * having broken, and the operator cannot tell whether the file is missing
-     * or the screen is.
+     * A document that will not load as an image is not therefore gone. It said
+     * so — "removed from the server" — and for every PDF approval that was
+     * wrong: the PDF was there, and only the guess at its type was not. The
+     * frame shows whatever the server has at that address, the document or the
+     * server's own word that there is none, and neither is a guess.
      */
-    it('says so when the document will not load', async () => {
-        mount(FilePreview, { src: '/uploads/approval/gone.png' });
+    it('puts a document that will not load as an image in the frame, never calling it removed', async () => {
+        mount(FilePreview, { src: '/admin/file/12/approval/35' });
         await nextTick();
 
         document.querySelector('.preview__image').dispatchEvent(new window.Event('error'));
         await nextTick();
 
-        expect(document.querySelector('.preview__missing')).not.toBe(null);
-        expect(document.querySelector('.preview__missing').textContent)
-            .toContain('could not be loaded');
+        expect(document.querySelector('.preview__frame').getAttribute('src'))
+            .toBe('/admin/file/12/approval/35');
+        expect(document.querySelector('.preview__image')).toBe(null);
+        expect(document.querySelector('.preview').textContent).not.toContain('removed');
+    });
+
+    // And the next one opened is tried as an image again, not framed because
+    // the last one was.
+    it('tries the next document as an image again', async () => {
+        const src = ref('/admin/file/12/approval/36');
+
+        mount({
+            components: { FilePreview },
+            setup: () => ({ src }),
+            template: '<FilePreview :src="src" @close="src = null" />',
+        });
+
+        await nextTick();
+        document.querySelector('.preview__image').dispatchEvent(new window.Event('error'));
+        await nextTick();
+        expect(document.querySelector('.preview__frame')).not.toBe(null);
+
+        src.value = null;
+        await nextTick();
+        src.value = '/admin/file/13/approval/37';
+        await nextTick();
+
+        expect(document.querySelector('.preview__image').getAttribute('src'))
+            .toBe('/admin/file/13/approval/37');
     });
 });
 
@@ -165,6 +207,27 @@ describe('the files list', () => {
 
         expect(document.querySelector('.preview__image').getAttribute('src'))
             .toBe('/uploads/approval/f-16028.png');
+    });
+
+    /*
+     * The row says whether its document is a PDF, and the column says where in
+     * the row to look. The address cannot: it is a route with no extension.
+     */
+    it('opens a PDF the row says is one in the viewer', async () => {
+        const host = mount(DataGrid, {
+            columns: [columns[0], { ...columns[1], subPdf: 'screenshot_is_pdf' }],
+            rows: [{ ...rows[0], screenshot_url: '/admin/file/1/approval', screenshot_is_pdf: true }],
+            title: 'Approved Files',
+        });
+        await nextTick();
+
+        [...host.querySelectorAll('a')]
+            .find((a) => a.textContent.includes('Approval screenshot on file'))
+            .dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        await nextTick();
+
+        expect(document.querySelector('.preview__frame').getAttribute('src')).toBe('/admin/file/1/approval');
+        expect(document.querySelector('.preview__image')).toBe(null);
     });
 
     it('still names the document it is about', async () => {

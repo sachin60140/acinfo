@@ -612,13 +612,61 @@ class AuthController extends Controller
              * future edit could drop without anything looking wrong.
              */
             $user->password = Hash::make($req->post('password'));
+
+            /*
+             * Every other device signed in with the old password is signed out
+             * by this. A Remember me cookie finds the account by this token, so
+             * a new one leaves every cookie issued before it pointing at
+             * nothing: a phone that ticked Remember me was otherwise good for
+             * another 400 days. A browser with a session still open is caught
+             * by the password check on the office pages (AdminSessionMiddleware),
+             * which compares the password it signed in with against this one.
+             *
+             * That check reads the password in the cookie too, on the sign-in
+             * page as well as the office pages, so where it runs it would turn
+             * the old cookie away by itself. The new token does not depend on
+             * where it runs. Any page that asks who is signed in will sign a
+             * browser in from its cookie, and a page added later outside the
+             * office group would not check what password the cookie carries.
+             */
+            $user->setRememberToken(Str::random(60));
             $user->save();
 
-            // A new session id for the person who just proved themselves.
-            $req->session()->regenerate();
+            /*
+             * And every other session the account has is ended outright, where
+             * sessions are kept in the database: Laravel's default, and what
+             * .env.example sets. The check catches a session that noted the old
+             * password. A session signed in before the check went live noted
+             * none, and would note the new one at its next click and carry on,
+             * for as long as somebody kept clicking. Each session's row says
+             * whose it is, so the other browsers are found without waiting for
+             * them to ask.
+             *
+             * Kept anywhere else, they cannot be found from here. Such a
+             * session lasts until two hours (SESSION_LIFETIME) go by without a
+             * click.
+             */
+            if (config('session.driver') === 'database') {
+                DB::connection(config('session.connection'))
+                    ->table(config('session.table'))
+                    ->where('user_id', $user->id)
+                    ->where('id', '!=', $req->session()->getId())
+                    ->delete();
+            }
+
+            /*
+             * Except this one. Signed in again, which is also a new session id
+             * for the person who just proved themselves; and if this browser
+             * ticked Remember me, it is handed a new cookie with the new token.
+             * Its old one went with everybody else's, and would have signed it
+             * out too the next time its session ran out. The password noted in
+             * its session is brought up to date by the password check itself,
+             * on the way out of this request.
+             */
+            Auth::login($user, $req->hasCookie(Auth::guard()->getRecallerName()));
 
             return redirect('admin/dashboard')
-                ->with('success', 'Your password has been changed. Use it the next time you sign in.');
+                ->with('success', 'Your password has been changed, and any other phone or computer signed in with the old one has been signed out.');
         }
 
         $props = [
@@ -631,7 +679,7 @@ class AuthController extends Controller
             'clientMobile' => $user->email,
             'hasPassword' => true,
             'requireCurrent' => true,
-            'intro' => 'You will use the new password the next time you sign in to the admin area.',
+            'intro' => 'You will use the new password the next time you sign in to the admin area. Any other phone or computer signed in with the old one will be signed out.',
             'errors' => (object) array_map(fn ($messages) => $messages[0], session('errors') ? session('errors')->messages() : []),
         ];
 

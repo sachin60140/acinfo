@@ -1888,6 +1888,14 @@ class WorkFileModel extends Model
     public const DOC_DIR = 'uploads/documents';
 
     /**
+     * The largest approval screenshot taken, in kilobytes — the unit the
+     * validator's max rule counts in. The edit screen is handed the same
+     * figure and checks it when a screenshot is picked, so it is said before
+     * the save rather than after it.
+     */
+    public const SCREENSHOT_MAX_KB = 4096;
+
+    /**
      * Store an approval screenshot against this file, replacing any earlier one.
      *
      * The stored name is derived from the file number and a hash, never from the
@@ -2648,6 +2656,47 @@ class WorkFileModel extends Model
     public function isReturnedByVendor(): bool
     {
         return (bool) $this->vendor_returned_on;
+    }
+
+    /**
+     * Lock these folders for the rest of the transaction, before anything
+     * about them is read in it.
+     *
+     * Give to Vendor, Keep in-house, Papers Returned by Vendor and Return to
+     * Customer each read the ticked folders again inside their transaction, so
+     * a stale page cannot act on work that has moved since. Found in the health
+     * check of 2026-10-07: that read did not wait for a post of the same
+     * folders that was still saving — a double click. The second read them as
+     * they were, wrote what the first had just written, and so saw nothing
+     * change; then it rebuilt the vendor's lines from the old state and deleted
+     * the one the first had made. Both said they had worked, and the vendor's
+     * statement lost its credit for work they hold, or its reversal for work
+     * they handed back. Return to Customer, hit the same way, was a 500 on the
+     * ledger's unique key with the return already saved.
+     *
+     * Locked, the second waits for the first to finish, reads what it did, and
+     * is refused the way a stale page is.
+     *
+     * Taken alone and first, rather than by locking the re-read itself as Hand
+     * Over does. The first plain read in a transaction fixes what every later
+     * one sees, and the re-read asks about each folder's works as well, which
+     * its lock need not cover: locking folder by folder, it can read the works
+     * of one before it has waited for the next, and then sees that one as it
+     * was. Whether it does depends on how the database plans the query — on a
+     * MariaDB copy, a take-back of two folders posted a moment after a
+     * take-back of one of them still lost that one's reversal (found testing
+     * this fix). A lock on the folders alone reads nothing else, so everything
+     * after it is read once the wait is over. In id order, so two batches
+     * sharing folders queue for them the same way rather than each holding one
+     * the other wants.
+     */
+    public static function lockFolders(array $ids): void
+    {
+        self::query()
+            ->whereIn('id', array_map('intval', $ids))
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->pluck('id');
     }
 
     /**
@@ -5213,6 +5262,24 @@ class WorkFileModel extends Model
             || str_starts_with($path, self::DOC_DIR.'/');
 
         return $ours && is_file(public_path($path));
+    }
+
+    /**
+     * Whether a stored approval is a PDF, said beside every link to one.
+     *
+     * The screens cannot tell for themselves. An approval is served through a
+     * route — /admin/file/{id}/approval/{item} — so the address they are handed
+     * has no extension, and the preview that looked for ".pdf" on the end drew
+     * every PDF as an image, which would not load, and then told the office the
+     * RTO's evidence had been removed from the server.
+     *
+     * The stored name does know. Its extension is guessed from the content when
+     * it is saved (see storeUpload and storeScreenshot), never taken from the
+     * browser, so this is the file's own word for what it is.
+     */
+    public static function isPdf(?string $path): bool
+    {
+        return is_string($path) && strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'pdf';
     }
 
     public static function workBreakdown(array $fileIds): array

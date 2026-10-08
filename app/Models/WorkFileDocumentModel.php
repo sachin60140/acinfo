@@ -46,6 +46,14 @@ class WorkFileDocumentModel extends Model
     public const TITLE_MAX = 120;
 
     /**
+     * The largest PDF taken, in kilobytes — the unit the validator's max
+     * rule counts in. The edit screen is handed the same figure and checks
+     * it when a PDF is picked, so it is said before the save rather than
+     * after it.
+     */
+    public const MAX_KB = 10240;
+
+    /**
      * What to call it on screen.
      *
      * The name the office gave it, or — for anything uploaded before names

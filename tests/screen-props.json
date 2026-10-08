@@ -253,6 +253,7 @@
                     "has_vendor": "bool",
                     "id": "number",
                     "in_house": "bool",
+                    "screenshot_is_pdf": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_label": "string",
@@ -262,9 +263,16 @@
                 }
             },
             "papers": "null",
+            "pdfMaxKb": "number",
+            "priced": {
+                "customer_amount": "number",
+                "vendor_amount": "number"
+            },
             "receivedDateField": "string",
             "refundPlaceholder": "string",
             "returnedKey": "string",
+            "screenshotIsPdf": "bool",
+            "screenshotMaxKb": "number",
             "screenshotUrl": "string",
             "statuses": {
                 "approval_done": "string",
@@ -290,11 +298,13 @@
                 }
             },
             "today": "string",
+            "typed": "null",
             "values": {
                 "customer_amount": "string",
                 "customer_id": "number",
                 "description": "string",
                 "file_no": "string",
+                "in_house": "bool",
                 "registration_no": "string",
                 "remarks": "null",
                 "returned_amount": "null",
@@ -460,6 +470,7 @@
             "oldRows": {
                 "list_of": {
                     "description": "string",
+                    "duplicate_ok": "bool",
                     "registration_no": "string",
                     "works": {
                         "list_of": {
@@ -503,6 +514,7 @@
                             "customer_amount": "number",
                             "has_screenshot": "bool",
                             "id": "number",
+                            "screenshot_is_pdf": "bool",
                             "screenshot_url": "null",
                             "status": "string",
                             "vendor": "string",
@@ -630,6 +642,7 @@
                     "registration_no": "string",
                     "row_class": "string",
                     "screenshot": "null",
+                    "screenshot_is_pdf": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
@@ -707,6 +720,7 @@
                     "registration_no": "string",
                     "row_class": "string",
                     "screenshot": "null",
+                    "screenshot_is_pdf": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
@@ -784,6 +798,7 @@
                     "registration_no": "string",
                     "row_class": "string",
                     "screenshot": "null",
+                    "screenshot_is_pdf": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
@@ -861,6 +876,7 @@
                     "registration_no": "string",
                     "row_class": "string",
                     "screenshot": "null",
+                    "screenshot_is_pdf": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
@@ -979,6 +995,7 @@
                     "registration_no": "string",
                     "row_class": "string",
                     "screenshot": "null",
+                    "screenshot_is_pdf": "bool",
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",

@@ -400,7 +400,7 @@ function onScreenshot(row, event) {
                                             <a
                                                 :href="row.screenshot_url"
                                                 class="ui-link"
-                                                @click.prevent="preview = { src: row.screenshot_url, title: (row.work_type || 'Work') + ' — approval' }">View the one on file</a>
+                                                @click.prevent="preview = { src: row.screenshot_url, title: (row.work_type || 'Work') + ' — approval', pdf: row.screenshot_is_pdf }">View the one on file</a>
                                             &mdash; choose a file only to replace it
                                         </div>
                                     </div>
@@ -442,7 +442,7 @@ function onScreenshot(row, event) {
             </div>
         </template>
 
-        <FilePreview :src="preview?.src" :title="preview?.title" @close="preview = null" />
+        <FilePreview :src="preview?.src" :title="preview?.title" :pdf="preview?.pdf" @close="preview = null" />
     </form>
 </template>
 
