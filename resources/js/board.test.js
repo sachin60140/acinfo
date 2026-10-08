@@ -523,3 +523,36 @@ describe('after a save the server refused', () => {
         expect(field(host, 'statuses[99]')).toBe(null);
     });
 });
+
+/*
+ * "View the one on file", for an approval kept as a PDF.
+ *
+ * The address is a route with no extension, so the preview cannot tell a PDF
+ * from it: drawn as an image, it would not load, and the office was told the
+ * evidence had been removed from the server. The server says which it is.
+ */
+describe('an approval kept as a PDF', () => {
+    it('opens in the viewer', async () => {
+        const host = mount([{
+            ...FILES[0],
+            status: 'approval_done',
+            items: [{
+                ...FILES[0].items[0],
+                status: 'approval_done',
+                has_screenshot: true,
+                screenshot_url: '/admin/file/1/approval/11',
+                screenshot_is_pdf: true,
+                approved_on: '21-08-2026',
+                approved_on_iso: '2026-08-21',
+            }],
+        }]);
+
+        [...host.querySelectorAll('a')]
+            .find((a) => a.textContent.includes('View the one on file'))
+            .dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+        await nextTick();
+
+        expect(document.querySelector('.preview__frame').getAttribute('src')).toBe('/admin/file/1/approval/11');
+        expect(document.querySelector('.preview__image')).toBe(null);
+    });
+});

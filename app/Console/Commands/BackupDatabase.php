@@ -47,6 +47,23 @@ class BackupDatabase extends Command
         $connection = DB::connection($this->option('connection') ?: null);
         $database = $connection->getDatabaseName();
 
+        /*
+         * Not from inside somebody else's transaction.
+         *
+         * The tables are read in a snapshot of the backup's own (below), and
+         * starting one ends whatever transaction the connection is already in
+         * — MySQL commits it, without a word. Run from inside one, a test
+         * wrapped in DatabaseTransactions say, the backup would commit its
+         * caller's half-done work. From cron or a shell there never is one.
+         * The server would refuse the SET TRANSACTION below as well, but in
+         * SQLSTATE; this says it in words, before any file is started.
+         */
+        if ($connection->transactionLevel() > 0) {
+            $this->error('Cannot back up from inside an open transaction: starting the backup\'s snapshot would commit it.');
+
+            return self::FAILURE;
+        }
+
         // Where the dashboard's Last Backup tile looks, unless told otherwise.
         $directory = $this->option('path') ?: Backups::directory();
 
@@ -75,7 +92,34 @@ class BackupDatabase extends Command
             return self::FAILURE;
         }
 
+        $snapshot = false;
+
         try {
+            /*
+             * Every table as it stood at one moment.
+             *
+             * The office does not stop for a backup — DEPLOY.md takes one before
+             * every deploy, in working hours. Read one table after another, each
+             * at its own moment, a payment saved in the second the dump takes
+             * landed in the tables read after it and missed those read before:
+             * party_ledger goes before party_ledger_allocation, so a restore
+             * brought back money adjusted against a file with no payment behind
+             * it, and with the foreign-key checks off nothing said so.
+             *
+             * So all of it is read inside one snapshot, which is what mysqldump
+             * --single-transaction does. Repeatable read is asked for by name,
+             * for this one transaction only: on a server whose sessions are set
+             * to read committed, WITH CONSISTENT SNAPSHOT is accepted and quietly
+             * does nothing. READ ONLY because a backup has no business writing;
+             * it sits in a versioned comment, as mysqldump writes its own, so a
+             * server too old to know it skips it rather than refusing the
+             * backup. MySQL from 5.6.5 and every MariaDB from 10.0 read it.
+             */
+            $session = $this->session($connection);
+            $connection->unprepared('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+            $connection->unprepared('START TRANSACTION WITH CONSISTENT SNAPSHOT /*!50605 , READ ONLY */');
+            $snapshot = true;
+
             $tables = $this->tables($connection, $database);
 
             $this->write($out, "-- $database, written ".date('Y-m-d H:i:s')." by artisan db:backup\n");
@@ -92,8 +136,40 @@ class BackupDatabase extends Command
                 $rows += $this->dumpTable($connection, $out, $table);
             }
 
+            /*
+             * And every one of them through the session that took the snapshot.
+             *
+             * A query that finds its connection gone — the server restarted, a
+             * host's time limit — is run again by Laravel on a new one, without
+             * a word. The snapshot went with the old session, so the tables read
+             * after that were read at a later moment than those before: the
+             * backup all of this is here to stop, reported as a success. It
+             * fails instead, and the next run takes a snapshot of its own.
+             */
+            if ($this->session($connection) !== $session) {
+                throw new \RuntimeException('The connection to the database dropped part way, so the tables were not all read at one moment. Run it again.');
+            }
+
+            // The last table is read. Nothing was written, so this only lets go.
+            $connection->unprepared('COMMIT');
+            $snapshot = false;
+
             $this->write($out, "SET FOREIGN_KEY_CHECKS = 1;\n");
         } catch (\Throwable $e) {
+            /*
+             * Let go of the snapshot on the way out too. Run from cron the
+             * process ends here and takes it with it, but a connection that
+             * lives on — in a test, say — would go on holding every table it
+             * read, and the next ALTER on one of them would wait for it.
+             */
+            if ($snapshot) {
+                try {
+                    $connection->unprepared('ROLLBACK');
+                } catch (\Throwable) {
+                    // Already gone with the connection, which is what was wanted.
+                }
+            }
+
             gzclose($out);
             @unlink($partial);
 
@@ -152,6 +228,12 @@ class BackupDatabase extends Command
         sort($names);
 
         return $names;
+    }
+
+    /** Which session on the server this connection is, by the server's own number for it. */
+    private function session($connection): int
+    {
+        return (int) $connection->selectOne('SELECT CONNECTION_ID() AS id')->id;
     }
 
     /** One table: how to build it, then what is in it. Returns the row count. */

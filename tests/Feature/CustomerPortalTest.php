@@ -98,7 +98,7 @@ class CustomerPortalTest extends TestCase
     {
         $customer = $this->party('customer', '9000000408');
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->get(route('customer.login'))
             ->assertRedirect(route('customer.dashboard'));
     }
@@ -131,7 +131,7 @@ class CustomerPortalTest extends TestCase
     {
         $customer = $this->party('customer', '9000000202');
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->get(route('userdashboard'))
             ->assertRedirect('/user');
     }
@@ -257,8 +257,12 @@ class CustomerPortalTest extends TestCase
      *
      * The session outlives the change, so the gate alone would let someone keep
      * reading an account the office has closed until they happen to sign out.
+     *
+     * Signed out, not merely refused. A page that only said no would leave the
+     * session standing, and the day the office switched the customer back on,
+     * whoever held it would be let straight back in without ever signing in.
      */
-    public function test_a_customer_deactivated_mid_session_is_stopped_at_the_next_page(): void
+    public function test_a_customer_deactivated_mid_session_is_signed_out_at_the_next_page(): void
     {
         $customer = $this->party('customer', '9000000305');
 
@@ -268,7 +272,233 @@ class CustomerPortalTest extends TestCase
         $customer->is_active = 0;
         $customer->save();
 
-        $this->get(route('customer.dashboard'))->assertNotFound();
+        $this->get(route('customer.dashboard'))->assertRedirect(route('customer.login'));
+        $this->assertNull(session('customer_id'), 'the session is ended, not just turned away');
+
+        // Switched back on, the old session stays ended. The customer signs in again.
+        $customer->is_active = 1;
+        $customer->save();
+
+        $this->get(route('customer.files'))->assertRedirect(route('customer.login'));
+
+        $this->signIn('9000000305', self::PASSWORD)->assertRedirect(route('customer.dashboard'));
+        $this->get(route('customer.files'))->assertOk();
+    }
+
+    /**
+     * Switched off and back on while the phone holding the session opened
+     * nothing.
+     *
+     * The test above has the phone open a page while the customer is off, and
+     * that page ends its session. A phone left in a drawer, or kept by
+     * whoever should not have it, opens none. Switched back on, the customer
+     * is exactly what they were when it signed in — a customer, active, the
+     * same password — so a gate that looked only at those would let it
+     * straight back in. The office having saved the record since is what
+     * gives it away.
+     */
+    public function test_switching_a_customer_off_and_on_ends_a_session_that_opened_nothing_meanwhile(): void
+    {
+        $customer = $this->party('customer', '9000000306');
+
+        $this->signIn('9000000306', self::PASSWORD);
+        $this->get(route('customer.statement'))->assertOk();
+
+        $phone = session()->all();
+
+        // Off on the edit screen, and on again twenty minutes later.
+        $admin = $this->admin();
+        $this->travel(1)->minutes();
+        $this->officeSaves($admin, $customer, ['is_active' => null]);
+        $this->assertSame(0, (int) $customer->fresh()->is_active);
+
+        $this->travel(20)->minutes();
+        $this->officeSaves($admin, $customer, ['is_active' => '1']);
+        $this->assertSame(1, (int) $customer->fresh()->is_active);
+
+        $this->flushSession();
+        $this->withSession($phone)
+            ->get(route('customer.statement'))
+            ->assertRedirect(route('customer.login'));
+
+        $this->assertNull(session('customer_id'), 'the session is ended, not let back in');
+
+        // The customer signs in again and carries on.
+        $this->signIn('9000000306', self::PASSWORD)->assertRedirect(route('customer.dashboard'));
+        $this->get(route('customer.statement'))->assertOk();
+    }
+
+    /**
+     * The office opening a customer's record and saving it as it was.
+     *
+     * Not a change, so nobody is signed out. The edit screen used to write the
+     * Active tick back as true over the 1 the database holds, which Eloquent
+     * counts as a change: every Save moved updated_at, and would have signed
+     * the customer out for nothing.
+     */
+    public function test_the_office_saving_a_customer_unchanged_signs_nobody_out(): void
+    {
+        $customer = $this->party('customer', '9000000307');
+
+        $this->signIn('9000000307', self::PASSWORD);
+        $this->get(route('customer.statement'))->assertOk();
+
+        $phone = session()->all();
+        $before = $customer->fresh()->updated_at;
+
+        $this->travel(5)->minutes();
+        $this->officeSaves($this->admin(), $customer, []);
+        $this->assertEquals($before, $customer->fresh()->updated_at, 'an unchanged save is not an edit');
+
+        $this->flushSession();
+        $this->withSession($phone)
+            ->get(route('customer.statement'))
+            ->assertOk();
+    }
+
+    /**
+     * The office saving a customer's record on its Edit screen, as the form
+     * posts it, with these fields changed. Null leaves a field out, which is
+     * how an unticked box arrives.
+     */
+    private function officeSaves(User $admin, PartyModel $customer, array $changes): void
+    {
+        $fields = array_filter($changes + [
+            'name' => $customer->name,
+            'mobile' => $customer->mobile,
+            'whatsapp' => $customer->whatsapp,
+            'address' => $customer->address,
+            'is_active' => '1',
+        ], fn ($value) => $value !== null);
+
+        $this->flushSession();
+        $this->actingAs($admin)
+            ->from(route('party.edit', $customer->id))
+            ->post(route('party.edit', $customer->id), $fields)
+            ->assertSessionHasNoErrors()
+            ->assertRedirect(route('party.index', 'customer'));
+    }
+
+    /**
+     * Every way a session can stop belonging to a customer who may use the
+     * portal, each ending it at the next page.
+     */
+    public static function lapses(): array
+    {
+        return [
+            'switched off by the office' => ['9000000320', fn (PartyModel $party) => $party->forceFill(['is_active' => 0])->save()],
+            'no longer a customer' => ['9000000321', fn (PartyModel $party) => $party->forceFill(['party_type' => 'vendor'])->save()],
+            'no longer there at all' => ['9000000322', fn (PartyModel $party) => $party->delete()],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('lapses')]
+    public function test_a_session_whose_customer_has_lapsed_is_ended(string $mobile, \Closure $lapse): void
+    {
+        $customer = $this->party('customer', $mobile);
+
+        $this->signIn($mobile, self::PASSWORD);
+        $this->get(route('customer.dashboard'))->assertOk();
+
+        $lapse($customer);
+
+        $this->get(route('customer.dashboard'))->assertRedirect(route('customer.login'));
+        $this->assertNull(session('customer_id'));
+    }
+
+    // ------------------------------------------- a session ends with its password
+
+    /**
+     * The office's way of cutting somebody off.
+     *
+     * A customer rings to say someone else has their login — a broker, a lost
+     * phone. The office sets a new password, and whoever was already signed in
+     * with the old one is out at their next page. Before this, they kept
+     * reading the statement and the scans for as long as they kept the session
+     * in use.
+     */
+    public function test_the_office_setting_a_new_password_signs_out_whoever_was_signed_in(): void
+    {
+        $customer = $this->party('customer', '9000000323');
+
+        $this->signIn('9000000323', self::PASSWORD);
+        $this->get(route('customer.statement'))->assertOk();
+
+        $phone = session()->all();
+
+        $this->flushSession();
+        $this->actingAs($this->admin())
+            ->post(route('party.password', $customer->id), [
+                'password' => 'issued-again-by-the-office',
+                'password_confirmation' => 'issued-again-by-the-office',
+            ])
+            ->assertRedirect(route('party.index', 'customer'));
+
+        // The phone that was signed in comes back with the session it had.
+        $this->flushSession();
+        $this->withSession($phone)
+            ->get(route('customer.statement'))
+            ->assertRedirect(route('customer.login'));
+
+        $this->assertNull(session('customer_id'), 'the session is ended, not just turned away');
+
+        // The customer, given the new one, gets in with it.
+        $this->signIn('9000000323', 'issued-again-by-the-office')
+            ->assertRedirect(route('customer.dashboard'));
+        $this->get(route('customer.statement'))->assertOk();
+    }
+
+    /**
+     * A customer changing their own password because someone else knows it.
+     *
+     * The phone they changed it on carries on — they have just proved the old
+     * password, so turning them out would be punishing the one person who did
+     * the right thing. Every other phone is out at its next page.
+     */
+    public function test_changing_your_own_password_signs_out_every_other_phone(): void
+    {
+        $this->party('customer', '9000000324');
+
+        // Another phone, signed in and put aside.
+        $this->signIn('9000000324', self::PASSWORD);
+        $otherPhone = session()->all();
+
+        // The customer's own phone.
+        $this->flushSession();
+        $this->signIn('9000000324', self::PASSWORD);
+        $this->changePassword([
+            'current_password' => self::PASSWORD,
+            'password' => 'a-brand-new-one',
+            'password_confirmation' => 'a-brand-new-one',
+        ])->assertRedirect(route('customer.dashboard'));
+
+        $this->get(route('customer.dashboard'))->assertOk();
+        $this->get(route('customer.files'))->assertOk();
+
+        $this->flushSession();
+        $this->withSession($otherPhone)
+            ->get(route('customer.files'))
+            ->assertRedirect(route('customer.login'));
+
+        $this->assertNull(session('customer_id'));
+    }
+
+    /**
+     * A session made before sessions carried a fingerprint of the password.
+     *
+     * There is no telling which password it was opened with, so it is treated
+     * as opened with a different one: whoever holds it signs in once more. That
+     * is what makes a password changed before this was deployed count too.
+     */
+    public function test_a_session_with_no_password_fingerprint_is_ended(): void
+    {
+        $customer = $this->party('customer', '9000000325');
+
+        $this->withSession(['customer_id' => $customer->id, 'customer_name' => $customer->name])
+            ->get(route('customer.dashboard'))
+            ->assertRedirect(route('customer.login'));
+
+        $this->assertNull(session('customer_id'));
     }
 
     // --------------------------------------------------------- the statement
@@ -323,7 +553,7 @@ class CustomerPortalTest extends TestCase
         $this->entry($mine->id, '2026-01-10', 'debit', 5000, 'My own work');
         $this->entry($theirs->id, '2026-01-11', 'debit', 9999, 'Somebody else entirely');
 
-        $body = $this->withSession(['customer_id' => $mine->id])
+        $body = $this->actingAsCustomer($mine)
             ->get(route('customer.statement'))
             ->assertOk()
             ->getContent();
@@ -351,7 +581,7 @@ class CustomerPortalTest extends TestCase
         $this->entry($theirs->id, '2026-01-11', 'debit', 8765, 'Somebody else entirely');
 
         foreach (['id', 'party_id', 'customer_id'] as $name) {
-            $body = $this->withSession(['customer_id' => $mine->id])
+            $body = $this->actingAsCustomer($mine)
                 ->get(route('customer.statement', [$name => $theirs->id]))
                 ->assertOk()
                 ->getContent();
@@ -381,7 +611,7 @@ class CustomerPortalTest extends TestCase
             ->assertOk()
             ->json('page');
 
-        $portal = $this->withSession(['customer_id' => $customer->id])
+        $portal = $this->actingAsCustomer($customer)
             ->getJson(route('customer.statement'))
             ->assertOk()
             ->json('page');
@@ -399,13 +629,13 @@ class CustomerPortalTest extends TestCase
         $this->entry($owing->id, '2026-01-05', 'debit', 7500);
         $this->entry($inCredit->id, '2026-01-05', 'credit', 2500);
 
-        $owed = $this->withSession(['customer_id' => $owing->id])
+        $owed = $this->actingAsCustomer($owing)
             ->get(route('customer.dashboard'))->assertOk()->getContent();
 
         $this->assertStringContainsString('You owe', $owed);
         $this->assertStringContainsString('7,500.00', $owed);
 
-        $held = $this->withSession(['customer_id' => $inCredit->id])
+        $held = $this->actingAsCustomer($inCredit)
             ->get(route('customer.dashboard'))->assertOk()->getContent();
 
         $this->assertStringContainsString('In your credit', $held);
@@ -420,7 +650,7 @@ class CustomerPortalTest extends TestCase
         $this->entry($customer->id, '2026-01-05', 'debit', 3000);
         $this->entry($customer->id, '2026-01-06', 'credit', 3000);
 
-        $body = $this->withSession(['customer_id' => $customer->id])
+        $body = $this->actingAsCustomer($customer)
             ->get(route('customer.dashboard'))->assertOk()->getContent();
 
         $this->assertStringContainsString('Account settled', $body);
@@ -434,7 +664,7 @@ class CustomerPortalTest extends TestCase
         $this->entry($customer->id, '2026-01-10', 'debit', 1000, 'January work');
         $this->entry($customer->id, '2026-06-10', 'debit', 2000, 'June work');
 
-        $body = $this->withSession(['customer_id' => $customer->id])
+        $body = $this->actingAsCustomer($customer)
             ->get(route('customer.statement', ['from' => '2026-06-01', 'to' => '2026-06-30']))
             ->assertOk()
             ->getContent();
@@ -447,7 +677,7 @@ class CustomerPortalTest extends TestCase
     {
         $customer = $this->party('customer', '9000000508');
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->get(route('customer.statement', ['from' => '2026-06-30', 'to' => '2026-06-01']))
             ->assertSessionHasErrors('to');
     }
@@ -471,7 +701,7 @@ class CustomerPortalTest extends TestCase
 
         $this->assertStringNotContainsString(
             'admin/',
-            $this->withSession(['customer_id' => $customer->id])
+            $this->actingAsCustomer($customer)
                 ->get(route('customer.statement'))->assertOk()->getContent(),
             'no link into the office'
         );
@@ -482,7 +712,7 @@ class CustomerPortalTest extends TestCase
          * "vendor" matches Bootstrap and says nothing about what leaked — it
          * fails whatever the code does, which is worse than not testing it.
          */
-        $payload = $this->withSession(['customer_id' => $customer->id])
+        $payload = $this->actingAsCustomer($customer)
             ->getJson(route('customer.statement'))
             ->assertOk()
             ->json();
@@ -539,7 +769,7 @@ class CustomerPortalTest extends TestCase
         $this->fileWithVendor($mine, ['registration_no' => 'BR06MINE01']);
         $this->fileWithVendor($theirs, ['registration_no' => 'BR06THEM01', 'vendor_mobile' => '9000009998']);
 
-        $body = $this->withSession(['customer_id' => $mine->id])
+        $body = $this->actingAsCustomer($mine)
             ->get(route('customer.files'))
             ->assertOk()
             ->getContent();
@@ -562,7 +792,7 @@ class CustomerPortalTest extends TestCase
 
         $this->fileWithVendor($customer);
 
-        $payload = json_encode($this->withSession(['customer_id' => $customer->id])
+        $payload = json_encode($this->actingAsCustomer($customer)
             ->getJson(route('customer.files'))
             ->assertOk()
             ->json());
@@ -585,7 +815,7 @@ class CustomerPortalTest extends TestCase
 
         $this->fileWithVendor($customer, ['status' => 'file_dispatch']);
 
-        $body = $this->withSession(['customer_id' => $customer->id])
+        $body = $this->actingAsCustomer($customer)
             ->get(route('customer.files'))
             ->assertOk()
             ->getContent();
@@ -639,7 +869,7 @@ class CustomerPortalTest extends TestCase
             ]);
         }
 
-        $body = $this->withSession(['customer_id' => $customer->id])
+        $body = $this->actingAsCustomer($customer)
             ->get(route('customer.files'))->assertOk()->getContent();
 
         foreach (array_keys(\App\Models\WorkFileModel::STATUSES) as $status) {
@@ -659,7 +889,7 @@ class CustomerPortalTest extends TestCase
 
         $this->fileWithVendor($customer, ['status' => 'cancelled', 'registration_no' => 'BR06CANX1']);
 
-        $row = collect($this->withSession(['customer_id' => $customer->id])
+        $row = collect($this->actingAsCustomer($customer)
             ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
             ->firstWhere('registration_no', 'BR06CANX1');
 
@@ -684,7 +914,7 @@ class CustomerPortalTest extends TestCase
         $done->approved_on = '2026-02-14';
         $done->save();
 
-        $row = collect($this->withSession(['customer_id' => $customer->id])
+        $row = collect($this->actingAsCustomer($customer)
             ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
             ->firstWhere('registration_no', 'BR06SPLT1');
 
@@ -701,7 +931,7 @@ class CustomerPortalTest extends TestCase
 
         $this->fileWithVendor($customer, ['registration_no' => 'BR06ONEW1']);
 
-        $row = collect($this->withSession(['customer_id' => $customer->id])
+        $row = collect($this->actingAsCustomer($customer)
             ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
             ->firstWhere('registration_no', 'BR06ONEW1');
 
@@ -718,7 +948,7 @@ class CustomerPortalTest extends TestCase
         $this->fileWithVendor($customer, ['status' => 'approval_done', 'vendor_mobile' => '9000009996', 'registration_no' => 'BR06AAA03']);
         $this->fileWithVendor($customer, ['status' => 'paper_returned', 'vendor_mobile' => '9000009995', 'registration_no' => 'BR06AAA04']);
 
-        $body = $this->withSession(['customer_id' => $customer->id])
+        $body = $this->actingAsCustomer($customer)
             ->get(route('customer.dashboard'))
             ->assertOk()
             ->getContent();
@@ -733,7 +963,7 @@ class CustomerPortalTest extends TestCase
     {
         $customer = $this->party('customer', '9000000609');
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->get(route('customer.dashboard'))
             ->assertOk()
             ->assertSee('Nothing yet');
@@ -747,7 +977,7 @@ class CustomerPortalTest extends TestCase
 
         $this->assertStringNotContainsString(
             'admin/',
-            $this->withSession(['customer_id' => $customer->id])
+            $this->actingAsCustomer($customer)
                 ->get(route('customer.files'))->assertOk()->getContent()
         );
     }
@@ -810,7 +1040,7 @@ class CustomerPortalTest extends TestCase
         $customer = $this->party('customer', '9000000801');
         $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009801', 'registration_no' => 'BR06OPEN1']);
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->get(route('customer.file', $file->id))
             ->assertOk()
             ->assertSee('BR06OPEN1')
@@ -828,7 +1058,7 @@ class CustomerPortalTest extends TestCase
 
         $file = $this->fileWithVendor($theirs, ['vendor_mobile' => '9000009802', 'registration_no' => 'BR06THRS1']);
 
-        $this->withSession(['customer_id' => $mine->id])
+        $this->actingAsCustomer($mine)
             ->get(route('customer.file', $file->id))
             ->assertNotFound();
     }
@@ -847,7 +1077,7 @@ class CustomerPortalTest extends TestCase
         $customer = $this->party('customer', '9000000805');
         $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009804']);
 
-        $payload = json_encode($this->withSession(['customer_id' => $customer->id])
+        $payload = json_encode($this->actingAsCustomer($customer)
             ->getJson(route('customer.file', $file->id))->assertOk()->json());
 
         $this->assertStringNotContainsString('vendor', strtolower($payload));
@@ -872,7 +1102,7 @@ class CustomerPortalTest extends TestCase
         $done->approved_on = '2026-03-09';
         $done->save();
 
-        $rows = $this->withSession(['customer_id' => $customer->id])
+        $rows = $this->actingAsCustomer($customer)
             ->getJson(route('customer.file', $file->id))->assertOk()->json('props.rows');
 
         $this->assertCount(2, $rows);
@@ -900,7 +1130,7 @@ class CustomerPortalTest extends TestCase
         $item = \App\Models\WorkFileItemModel::where('work_file_id', $file->id)->first();
         $this->withApproval($file, $item->id);
 
-        $response = $this->withSession(['customer_id' => $customer->id])
+        $response = $this->actingAsCustomer($customer)
             ->get(route('customer.file.approval', ['id' => $file->id, 'item' => $item->id]))
             ->assertOk();
 
@@ -927,7 +1157,7 @@ class CustomerPortalTest extends TestCase
         $item = \App\Models\WorkFileItemModel::where('work_file_id', $file->id)->first();
         $this->withApproval($file, $item->id);
 
-        $this->withSession(['customer_id' => $mine->id])
+        $this->actingAsCustomer($mine)
             ->get(route('customer.file.approval', ['id' => $file->id, 'item' => $item->id]))
             ->assertNotFound();
 
@@ -941,6 +1171,47 @@ class CustomerPortalTest extends TestCase
 
         $this->get(route('customer.file.approval', ['id' => $file->id, 'item' => $item->id]))
             ->assertRedirect(route('customer.login'));
+    }
+
+    /**
+     * Switched off, and the approvals go with everything else.
+     *
+     * This route resolves the file straight from the session id, and every
+     * other page refused a deactivated customer only because it asked for the
+     * customer first — so the scans kept coming, folder and work alike, for
+     * whoever held the phone. The gate now asks, for every portal route.
+     */
+    public function test_a_deactivated_customer_gets_no_approval_image(): void
+    {
+        $customer = $this->party('customer', '9000000820');
+        $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009920', 'status' => 'approval_done']);
+        $item = \App\Models\WorkFileItemModel::where('work_file_id', $file->id)->first();
+
+        $this->withApproval($file);
+        $this->withApproval($file, $item->id);
+
+        $urls = [
+            'the folder' => route('customer.file.approval', ['id' => $file->id]),
+            'the work' => route('customer.file.approval', ['id' => $file->id, 'item' => $item->id]),
+        ];
+
+        $this->signIn('9000000820', self::PASSWORD);
+        $phone = session()->all();
+
+        foreach ($urls as $url) {
+            $this->get($url)->assertOk();
+        }
+
+        $customer->is_active = 0;
+        $customer->save();
+
+        foreach ($urls as $which => $url) {
+            $this->flushSession();
+            $response = $this->withSession($phone)->get($url);
+
+            $this->assertSame(302, $response->getStatusCode(), $which.' is not served');
+            $response->assertRedirect(route('customer.login'));
+        }
     }
 
     /**
@@ -959,7 +1230,7 @@ class CustomerPortalTest extends TestCase
         $this->withApproval($other, $otherItem->id);
 
         // Our file, their item.
-        $this->withSession(['customer_id' => $mine->id])
+        $this->actingAsCustomer($mine)
             ->get(route('customer.file.approval', ['id' => $ours->id, 'item' => $otherItem->id]))
             ->assertNotFound();
     }
@@ -980,7 +1251,7 @@ class CustomerPortalTest extends TestCase
         $item = \App\Models\WorkFileItemModel::where('work_file_id', $file->id)->first();
         $stored = $this->withApproval($file, $item->id);
 
-        $body = $this->withSession(['customer_id' => $customer->id])
+        $body = $this->actingAsCustomer($customer)
             ->getJson(route('customer.file', $file->id))->assertOk();
 
         $this->assertSame(
@@ -1005,7 +1276,7 @@ class CustomerPortalTest extends TestCase
         $customer = $this->party('customer', '9000000812');
         $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009810']);
 
-        $rows = $this->withSession(['customer_id' => $customer->id])
+        $rows = $this->actingAsCustomer($customer)
             ->getJson(route('customer.file', $file->id))->assertOk()->json('props.rows');
 
         $this->assertNull($rows[0]['screenshot_url']);
@@ -1014,7 +1285,7 @@ class CustomerPortalTest extends TestCase
         // And asking for it anyway gets nothing.
         $item = \App\Models\WorkFileItemModel::where('work_file_id', $file->id)->first();
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->get(route('customer.file.approval', ['id' => $file->id, 'item' => $item->id]))
             ->assertNotFound();
     }
@@ -1057,7 +1328,7 @@ class CustomerPortalTest extends TestCase
         $customer = $this->party('customer', '9000000813');
         $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009811']);
 
-        $row = collect($this->withSession(['customer_id' => $customer->id])
+        $row = collect($this->actingAsCustomer($customer)
             ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
             ->firstWhere('file_no', $file->file_no);
 
@@ -1074,7 +1345,7 @@ class CustomerPortalTest extends TestCase
         $file->remarks = 'Original RC to be collected from you';
         $file->save();
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->get(route('customer.file', $file->id))
             ->assertOk()
             ->assertSee('Original RC to be collected from you');
@@ -1088,7 +1359,7 @@ class CustomerPortalTest extends TestCase
         $file->remarks = 'Awaiting your signature';
         $file->save();
 
-        $row = collect($this->withSession(['customer_id' => $customer->id])
+        $row = collect($this->actingAsCustomer($customer)
             ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
             ->firstWhere('registration_no', 'BR06REMK1');
 
@@ -1100,7 +1371,7 @@ class CustomerPortalTest extends TestCase
         $customer = $this->party('customer', '9000000903');
         $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009903', 'registration_no' => 'BR06NOREM']);
 
-        $row = collect($this->withSession(['customer_id' => $customer->id])
+        $row = collect($this->actingAsCustomer($customer)
             ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
             ->firstWhere('registration_no', 'BR06NOREM');
 
@@ -1135,7 +1406,7 @@ class CustomerPortalTest extends TestCase
         ]);
 
         foreach (['customer.files', 'customer.file'] as $route) {
-            $body = $this->withSession(['customer_id' => $customer->id])
+            $body = $this->actingAsCustomer($customer)
                 ->get($route === 'customer.file' ? route($route, $file->id) : route($route))
                 ->assertOk()
                 ->getContent();
@@ -1187,7 +1458,7 @@ class CustomerPortalTest extends TestCase
         $this->log($file->id, 'in_office', 'file_dispatch', null);
         $this->log($file->id, 'file_dispatch', 'under_verification', 'Sent for verification');
 
-        $timeline = $this->withSession(['customer_id' => $customer->id])
+        $timeline = $this->actingAsCustomer($customer)
             ->getJson(route('customer.file', $file->id))->assertOk()->json('page.timeline');
 
         $this->assertCount(3, $timeline, 'every entry is shown, not a filtered few');
@@ -1210,7 +1481,7 @@ class CustomerPortalTest extends TestCase
 
         $this->log($file->id, 'file_dispatch', 'approval_done', 'Online Done', $item->id);
 
-        $entry = collect($this->withSession(['customer_id' => $customer->id])
+        $entry = collect($this->actingAsCustomer($customer)
             ->getJson(route('customer.file', $file->id))->assertOk()->json('page.timeline'))
             ->firstWhere('remark', 'Online Done');
 
@@ -1235,7 +1506,7 @@ class CustomerPortalTest extends TestCase
         $this->log($file->id, 'in_office', 'file_dispatch', 'Sent by hand — Given to Dabloo Ji Muzaffarpur');
         $this->log($file->id, 'file_dispatch', 'in_office', 'Papers returned by Dabloo Ji Muzaffarpur');
 
-        $body = $this->withSession(['customer_id' => $customer->id])
+        $body = $this->actingAsCustomer($customer)
             ->get(route('customer.file', $file->id))->assertOk()->getContent();
 
         $this->assertStringNotContainsString('Dabloo Ji', $body);
@@ -1319,7 +1590,7 @@ class CustomerPortalTest extends TestCase
         $file = $this->fileWithVendor($theirs, ['vendor_mobile' => '9000009005']);
         $this->log($file->id, 'in_office', 'under_verification', 'Their private note');
 
-        $this->withSession(['customer_id' => $mine->id])
+        $this->actingAsCustomer($mine)
             ->get(route('customer.file', $file->id))
             ->assertNotFound();
     }
@@ -1329,7 +1600,7 @@ class CustomerPortalTest extends TestCase
         $customer = $this->party('customer', '9000001007');
         $file = $this->fileWithVendor($customer, ['vendor_mobile' => '9000009006']);
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->get(route('customer.file', $file->id))
             ->assertOk()
             ->assertDontSee('History');
@@ -1339,7 +1610,7 @@ class CustomerPortalTest extends TestCase
 
     private function listRow(PartyModel $customer, string $registration): array
     {
-        return collect($this->withSession(['customer_id' => $customer->id])
+        return collect($this->actingAsCustomer($customer)
             ->getJson(route('customer.files'))->assertOk()->json('props.rows'))
             ->firstWhere('registration_no', $registration);
     }
@@ -1435,7 +1706,7 @@ class CustomerPortalTest extends TestCase
 
         $this->assertSame('Sent by hand', $row['latest_remark']);
 
-        $body = $this->withSession(['customer_id' => $customer->id])
+        $body = $this->actingAsCustomer($customer)
             ->get(route('customer.files'))->assertOk()->getContent();
 
         $this->assertStringNotContainsString('Dabloo Ji', $body);
@@ -1463,7 +1734,7 @@ class CustomerPortalTest extends TestCase
     {
         $customer = $this->party('customer', '9000001107');
 
-        $columns = collect($this->withSession(['customer_id' => $customer->id])
+        $columns = collect($this->actingAsCustomer($customer)
             ->getJson(route('customer.files'))->assertOk()->json('props.columns'));
 
         $column = $columns->firstWhere('key', 'latest_remark');
@@ -1525,7 +1796,7 @@ class CustomerPortalTest extends TestCase
     {
         $customer = $this->party('customer', '9000001202');
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->changePassword([
                 'current_password' => 'not-the-right-one',
                 'password' => 'a-brand-new-one',
@@ -1543,7 +1814,7 @@ class CustomerPortalTest extends TestCase
     {
         $customer = $this->party('customer', '9000001203');
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->changePassword([
                 'current_password' => self::PASSWORD,
                 'password' => 'a-brand-new-one',
@@ -1558,7 +1829,7 @@ class CustomerPortalTest extends TestCase
     {
         $customer = $this->party('customer', '9000001204');
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->changePassword([
                 'current_password' => self::PASSWORD,
                 'password' => 'short',
@@ -1574,7 +1845,7 @@ class CustomerPortalTest extends TestCase
     {
         $customer = $this->party('customer', '9000001205');
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->changePassword([
                 'current_password' => self::PASSWORD,
                 'password' => self::PASSWORD,
@@ -1603,7 +1874,7 @@ class CustomerPortalTest extends TestCase
         $mine = $this->party('customer', '9000001207');
         $theirs = $this->party('customer', '9000001208');
 
-        $this->withSession(['customer_id' => $mine->id])
+        $this->actingAsCustomer($mine)
             ->changePassword([
                 'id' => $theirs->id,
                 'customer_id' => $theirs->id,
@@ -1624,7 +1895,7 @@ class CustomerPortalTest extends TestCase
 
         $before = $customer->fresh()->updated_at;
 
-        $this->withSession(['customer_id' => $customer->id])
+        $this->actingAsCustomer($customer)
             ->changePassword([
                 'current_password' => self::PASSWORD,
                 'password' => 'a-brand-new-one',
@@ -1638,14 +1909,14 @@ class CustomerPortalTest extends TestCase
     {
         $customer = $this->party('customer', '9000001210');
 
-        $body = $this->withSession(['customer_id' => $customer->id])
+        $body = $this->actingAsCustomer($customer)
             ->get(route('customer.password'))
             ->assertOk()
             ->getContent();
 
         $this->assertStringContainsString('data-vue="vue-customer-password"', $body);
 
-        $props = $this->withSession(['customer_id' => $customer->id])
+        $props = $this->actingAsCustomer($customer)
             ->getJson(route('customer.password'))->assertOk()->json('props');
 
         $this->assertTrue($props['requireCurrent'], 'the form asks for the current password');
@@ -1693,7 +1964,7 @@ class CustomerPortalTest extends TestCase
         $this->fileWithVendor($customer, ['vendor_mobile' => '9000009901']);
         $this->entry($customer->id, '2026-01-05', 'debit', 4000);
 
-        $json = $this->withSession(['customer_id' => $customer->id])
+        $json = $this->actingAsCustomer($customer)
             ->getJson(route($route))
             ->assertOk()
             ->json();
@@ -1703,7 +1974,7 @@ class CustomerPortalTest extends TestCase
 
         // The page has to mount the same thing, or the two representations of
         // one screen have drifted.
-        $page = $this->withSession(['customer_id' => $customer->id])
+        $page = $this->actingAsCustomer($customer)
             ->get(route($route))->assertOk()->getContent();
 
         $this->assertStringContainsString('data-vue="'.$mount.'"', $page);
@@ -1727,7 +1998,7 @@ class CustomerPortalTest extends TestCase
         $this->entry($customer->id, '2026-06-10', 'debit', 2500, 'June work');
         $this->entry($customer->id, '2026-06-20', 'credit', 1000, 'Part payment');
 
-        $page = $this->withSession(['customer_id' => $customer->id])
+        $page = $this->actingAsCustomer($customer)
             ->getJson(route('customer.statement', ['from' => '2026-06-01', 'to' => '2026-06-30']))
             ->assertOk();
 
@@ -1759,7 +2030,7 @@ class CustomerPortalTest extends TestCase
         $this->entry($customer->id, '2026-01-10', 'debit', 7000);
         $this->entry($customer->id, '2026-02-10', 'credit', 2000);
 
-        $body = $this->withSession(['customer_id' => $customer->id])
+        $body = $this->actingAsCustomer($customer)
             ->getJson(route('customer.statement'))->assertOk();
 
         $this->assertEquals($body->json('page.opening'), $body->json('props.lead.0.balance'));
@@ -1774,7 +2045,7 @@ class CustomerPortalTest extends TestCase
 
         $this->entry($customer->id, '2026-01-10', 'debit', 3300, 'Before the period');
 
-        $page = $this->withSession(['customer_id' => $customer->id])
+        $page = $this->actingAsCustomer($customer)
             ->getJson(route('customer.statement', ['from' => '2026-06-01', 'to' => '2026-06-30']))
             ->assertOk();
 
@@ -1797,12 +2068,12 @@ class CustomerPortalTest extends TestCase
 
         $this->entry($customer->id, '2026-03-01', 'debit', 5000, 'Work on a file', $file->id);
 
-        $rows = $this->withSession(['customer_id' => $customer->id])
+        $rows = $this->actingAsCustomer($customer)
             ->getJson(route('customer.statement'))->assertOk()->json('props.rows');
 
         $this->assertSame('Original RC collected', $rows[0]['remarks']);
 
-        $columns = $this->withSession(['customer_id' => $customer->id])
+        $columns = $this->actingAsCustomer($customer)
             ->getJson(route('customer.statement'))->assertOk()->json('props.columns');
 
         $this->assertContains('remarks', array_column($columns, 'key'), 'and a column to show it in');
@@ -1815,7 +2086,7 @@ class CustomerPortalTest extends TestCase
 
         $this->entry($customer->id, '2026-03-01', 'debit', 5000, 'Typed straight into the ledger');
 
-        $columns = $this->withSession(['customer_id' => $customer->id])
+        $columns = $this->actingAsCustomer($customer)
             ->getJson(route('customer.statement'))->assertOk()->json('props.columns');
 
         $this->assertNotContains('remarks', array_column($columns, 'key'));
@@ -1832,7 +2103,7 @@ class CustomerPortalTest extends TestCase
         $this->entry($customer->id, '2026-03-01', 'debit', 5000, 'From a file', $file->id);
         $this->entry($customer->id, '2026-03-02', 'credit', 1000, 'A payment received');
 
-        $rows = collect($this->withSession(['customer_id' => $customer->id])
+        $rows = collect($this->actingAsCustomer($customer)
             ->getJson(route('customer.statement'))->assertOk()->json('props.rows'));
 
         $this->assertSame('A note on the file', $rows->firstWhere('particular', 'From a file')['remarks']);
@@ -1863,7 +2134,7 @@ class CustomerPortalTest extends TestCase
 
         $this->entry($customer->id, '2026-03-01', 'debit', 5000, 'From a file', $file->id);
 
-        $body = $this->withSession(['customer_id' => $customer->id])
+        $body = $this->actingAsCustomer($customer)
             ->get(route('customer.statement'))->assertOk()->getContent();
 
         $this->assertStringContainsString('Safe to show', $body);

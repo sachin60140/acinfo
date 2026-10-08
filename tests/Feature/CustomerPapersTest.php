@@ -127,7 +127,7 @@ class CustomerPapersTest extends TestCase
 
     private function asCustomer(?PartyModel $customer = null)
     {
-        return $this->withSession(['customer_id' => ($customer ?? $this->customer)->id]);
+        return $this->actingAsCustomer($customer ?? $this->customer);
     }
 
     public function test_the_file_page_names_each_paper_still_needed(): void

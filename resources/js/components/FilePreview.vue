@@ -9,6 +9,12 @@
  *
  * Images are shown; a PDF is given the browser's own viewer in a frame, which
  * is the one thing that reliably renders one everywhere.
+ *
+ * Which of the two a document is, the server says. The address cannot:
+ * approvals are served by a route, /admin/file/{id}/approval/{item}, with no
+ * extension on it, and the ".pdf" this used to look for at the end was never
+ * there. Every PDF approval was drawn as an image that would not load, and the
+ * office was told the RTO's evidence had been removed from the server.
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
@@ -17,17 +23,29 @@ const props = defineProps({
     // single ref to drive this.
     src: { type: String, default: null },
     title: { type: String, default: 'Approval screenshot' },
+    // Whether the stored document is a PDF, as the server that stored it says.
+    pdf: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(['close']);
 
 const open = computed(() => Boolean(props.src));
 
-const isPdf = computed(() => /\.pdf(\?|#|$)/i.test(props.src ?? ''));
+// The address is still read, for one that does end in .pdf.
+const isPdf = computed(() => props.pdf || /\.pdf(\?|#|$)/i.test(props.src ?? ''));
 
-// A document that will not load says so, rather than leaving an empty box that
-// reads as the page having broken.
-const broken = ref(false);
+/*
+ * A document that will not load as an image goes to the frame.
+ *
+ * It used to be declared missing — "removed from the server" — which was a
+ * guess, and for every PDF approval a wrong one: the file was there, and only
+ * the guess at its type was not. The frame shows whatever the server has at
+ * that address: the document, if it is one a browser can show, or the server's
+ * own word that there is nothing there. Neither is a guess.
+ */
+const notAnImage = ref(false);
+
+const framed = computed(() => isPdf.value || notAnImage.value);
 
 const closeButton = ref(null);
 
@@ -75,7 +93,7 @@ watch(open, (isOpen) => {
         return;
     }
 
-    broken.value = false;
+    notAnImage.value = false;
     bind();
 
     // Focus lands on the way out, so Escape is not the only way back.
@@ -110,24 +128,18 @@ onBeforeUnmount(unbind);
                 </div>
 
                 <div class="preview__body">
-                    <div v-if="broken" class="preview__missing">
-                        <i class="bi bi-exclamation-triangle"></i>
-                        <p>This document could not be loaded. It may have been moved or removed from the server.</p>
-                    </div>
-
                     <iframe
-                        v-else-if="isPdf"
+                        v-if="framed"
                         class="preview__frame"
                         :src="src"
-                        :title="title"
-                        @error="broken = true"></iframe>
+                        :title="title"></iframe>
 
                     <img
                         v-else
                         class="preview__image"
                         :src="src"
                         :alt="title"
-                        @error="broken = true">
+                        @error="notAnImage = true">
                 </div>
             </div>
         </div>
@@ -232,24 +244,6 @@ onBeforeUnmount(unbind);
     border: 0;
     height: 78vh;
     width: 100%;
-}
-
-.preview__missing {
-    color: var(--n-600, #475569);
-    padding: var(--s-6, 1.5rem);
-    text-align: center;
-}
-
-.preview__missing i {
-    color: var(--warn-500, #f59e0b);
-    display: block;
-    font-size: 1.75rem;
-    margin-bottom: var(--s-2, 0.5rem);
-}
-
-.preview__missing p {
-    margin: 0;
-    max-width: 32ch;
 }
 
 @media (max-width: 575.98px) {

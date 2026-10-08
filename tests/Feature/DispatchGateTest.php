@@ -305,7 +305,7 @@ class DispatchGateTest extends TestCase
         $latest = WorkFileModel::latestCustomerUpdates([$file->id])[$file->id]['remark'] ?? '';
         $this->assertStringNotContainsString('friend of the inspector', (string) $latest);
 
-        $body = $this->withSession(['customer_id' => $this->customer->id])
+        $body = $this->actingAsCustomer($this->customer)
             ->get(route('customer.file', $file->id))->assertOk()->getContent();
         $this->assertStringNotContainsString('friend of the inspector', $body);
     }

@@ -817,7 +817,7 @@ class ReadjustPaymentTest extends TestCase
         $this->assertNull($rows[$untouched->id]['office_note'], 'a payment adjusted when typed, and never since, has a note');
 
         // The customer's statement never carries it.
-        $said = $this->withSession(['customer_id' => $this->customer->id])
+        $said = $this->actingAsCustomer($this->customer)
             ->getJson(route('customer.statement'))->assertOk()->getContent();
 
         $this->assertStringNotContainsString('Files changed', $said);
@@ -901,7 +901,7 @@ class ReadjustPaymentTest extends TestCase
         $this->assertStringNotContainsString('·', $office, 'a released line is still named');
         $this->assertStringContainsString('3,000.00', $office);
 
-        $said = collect($this->withSession(['customer_id' => $this->customer->id])
+        $said = collect($this->actingAsCustomer($this->customer)
             ->getJson(route('customer.statement'))->assertOk()->json('props.rows'))->keyBy('id')[$entry->id]['against'] ?? null;
 
         $this->assertStringContainsString($second->registration_no, (string) $said);

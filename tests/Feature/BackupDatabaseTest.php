@@ -2,8 +2,11 @@
 
 namespace Tests\Feature;
 
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -46,6 +49,12 @@ class BackupDatabaseTest extends TestCase
         File::deleteDirectory($this->folder);
 
         foreach ($this->databases as $name) {
+            // A session still inside a transaction on the scratch database holds
+            // its tables, and DROP DATABASE would wait for it — for a year, by
+            // MySQL's default — instead of letting a failed test fail.
+            DB::disconnect($name);
+            DB::disconnect($name.'_office');
+
             DB::statement('DROP DATABASE IF EXISTS `'.$name.'`');
         }
 
@@ -71,6 +80,44 @@ class BackupDatabaseTest extends TestCase
     private function on(string $database)
     {
         return DB::connection($database);
+    }
+
+    /** A second session on the same database: somebody else in the office, saving. */
+    private function office(string $database)
+    {
+        config(['database.connections.'.$database.'_office' => config('database.connections.'.$database)]);
+
+        return DB::connection($database.'_office');
+    }
+
+    /**
+     * Yesterday's payment, adjusted against its file, in two tables named as
+     * the ledger's are — so party_ledger is read before party_ledger_allocation,
+     * as it is in the real one.
+     */
+    private function ledger(string $tag): string
+    {
+        $source = $this->scratch($tag);
+
+        $this->on($source)->unprepared('CREATE TABLE `party_ledger` (`id` int unsigned NOT NULL AUTO_INCREMENT,
+            `amount` decimal(12,2) NOT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB');
+        $this->on($source)->unprepared('CREATE TABLE `party_ledger_allocation` (`id` int unsigned NOT NULL AUTO_INCREMENT,
+            `entry_id` int unsigned NOT NULL, `amount` decimal(12,2) NOT NULL, PRIMARY KEY (`id`),
+            CONSTRAINT `fk_entry` FOREIGN KEY (`entry_id`) REFERENCES `party_ledger` (`id`)) ENGINE=InnoDB');
+
+        $yesterday = $this->on($source)->table('party_ledger')->insertGetId(['amount' => 1000]);
+        $this->on($source)->table('party_ledger_allocation')->insert(['entry_id' => $yesterday, 'amount' => 1000]);
+
+        return $source;
+    }
+
+    /** Today's payment and its adjustment, saved together as the Entry screen saves them. */
+    private function payToday($office): void
+    {
+        $office->transaction(function () use ($office) {
+            $today = $office->table('party_ledger')->insertGetId(['amount' => 500]);
+            $office->table('party_ledger_allocation')->insert(['entry_id' => $today, 'amount' => 500]);
+        });
     }
 
     private function backup(string $database, array $options = []): int
@@ -226,6 +273,205 @@ class BackupDatabaseTest extends TestCase
         $this->restore($this->written()[0], $target);
 
         $this->assertSame(1, $this->on($target)->table('alpha_child')->count());
+    }
+
+    // ---------------------------------------------------- while the office works
+
+    /**
+     * A payment saved while the backup is reading comes back whole, or not at all.
+     *
+     * The office does not stop for a backup — DEPLOY.md takes one before every
+     * deploy, in working hours. Read one table after another, each at its own
+     * moment, a payment saved in the second the dump takes landed in the tables
+     * read after it and missed the ones read before. party_ledger goes before
+     * party_ledger_allocation, so the restore brought back money adjusted
+     * against a file with no payment behind it — and with the foreign-key
+     * checks off for the restore, nothing said so.
+     *
+     * Twice: on a server as it comes, and on one whose sessions are set to read
+     * committed, where a snapshot is quietly not one unless the transaction
+     * asks for repeatable read itself.
+     */
+    #[DataProvider('isolationLevels')]
+    public function test_a_payment_saved_while_the_backup_reads_is_not_restored_in_half(?string $isolation): void
+    {
+        $source = $this->ledger('tear');
+
+        if ($isolation) {
+            $this->on($source)->unprepared('SET SESSION TRANSACTION ISOLATION LEVEL '.$isolation);
+        }
+
+        // Somebody at the counter saves today's the moment party_ledger has been read.
+        $office = $this->office($source);
+        $saved = false;
+
+        DB::listen(function (QueryExecuted $query) use ($source, $office, &$saved) {
+            if ($saved || $query->connectionName !== $source || $query->sql !== 'select * from `party_ledger`') {
+                return;
+            }
+
+            $saved = true;
+
+            $this->payToday($office);
+        });
+
+        $this->assertSame(0, $this->backup($source), 'the backup did not succeed');
+        $this->assertTrue($saved, 'nothing was saved while the backup was reading');
+
+        $target = $this->scratch('teardst');
+        $this->restore($this->written()[0], $target);
+
+        $orphans = $this->on($target)->table('party_ledger_allocation as a')
+            ->leftJoin('party_ledger as e', 'e.id', '=', 'a.entry_id')
+            ->whereNull('e.id')
+            ->count();
+
+        $this->assertSame(0, $orphans, 'an adjustment came back without the payment it belongs to');
+        $this->assertSame(
+            $this->on($target)->table('party_ledger')->count(),
+            $this->on($target)->table('party_ledger_allocation')->count(),
+            'the payments and their adjustments came back from different moments'
+        );
+    }
+
+    public static function isolationLevels(): array
+    {
+        return [
+            'a server as it comes' => [null],
+            'a server set to read committed' => ['READ COMMITTED'],
+        ];
+    }
+
+    /**
+     * The snapshot writes nothing, and is closed when the last table is read.
+     *
+     * A backup has no business changing the ledger, so a write slipped into
+     * its snapshot is refused rather than committed with it. And once the
+     * dump is done the connection is left as it was found — not still inside
+     * a transaction, holding every table it read.
+     */
+    public function test_the_snapshot_writes_nothing_and_is_closed_when_done(): void
+    {
+        $source = $this->scratch('readonly');
+        $this->on($source)->unprepared('CREATE TABLE `t` (`id` int NOT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB');
+        $this->on($source)->table('t')->insert(['id' => 1]);
+
+        $refused = null;
+
+        DB::listen(function (QueryExecuted $query) use ($source, &$refused) {
+            if ($refused !== null || $query->connectionName !== $source || $query->sql !== 'select * from `t`') {
+                return;
+            }
+
+            try {
+                $this->on($source)->table('t')->insert(['id' => 2]);
+                $refused = false;
+            } catch (QueryException) {
+                $refused = true;
+            }
+        });
+
+        $this->assertSame(0, $this->backup($source), 'the backup did not succeed');
+        $this->assertTrue($refused, 'a write inside the backup\'s snapshot was allowed');
+
+        // Closed: the same connection can write again, and another session sees it.
+        $this->on($source)->table('t')->insert(['id' => 3]);
+
+        $this->assertEquals([1, 3], $this->office($source)->table('t')->orderBy('id')->pluck('id')->all());
+    }
+
+    /** And a backup that fails half way lets go of its snapshot on the way out. */
+    public function test_a_backup_that_fails_half_way_lets_go_of_its_snapshot(): void
+    {
+        $source = $this->scratch('failing');
+        $this->on($source)->unprepared('CREATE TABLE `t` (`id` int NOT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB');
+
+        // The disk fills, say, just as the table has been read.
+        DB::listen(function (QueryExecuted $query) use ($source) {
+            if ($query->connectionName === $source && $query->sql === 'select * from `t`') {
+                throw new \RuntimeException('Cannot write to the backup file — is the disk full?');
+            }
+        });
+
+        $this->assertNotSame(0, $this->backup($source), 'a failed backup reported success');
+        $this->assertSame([], $this->written(), 'a failed backup left a file that looks like one');
+
+        $this->on($source)->table('t')->insert(['id' => 1]);
+
+        $this->assertSame(1, $this->office($source)->table('t')->count(), 'the failed backup\'s snapshot is still open');
+    }
+
+    /**
+     * A connection that drops part way fails the backup.
+     *
+     * When a query finds its connection gone, Laravel opens a new one and runs
+     * the query again there, without a word. The snapshot went with the old
+     * session, so every table after that was read at a later moment than the
+     * ones before it — the half-a-payment backup all over again, and reported
+     * as a success.
+     */
+    public function test_a_connection_that_drops_part_way_fails_the_backup(): void
+    {
+        $source = $this->ledger('dropped');
+        $session = $this->on($source)->selectOne('SELECT CONNECTION_ID() AS id')->id;
+
+        $office = $this->office($source);
+        $dropped = false;
+
+        DB::listen(function (QueryExecuted $query) use ($source, $office, $session, &$dropped) {
+            if ($dropped || $query->connectionName !== $source || $query->sql !== 'select * from `party_ledger`') {
+                return;
+            }
+
+            $dropped = true;
+
+            // The server drops the backup's session — a restart, a host's time
+            // limit — and today's payment is saved while it is gone.
+            $office->unprepared('KILL '.(int) $session);
+
+            $this->payToday($office);
+        });
+
+        $this->artisan('db:backup', ['--connection' => $source, '--path' => $this->folder])
+            ->expectsOutputToContain('dropped part way')
+            ->assertFailed()
+            ->run();
+
+        $this->assertTrue($dropped, 'the connection was never dropped');
+        $this->assertSame([], $this->written(), 'a backup read across two sessions was kept');
+    }
+
+    /**
+     * Not from inside a transaction somebody else opened.
+     *
+     * Starting a snapshot ends whatever transaction the connection is already
+     * in — MySQL commits it, without asking. A backup run from inside one, a
+     * test wrapped in DatabaseTransactions say, would have committed its
+     * caller's half-done work. It refuses instead, saying why in words, and
+     * leaves that transaction exactly as it was, still the caller's to keep or
+     * to roll back.
+     */
+    public function test_it_will_not_end_a_transaction_it_did_not_open(): void
+    {
+        $source = $this->scratch('open');
+        $this->on($source)->unprepared('CREATE TABLE `t` (`id` int NOT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB');
+
+        $this->on($source)->beginTransaction();
+        $this->on($source)->table('t')->insert(['id' => 1]);
+
+        $this->artisan('db:backup', ['--connection' => $source, '--path' => $this->folder])
+            ->expectsOutputToContain('Cannot back up from inside an open transaction')
+            ->assertFailed()
+            ->run();
+
+        $this->assertSame([], $this->written(), 'a refused backup left a file that looks like one');
+
+        $this->assertSame(1, $this->on($source)->table('t')->count(), 'the caller\'s pending row was rolled back');
+        $this->assertSame(0, $this->office($source)->table('t')->count(), 'the caller\'s pending row was committed');
+
+        $this->on($source)->rollBack();
+
+        $this->assertSame(0, $this->on($source)->table('t')->count());
     }
 
     // ------------------------------------------------------------ the real ledger

@@ -203,8 +203,9 @@ class HandOverTest extends TestCase
     }
 
     /**
-     * And the work-type report — the one that leaves returned files out — still
-     * counts it. A handover recorded as a ₹0 return would have dropped it.
+     * And the work-type report — the one that keeps returned files off their
+     * works — still counts it under its work. A handover recorded as a ₹0
+     * return would have moved it to the Returned to customer line.
      */
     public function test_the_work_type_report_still_counts_it(): void
     {
@@ -373,9 +374,7 @@ class HandOverTest extends TestCase
         $file = $this->file($customer);
         $this->handOver([$file], ['collected_by' => 'Rakesh Kumar the driver', 'remark' => 'RC and NOC']);
 
-        $session = ['customer_id' => $customer->id];
-
-        $page = $this->withSession($session)->getJson(route('customer.file', $file->id))->assertOk()->json('page');
+        $page = $this->actingAsCustomer($customer)->getJson(route('customer.file', $file->id))->assertOk()->json('page');
 
         $this->assertSame(date('d-m-Y'), $page['handedOverOn']);
 
@@ -384,7 +383,7 @@ class HandOverTest extends TestCase
         $this->assertNotNull($entry, 'the handover is not on the customer\'s history');
         $this->assertSame('RC and NOC', $entry['remark']);
 
-        $body = $this->withSession($session)->get(route('customer.file', $file->id))->assertOk()->getContent();
+        $body = $this->actingAsCustomer($customer)->get(route('customer.file', $file->id))->assertOk()->getContent();
 
         $this->assertStringContainsString('Papers Handed Over', $body);
         $this->assertStringNotContainsString('Rakesh Kumar the driver', $body);
