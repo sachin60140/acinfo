@@ -204,6 +204,68 @@ class ProfitReportTotalsTest extends TestCase
         $this->assertNull($row['rate']);
     }
 
+    /**
+     * And says it in every export, not only on screen. The note is drawn
+     * under the margin as its sub, which no export writes: Excel, CSV, PDF and
+     * print write each column's own key (see exports.js). Found in review: the
+     * file read 5,000.00 billed and 1,800.00 margin with nothing to say a file
+     * was left out of the margin.
+     */
+    public function test_every_export_says_what_awaits_a_price(): void
+    {
+        $this->folder([[$this->hpt, 3000, 1200]]);
+        $this->folder([[$this->tr, 2000, null]]);
+
+        foreach (array_keys(WorkFileModel::PROFIT_GROUPS) as $group) {
+            $props = $this->tab($group)['props'];
+            $columns = collect($props['columns'])->keyBy('key');
+
+            // What reaches a file, as exportColumns() in exports.js decides it.
+            $exported = $columns->filter(fn ($column) => ($column['exportable'] ?? true) !== false
+                && empty($column['hidden']));
+
+            $note = $columns['margin']['sub'];
+
+            $this->assertTrue($exported->has($note), "$group: the note under the margin reaches no export");
+            $this->assertNotEmpty($exported[$note]['label'], "$group: and has no heading in it");
+            $this->assertTrue($exported[$note]['exportOnly'], "$group: and is drawn twice on screen");
+
+            $this->assertContains('1 awaiting a price', collect($props['rows'])->pluck($note)->all(), $group);
+        }
+    }
+
+    /**
+     * A row with nothing priced in it has no margin to show, and shows none:
+     * its margin is nought only because nothing was added up, and 0.00 would
+     * say the work earned the office nothing. Found in review, on the Vendor
+     * tab: a vendor whose files all wait on a rate read 0.00, and in every
+     * export with no note beside it.
+     */
+    public function test_a_row_with_nothing_priced_shows_no_margin(): void
+    {
+        $this->folder([[$this->hpt, 3000, null]]);
+        $this->folder([[$this->tr, 2000, null]]);
+
+        foreach (['month' => '2032-02', 'year' => '2032', 'customer' => (string) $this->customer->id,
+            'vendor' => (string) $this->vendor->id, 'work_type' => (string) $this->hpt->id] as $group => $id) {
+            $json = $this->tab($group);
+            $row = collect($json['props']['rows'])->firstWhere('id', $id);
+
+            $this->assertNotNull($row, "$group: no row");
+            $this->assertNull($row['margin'], "$group: a margin nobody could work out reads as nought");
+            $this->assertNotNull($row['unpriced'], "$group: and nothing says why it is blank");
+            $this->assertNull($row['rate'], $group);
+
+            // Blank is nought to the Total row, which still agrees with the heading.
+            $this->assertEqualsWithDelta(
+                $json['page']['totals']['margin'],
+                collect($json['props']['rows'])->sum('margin'),
+                0.005,
+                "$group: the Total row's margin is not the heading's"
+            );
+        }
+    }
+
     // ---------------------------------------------------- returned files
 
     /**

@@ -109,6 +109,16 @@ class ReportController extends Controller
          * on 2026-10-07: left blank for a row with one file awaiting a price,
          * the table's Total row — and every export — lost the margin of every
          * priced file in that row, and read lower than the heading above it.
+         *
+         * Except where nothing in the row is priced. Its margin is then nought
+         * only because nothing was added up, and 0.00 would say the work earned
+         * the office nothing, which is a different fact and a false one — so it
+         * stays blank, as DataGrid's blank() keeps it, on screen and in every
+         * export. Found in review. The Total row loses nothing by it: the
+         * margin left blank is nought. A row with no files — the counter
+         * expenses, the discounts — has nothing awaiting a price and keeps its
+         * figure, and so does an In-house row whose margin is a shared folder's
+         * drift (see profitByVendor()) rather than any file's.
          */
         $rows = $rows->map(fn ($row) => [
             'id' => (string) $row->group_key,
@@ -117,7 +127,11 @@ class ReportController extends Controller
             'files' => (int) $row->files,
             'billed' => (float) $row->billed,
             'cost' => (float) $row->cost,
-            'margin' => (float) $row->margin,
+            'margin' => ((int) $row->unpriced > 0
+                && (int) $row->unpriced === (int) $row->files
+                && abs((float) $row->margin) < 0.005)
+                ? null
+                : (float) $row->margin,
             'rate' => ((int) $row->unpriced || (float) $row->billed <= 0)
                 ? null
                 : round((float) $row->margin / (float) $row->billed * 100, 1).'%',
@@ -148,6 +162,16 @@ class ReportController extends Controller
                 ['key' => 'margin', 'label' => 'Margin', 'type' => 'balance', 'class' => 'fw-bold',
                     'sub' => 'unpriced'],
                 ['key' => 'rate', 'label' => 'Margin %', 'sortable' => false],
+                /*
+                 * The note under the margin, in every export. A sub is drawn on
+                 * screen only — Excel, CSV, PDF and print write each column's
+                 * own key — so a row's margin went into the file as if it
+                 * covered every file in the row: 5,000.00 billed and 1,800.00
+                 * margin, with nothing to say a file waiting on a price was
+                 * left out of the second. Found in review. See exportOnly in
+                 * DataGrid.
+                 */
+                ['key' => 'unpriced', 'label' => 'Awaiting a price', 'exportOnly' => true],
             ],
             'rows' => $rows,
         ];
