@@ -2909,6 +2909,8 @@ class WorkFileController extends Controller
                 'items.*.vendor_amount' => 'nullable|numeric|gte:0|max:99999999',
                 // Ticked, the office is doing this work itself; see keepInHouse().
                 'items.*.in_house' => 'nullable|boolean',
+                // The same, on a folder of one work, among its boxes above.
+                'in_house' => 'nullable|boolean',
                 // Why a price that was already agreed has moved. Office-only;
                 // see the check below.
                 'price_remark' => 'nullable|string|max:200',
@@ -3185,6 +3187,31 @@ class WorkFileController extends Controller
                     $item->customer_amount = $file->customer_amount;
                     $item->vendor_amount = $file->vendor_amount;
                     $item->status = $file->status;
+
+                    /*
+                     * Kept in-house, or let go of again, as on a folder of
+                     * several works below — here from a box among the ones
+                     * above, which are this work's.
+                     *
+                     * Found in the health check: the box lived only in the
+                     * table a folder of several works has, so a folder of one
+                     * kept in-house by a wrong press dropped off Give to
+                     * Vendor for good. The only way out was typing a vendor
+                     * here, past the papers check and the hand-over sheet.
+                     *
+                     * Only when the page sent the box, which it does only
+                     * while there is no vendor; and never once there is one,
+                     * on the work or on the folder as saved — work with a
+                     * vendor is with them, and a folder from before works
+                     * carried vendors names its vendor only on itself.
+                     */
+                    if ($req->has('in_house') && ! $item->vendor_id && ! $file->vendor_id) {
+                        $item->kept_in_house_on = $req->boolean('in_house')
+                            // Kept already, keep the day it was decided.
+                            ? ($item->kept_in_house_on ?: now()->toDateString())
+                            : null;
+                    }
+
                     $item->save();
                 }
 
@@ -3598,6 +3625,11 @@ class WorkFileController extends Controller
                 'vendor_id' => old('vendor_id', $isEdit ? $file->vendor_id : ''),
                 'vendor_amount' => old('vendor_amount', $isEdit ? $file->vendor_amount : ''),
                 'remarks' => old('remarks', $isEdit ? $file->remarks : ''),
+                // Whether the office said it is doing the work itself, on a
+                // folder of one work; a folder of several says it per work.
+                'in_house' => (bool) old('in_house', $isEdit
+                    && $file->items()->count() === 1
+                    && $file->items()->value('kept_in_house_on') !== null),
             ],
 
             /*

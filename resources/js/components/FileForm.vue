@@ -130,6 +130,7 @@ const form = reactive({
     vendor_id: props.values.vendor_id ?? '',
     vendor_amount: props.values.vendor_amount ?? '',
     remarks: props.values.remarks ?? '',
+    in_house: Boolean(props.values.in_house),
 });
 
 /*
@@ -142,6 +143,21 @@ const form = reactive({
  * boxes still write straight through to it.
  */
 const multiWork = computed(() => props.items.length > 1);
+
+/*
+ * The in-house box of a folder of one work, among its own boxes.
+ *
+ * A folder of several works has it per work, in Works on This File. A folder
+ * of one had it nowhere, so one kept in-house by a wrong press on Give to
+ * Vendor could not be offered to a vendor again from any screen — found in the
+ * health check. It sits beside the vendor it is the other answer to, and only
+ * while there is none: work with a vendor is with them, and a vendor chosen in
+ * the box above is the answer being given instead.
+ */
+const soleWorkFree = computed(() => props.isEdit
+    && props.items.length === 1
+    && ! props.items[0].has_vendor
+    && ! form.vendor_id);
 
 /*
  * A save sent back, and what it had typed.
@@ -1210,6 +1226,22 @@ onMounted(() => {
                             <div class="ui-hint">Defaults to the received date.</div>
                             <div v-if="errors.vendor_date" class="ui-hint ui-hint--error">
                                 {{ errors.vendor_date }}
+                            </div>
+                        </div>
+
+                        <!-- The hidden nought first: an unticked box posts
+                             nothing, and nothing is also what a page without
+                             the box sends, which must leave the mark alone. -->
+                        <div v-if="soleWorkFree" class="ui-field wf-full">
+                            <input type="hidden" name="in_house" value="0">
+                            <label class="wf-works__keep">
+                                <input type="checkbox" name="in_house" value="1" v-model="form.in_house">
+                                <span>In-house &mdash; the office is doing this work itself</span>
+                            </label>
+                            <div class="ui-hint">
+                                {{ form.in_house
+                                    ? 'Kept off Give to Vendor and listed on In-house Work. Untick it to offer the file to a vendor again.'
+                                    : 'Tick it if the office is doing this work, so Give to Vendor stops offering the file.' }}
                             </div>
                         </div>
 

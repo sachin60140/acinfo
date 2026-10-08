@@ -302,6 +302,7 @@
                 "customer_id": "number",
                 "description": "string",
                 "file_no": "string",
+                "in_house": "bool",
                 "registration_no": "string",
                 "remarks": "null",
                 "returned_amount": "null",
