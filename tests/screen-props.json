@@ -647,6 +647,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -724,6 +725,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -801,6 +803,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -878,6 +881,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -919,6 +923,7 @@
             "rowClass": "string",
             "rows": "[]",
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -996,6 +1001,7 @@
                 }
             },
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -1037,6 +1043,7 @@
             "rowClass": "string",
             "rows": "[]",
             "title": "string",
+            "totalLabel": "string",
             "totals": {
                 "charged": "string",
                 "cost": "string",
@@ -1635,6 +1642,7 @@
             "title": "string",
             "today": "string",
             "todayLabel": "string",
+            "totalLabel": "string",
             "totals": {
                 "billed": "string",
                 "cost": "string",
@@ -1741,6 +1749,7 @@
             "title": "string",
             "today": "string",
             "todayLabel": "string",
+            "totalLabel": "string",
             "totals": {
                 "billed": "string",
                 "cost": "string",

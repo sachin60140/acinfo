@@ -170,14 +170,27 @@
                     </div>
                 </div>
 
+                {{-- Finished work too long for one page: the newest of it, and
+                     every figure on this page is of those alone. --}}
+                @include('partials._list-page', [
+                    'shown' => $shown,
+                    'note' => 'The totals and the search cover these only; narrow the dates to see a period whole.',
+                ])
+
                 <div class="statement-summary mb-3">
                     <div class="stat">
                         <span class="label">Files</span>
                         <span class="value">{{ $totals['files'] }}</span>
+                        @if ($shown)
+                            <span class="stat-note">shown, of {{ number_format($shown['total']) }}</span>
+                        @endif
                     </div>
                     <div class="stat">
                         <span class="label">Billed</span>
                         <span class="value dr">{{ number_format($totals['billed'], 2, '.', ',') }}</span>
+                        @if ($shown)
+                            <span class="stat-note">of the {{ number_format($totals['files']) }} files shown</span>
+                        @endif
                     </div>
                     <div class="stat">
                         {{-- Not "Vendor Cost": this adds up the cost column, and that has counted
@@ -185,6 +198,9 @@
                              vendor since file expenses came in. --}}
                         <span class="label">Cost</span>
                         <span class="value cr">{{ number_format($totals['cost'], 2, '.', ',') }}</span>
+                        @if ($shown)
+                            <span class="stat-note">of the {{ number_format($totals['files']) }} files shown</span>
+                        @endif
                     </div>
                     <div class="stat closing">
                         <span class="label">Margin</span>
@@ -193,7 +209,9 @@
                              price are not in this total. Saying how many keeps it
                              from reading as a figure covering every file above. --}}
                         @if ($totals['unpriced'])
-                            <span class="stat-note">on {{ $totals['files'] - $totals['unpriced'] }} of {{ $totals['files'] }} files &mdash; {{ $totals['unpriced'] }} awaiting a price</span>
+                            <span class="stat-note">on {{ $totals['files'] - $totals['unpriced'] }} of {{ $shown ? 'the '.number_format($totals['files']) : $totals['files'] }} files{{ $shown ? ' shown' : '' }} &mdash; {{ $totals['unpriced'] }} awaiting a price</span>
+                        @elseif ($shown)
+                            <span class="stat-note">of the {{ number_format($totals['files']) }} files shown</span>
                         @endif
                     </div>
                 </div>
@@ -218,9 +236,14 @@
                     {{-- The report's own total, from the server, whatever the reader
                          has since searched for — the grid's footer follows the
                          filter, and someone reading a narrowed table still needs to
-                         see what the whole report comes to. --}}
+                         see what the whole report comes to. On a page of a longer
+                         report it is that page's, and is not called the grand one. --}}
                     <div class="grand-total-bar">
-                        <span>Grand Total &mdash; {{ $totals['files'] }} {{ Str::plural('file', $totals['files']) }}</span>
+                        @if ($shown)
+                            <span>Total of the {{ number_format($totals['files']) }} {{ Str::plural('file', $totals['files']) }} shown</span>
+                        @else
+                            <span>Grand Total &mdash; {{ $totals['files'] }} {{ Str::plural('file', $totals['files']) }}</span>
+                        @endif
                         <span class="figures">
                             <span>Billed {{ number_format($totals['billed'], 2, '.', ',') }}</span>
                             <span>Cost {{ number_format($totals['cost'], 2, '.', ',') }}</span>

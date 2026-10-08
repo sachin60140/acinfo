@@ -9,6 +9,7 @@ use App\Models\PartyModel;
 use App\Models\WorkFileExpenseModel;
 use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
+use App\Support\ListPage;
 use App\Support\Screen;
 use App\Support\WhatsApp;
 use Carbon\Carbon;
@@ -628,7 +629,14 @@ class ReportController extends Controller
             $partyId = null;
         }
 
-        $rows = WorkFileModel::report($partyType, $partyId, $status, $from, $to);
+        // Finished work, a page at a time; see WorkFileModel::LIST_LIMIT.
+        $rows = WorkFileModel::report($partyType, $partyId, $status, $from, $to, page: max(1, (int) $req->query('page', 1)));
+
+        /*
+         * Where this page stands, when the report is too long for one. Every
+         * figure on it is then of this page alone, and says so.
+         */
+        $shown = ListPage::of($rows);
 
         $balances = PartyLedgerModel::balancesFor($rows->pluck('party_id')->unique()->filter()->all());
 
@@ -896,6 +904,9 @@ class ReportController extends Controller
             'groupBy' => 'party_id',
             'groupLabel' => 'party_band',
             'totals' => ['billed' => 'sum', 'cost' => 'sum', 'expenses' => 'sum', 'margin' => 'sum'],
+            // On a page of a longer report, each total says it is that page's:
+            // a party's older files may be on the next.
+            'totalLabel' => $shown ? 'Total of those shown' : 'Total',
             // Paging off in all but name: a party split across two pages would be
             // banded twice and subtotalled twice, each time on half its files.
             'perPage' => max(count($reportRows), 1),
@@ -1014,6 +1025,7 @@ class ReportController extends Controller
             'from' => $from,
             'to' => $to,
             'totals' => $totals,
+            'shown' => $shown,
             'statuses' => $statuses,
             'parties' => PartyModel::selectList($partyType, $partyId),
             'maxDate' => now()->toDateString(),

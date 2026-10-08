@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -161,6 +162,22 @@ class WorkFileModel extends Model
      */
     public const OPEN_STATUSES = ['in_office', 'paper_pendency', 'file_dispatch',
         'part_pesi_required', 'under_verification', 'partly_approved'];
+
+    /**
+     * The most files a list of finished work is drawn with at once.
+     *
+     * Work in hand stays small, because it gets finished and leaves. Finished
+     * work does not: nearly every file ends up approved, so Update Status's
+     * Approval Done and All tabs, All Work Files and the Work Report grew with
+     * every file the office had ever handled, and each was drawn whole, a row
+     * built in PHP for every file. Found in the health check: on a copy with
+     * 40,000 files Approval Done took 15 seconds and 300 MB, past what a
+     * shared host allows a page.
+     *
+     * So a list of finished work shows the newest this many, says how many
+     * there are in all, and links to the older ones; see newestPage().
+     */
+    public const LIST_LIMIT = 500;
 
     /**
      * The same nine states, said to the person whose file it is.
@@ -3896,8 +3913,12 @@ class WorkFileModel extends Model
      *
      * 'open' is the default and means work still in hand — the reason to open
      * this screen at all. Anything else filters to that one status.
+     *
+     * With a page asked for, a tab of finished work — Approval Done, Paper
+     * Returned, Cancelled, All — is that page of it, newest first; see
+     * newestPage(). Work in hand is all of it, oldest first, whatever is asked.
      */
-    public static function forStatusBoard(string $filter, $workTypeId = null, $vendorId = null)
+    public static function forStatusBoard(string $filter, $workTypeId = null, $vendorId = null, ?int $page = null)
     {
         // The jobs come with the file: the board moves each of them along on
         // its own, because approvals arrive one at a time.
@@ -3915,25 +3936,74 @@ class WorkFileModel extends Model
          * a folder split between two vendors was under neither.
          */
         if ($holder !== null) {
-            return $query
-                ->whereIn('work_file.id', self::heldBy($holder, $filter, $workTypeId)->select('p.work_file_id'))
-                ->orderBy('received_date', 'asc')
-                ->orderBy('id', 'asc')
-                ->get();
+            $query->whereIn('work_file.id', self::heldBy($holder, $filter, $workTypeId)->select('p.work_file_id'));
+        } else {
+            self::applyStatusFilter($query, $filter);
+
+            if ($workTypeId) {
+                // Matched against the jobs, so a file is shown when any of its work
+                // is of that type — not only when the first one is.
+                $query->whereHas('items', fn ($q) => $q->where('work_type_id', $workTypeId));
+            }
         }
 
-        self::applyStatusFilter($query, $filter);
-
-        if ($workTypeId) {
-            // Matched against the jobs, so a file is shown when any of its work
-            // is of that type — not only when the first one is.
-            $query->whereHas('items', fn ($q) => $q->where('work_type_id', $workTypeId));
+        if ($page !== null && self::isFinishedView($filter)) {
+            return self::newestPage($query, $page);
         }
 
         return $query
             ->orderBy('received_date', 'asc')
             ->orderBy('id', 'asc')
             ->get();
+    }
+
+    /**
+     * Whether a list is of finished work, and so drawn a page at a time: one
+     * of the end states, or no status at all ('' or 'all'), which is mostly
+     * finished work. Work in hand, at any stage, and the lists of it to chase
+     * are drawn whole, in their own order: they stay short, and the one that
+     * has waited longest must never be on a page nobody opens.
+     */
+    public static function isFinishedView(?string $view): bool
+    {
+        return in_array((string) $view, ['', 'all', self::APPROVED, self::RETURNED, self::CANCELLED], true);
+    }
+
+    /**
+     * One page of a list of finished work: at most LIST_LIMIT files, newest
+     * first — what was approved lately is what is asked about — and how many
+     * there are in all, so the page can say it is not the whole list and link
+     * to the rest. See ListPage.
+     *
+     * A page past the last is the last, so a link to page 9 of a list that has
+     * shrunk since still shows something.
+     */
+    private static function newestPage($query, int $page): LengthAwarePaginator
+    {
+        $total = (clone $query)->count();
+        $page = self::onAPage($page, $total);
+
+        $rows = $query
+            ->orderBy('work_file.received_date', 'desc')
+            ->orderBy('work_file.id', 'desc')
+            ->forPage($page, self::LIST_LIMIT)
+            ->get();
+
+        return self::paged($rows, $total, $page);
+    }
+
+    /** The page asked for, or the nearest one there is. */
+    private static function onAPage(int $page, int $total): int
+    {
+        return max(1, min($page, (int) ceil($total / self::LIST_LIMIT)));
+    }
+
+    /** A page, whose links keep every filter it was drawn under. */
+    private static function paged($rows, int $total, int $page): LengthAwarePaginator
+    {
+        return (new LengthAwarePaginator($rows, $total, self::LIST_LIMIT, $page, [
+            'path' => LengthAwarePaginator::resolveCurrentPath(),
+        ]))->withQueryString();
     }
 
     /**
@@ -5368,8 +5438,11 @@ class WorkFileModel extends Model
     /**
      * @param  bool  $folderStatus  vendor-wise, narrow on the folder's own status
      *                              rather than that of the vendor's works; see below
+     * @param  int|null  $page  for the Work Report: finished work a page at a
+     *                          time; see newestPage(). Approval Time, which
+     *                          counts, asks for none.
      */
-    public static function report(string $partyType, $partyId = null, ?string $status = null, ?string $from = null, ?string $to = null, bool $folderStatus = false)
+    public static function report(string $partyType, $partyId = null, ?string $status = null, ?string $from = null, ?string $to = null, bool $folderStatus = false, ?int $page = null)
     {
         $isVendor = $partyType === 'vendor';
 
@@ -5455,7 +5528,20 @@ class WorkFileModel extends Model
         $byStatus($query);
         $byDate($query);
 
-        $rows = $query
+        /*
+         * With a page asked for, finished work is that page of it: the newest
+         * LIST_LIMIT files, then banded as ever. See newestPage().
+         */
+        $paging = $page !== null && self::isFinishedView($status);
+
+        if ($paging && ! $isVendor) {
+            $newest = self::newestPage($query, $page);
+
+            return $newest->setCollection(self::inBandOrder($newest->getCollection()));
+        }
+
+        // Paged, these are fetched once the folders below are known; see there.
+        $rows = $paging ? null : $query
             ->orderBy('party_name', 'asc')
             ->orderBy('work_file.received_date', 'asc')
             ->orderBy('work_file.id', 'asc')
@@ -5525,18 +5611,47 @@ class WorkFileModel extends Model
             $shares = $shares->filter(fn ($row) => $row->status === $status)->values();
         }
 
+        /*
+         * Paged, a folder split or held in part takes its place among the rest
+         * by the day it came in, like any other. It is drawn from its works
+         * here rather than by the query, so the query gives its newest as far
+         * as this page reaches, the two are put together newest first, and the
+         * page is cut from that.
+         */
+        if ($paging) {
+            $total = (clone $query)->count() + $shares->count();
+            $page = self::onAPage($page, $total);
+
+            $newest = $query
+                ->orderBy('work_file.received_date', 'desc')
+                ->orderBy('work_file.id', 'desc')
+                ->limit($page * self::LIST_LIMIT)
+                ->get()
+                ->concat($shares)
+                ->sort(fn ($a, $b) => [$b->received_date, $b->id] <=> [$a->received_date, $a->id])
+                ->forPage($page, self::LIST_LIMIT);
+
+            return self::paged(self::inBandOrder($newest), $total, $page);
+        }
+
         // Nothing split, nothing to change: the report is what it always was.
         if ($shares->isEmpty()) {
             return $rows;
         }
 
-        /*
-         * Back into the order the query gave, which is what groups the bands.
-         * Names compared without case, as the database's collation compares
-         * them — compared byte by byte, "suman" and "Test" would swap and every
-         * existing band after them would move.
-         */
-        return $rows->concat($shares)
+        // Back into the order the query gave, which is what groups the bands.
+        return self::inBandOrder($rows->concat($shares));
+    }
+
+    /**
+     * Report rows in the order the bands are drawn in: by party, then oldest
+     * first. Names compared without case, as the database's collation
+     * compares them — compared byte by byte, "suman" and "Test" would swap and
+     * every existing band after them would move.
+     */
+    private static function inBandOrder($rows)
+    {
+        return $rows
             ->sort(fn ($a, $b) => [mb_strtolower((string) $a->party_name), $a->received_date, $a->id]
                 <=> [mb_strtolower((string) $b->party_name), $b->received_date, $b->id])
             ->values();
@@ -6322,7 +6437,14 @@ class WorkFileModel extends Model
         ));
     }
 
-    public static function listing(?string $status = null, ?string $from = null, ?string $to = null, ?string $pending = null)
+    /**
+     * All Work Files, and the approved files turned round.
+     *
+     * With a page asked for, a list of finished work — everything, or one end
+     * state — is that page of it; see newestPage(). Work in hand and the lists
+     * to chase are all of themselves, in their own order, whatever is asked.
+     */
+    public static function listing(?string $status = null, ?string $from = null, ?string $to = null, ?string $pending = null, ?int $page = null)
     {
         $query = DB::table('work_file')
             ->join('work_type', 'work_type.id', '=', 'work_file.work_type_id')
@@ -6425,6 +6547,10 @@ class WorkFileModel extends Model
                 ->orderBy('work_file.received_date', 'asc')
                 ->orderBy('work_file.id', 'asc')
                 ->get();
+        }
+
+        if ($page !== null && self::isFinishedView($status)) {
+            return self::newestPage($query, $page);
         }
 
         return $query

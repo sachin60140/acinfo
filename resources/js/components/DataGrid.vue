@@ -108,6 +108,12 @@ const props = defineProps({
 
     // Columns to total, per group and overall: { columnKey: 'sum' | 'avg' }
     totals: { type: Object, default: () => ({}) },
+    /*
+     * What the totals rows are called. A list too long for one page is sent a
+     * page of it, and a bare "Total" under that page reads as the whole
+     * list's; the server names it for what it covers. See ListPage.
+     */
+    totalLabel: { type: String, default: 'Total' },
 
     /*
      * Rows that frame the data rather than belong to it: a statement's opening
@@ -901,7 +907,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                 :key="column.key"
                                 :class="[isNum(column) ? 'num' : '', column.type === 'action' ? 'grid__action' : '']"
                                 :data-label="column.label">
-                                <span v-if="i === 0">Total</span>
+                                <span v-if="i === 0">{{ totalLabel }}</span>
                                 <span v-else-if="totals[column.key] !== undefined"
                                     :class="[totalClass(column, band.totals[column.key]), 'ui-money--strong']">
                                     {{ total(column, band.totals[column.key]) }}
@@ -950,7 +956,7 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                             :key="column.key"
                             :class="[isNum(column) ? 'num' : '', column.type === 'action' ? 'grid__action' : '']"
                             :data-label="column.label">
-                            <span v-if="i === 0">{{ query ? 'Total (filtered)' : 'Total' }}</span>
+                            <span v-if="i === 0">{{ query ? `${totalLabel} (filtered)` : totalLabel }}</span>
                             <span v-else-if="totals[column.key] !== undefined"
                                 :class="[totalClass(column, grandTotals[column.key]), 'ui-money--strong']">
                                 {{ total(column, grandTotals[column.key]) }}

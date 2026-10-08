@@ -10,6 +10,7 @@ use App\Models\WorkFileItemModel;
 use App\Models\WorkFileModel;
 use App\Models\WorkFilePaperModel;
 use App\Models\WorkTypeModel;
+use App\Support\ListPage;
 use App\Support\Screen;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -67,7 +68,9 @@ class WorkFileController extends Controller
             $req->query('status'),
             $req->query('from'),
             $req->query('to'),
-            $req->query('pending')
+            $req->query('pending'),
+            // Finished work, a page at a time; see WorkFileModel::LIST_LIMIT.
+            max(1, (int) $req->query('page', 1))
         );
 
         return $this->filesScreen($files, $req)->toResponse($req);
@@ -96,7 +99,8 @@ class WorkFileController extends Controller
             WorkFileModel::APPROVED,
             $req->query('from'),
             $req->query('to'),
-            $req->query('pending')
+            $req->query('pending'),
+            max(1, (int) $req->query('page', 1))
         );
 
         return $this->filesScreen($files, $req, [
@@ -130,6 +134,14 @@ class WorkFileController extends Controller
         // Whether anything is narrowing the list, which decides what an empty
         // one means and therefore what it should say.
         $filtered = (bool) ($req->query('status') || $req->query('from') || $req->query('to') || $req->query('pending'));
+
+        /*
+         * Where this page stands, when finished work is too long for one; see
+         * WorkFileModel::LIST_LIMIT. Every figure below is then of this page
+         * alone, and says so — a total that quietly covers part of a list
+         * reads as the whole answer.
+         */
+        $shown = ListPage::of($files);
 
         /*
          * Totals follow what each file actually earned and cost once its status
@@ -323,6 +335,8 @@ class WorkFileController extends Controller
                 ? 'No files match these filters. Try widening the dates, or clearing the status.'
                 : 'No files received yet. Use Receive Files above to add the first one.',
             'totals' => ['charged' => 'sum', 'cost' => 'sum', 'expenses' => 'sum', 'margin' => 'sum'],
+            // On a page of a longer list, the footer says it is that page's.
+            'totalLabel' => $shown ? 'Total of those shown' : 'Total',
             'rowClass' => 'row_class',
             /*
              * What else this list can say, offered rather than shown.
@@ -428,6 +442,7 @@ class WorkFileController extends Controller
             'closedCount' => $closedCount,
             'unpricedCount' => $unpricedCount,
             'fileCount' => count($rows),
+            'shown' => $shown,
             // 'open' is a view of several statuses rather than one of them, so
             // it has no entry in the stored list to look up.
             'statusLabel' => match (true) {
@@ -2676,7 +2691,14 @@ class WorkFileController extends Controller
          * kept in-house, which a blank could not tell apart from no filter.
          */
         $vendorId = $req->query('vendor');
-        $files = WorkFileModel::forStatusBoard($filter, $workTypeId, $vendorId);
+
+        /*
+         * Which page of a tab of finished work; see WorkFileModel::LIST_LIMIT.
+         * Anything that is not a page number is the first, as a junk tab is
+         * In Hand.
+         */
+        $page = max(1, (int) $req->query('page', 1));
+        $files = WorkFileModel::forStatusBoard($filter, $workTypeId, $vendorId, $page);
 
         /*
          * With a vendor chosen, or In-house, each folder is their part of it:
@@ -2700,7 +2722,7 @@ class WorkFileController extends Controller
         $props = [
             'action' => route('workfile.status'),
             'csrf' => csrf_token(),
-            'resetUrl' => route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId, 'vendor' => $vendorId])),
+            'resetUrl' => route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId, 'vendor' => $vendorId, 'page' => $page > 1 ? $page : null])),
             // Only what a single job can be put into. Returning papers is agreed
             // for a folder and has its own screen; partly approved describes a
             // folder whose jobs disagree, and one job never disagrees with itself.
@@ -2741,6 +2763,8 @@ class WorkFileController extends Controller
             'vendorId' => $vendorId,
             'inHouseKey' => WorkFileModel::IN_HOUSE,
             'fileCount' => $files->count(),
+            // Where this page stands, on a tab of finished work too long for one.
+            'shown' => ListPage::of($files),
             'anyFiles' => WorkFileModel::exists(),
             // 'open' and 'all' are tabs rather than stored statuses, so the tab
             // strip is assembled here rather than in the template.
