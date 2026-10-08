@@ -44,6 +44,8 @@ const props = defineProps({
     vendorDateField: { type: String, default: '' },
     refundPlaceholder: { type: String, default: '0.00' },
     screenshotUrl: { type: String, default: '' },
+    // Whether that is a PDF, which its address cannot say; see FilePreview.
+    screenshotIsPdf: { type: Boolean, default: false },
     // The works this file is for, each with its own price and approval.
     items: { type: Array, default: () => [] },
     alreadyPosted: { type: Object, default: () => ({}) },
@@ -825,7 +827,7 @@ onMounted(() => {
                                 <a
                                     :href="screenshotUrl"
                                     class="ui-link"
-                                    @click.prevent="preview = { src: screenshotUrl, title: 'Approval screenshot' }">Screenshot on file</a>
+                                    @click.prevent="preview = { src: screenshotUrl, title: 'Approval screenshot', pdf: screenshotIsPdf }">Screenshot on file</a>
                                 &mdash; choose a file only if you want to replace it.
                             </div>
                             <div v-else class="ui-hint">
@@ -1186,7 +1188,7 @@ onMounted(() => {
                                             v-if="work.screenshot_url"
                                             :href="work.screenshot_url"
                                             class="ui-link"
-                                            @click.prevent="preview = { src: work.screenshot_url, title: (work.work_type || 'Work') + ' — approval' }">
+                                            @click.prevent="preview = { src: work.screenshot_url, title: (work.work_type || 'Work') + ' — approval', pdf: work.screenshot_is_pdf }">
                                             <i class="bi bi-paperclip"></i> View
                                         </a>
                                         <span v-else class="ui-hint">&mdash;</span>
@@ -1761,7 +1763,7 @@ onMounted(() => {
             </template>
         </aside>
 
-        <FilePreview :src="preview?.src" :title="preview?.title" @close="preview = null" />
+        <FilePreview :src="preview?.src" :title="preview?.title" :pdf="preview?.pdf" @close="preview = null" />
     </div>
 </template>
 
