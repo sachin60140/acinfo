@@ -80,6 +80,17 @@ class ReportController extends Controller
             $totals['files'] = WorkFileModel::profitFiles($from, $to)['files'];
         }
 
+        /*
+         * The same on the work type cut, whose rows count works: two folders
+         * of five works read "5 files" in the heading (found in a health check
+         * on 2026-10-07). The heading counts files, as every other cut does,
+         * and what the margin covers is said in works.
+         */
+        if ($group === 'work_type') {
+            $totals['works'] = $totals['files'];
+            $totals['files'] = WorkFileModel::profitFiles($from, $to)['files'];
+        }
+
         $periodText = ($from || $to)
             ? ($from ? date('d-m-Y', strtotime($from)) : 'Beginning').' to '.($to ? date('d-m-Y', strtotime($to)) : date('d-m-Y'))
             : 'All dates';
@@ -91,6 +102,13 @@ class ReportController extends Controller
          * figures. Where one does not, the margin covers fewer files than the
          * billed beside it, and a ratio of the two would be a number nobody
          * could act on.
+         *
+         * The margin itself is shown all the same: it is the margin of the
+         * files that are priced, which is what the heading adds up, and the
+         * note under it says how many it leaves out. Found in a health check
+         * on 2026-10-07: left blank for a row with one file awaiting a price,
+         * the table's Total row — and every export — lost the margin of every
+         * priced file in that row, and read lower than the heading above it.
          */
         $rows = $rows->map(fn ($row) => [
             'id' => (string) $row->group_key,
@@ -99,7 +117,7 @@ class ReportController extends Controller
             'files' => (int) $row->files,
             'billed' => (float) $row->billed,
             'cost' => (float) $row->cost,
-            'margin' => (int) $row->unpriced ? null : (float) $row->margin,
+            'margin' => (float) $row->margin,
             'rate' => ((int) $row->unpriced || (float) $row->billed <= 0)
                 ? null
                 : round((float) $row->margin / (float) $row->billed * 100, 1).'%',
@@ -117,9 +135,10 @@ class ReportController extends Controller
                 ? ['billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum']
                 : ['files' => 'sum', 'billed' => 'sum', 'cost' => 'sum', 'margin' => 'sum'],
             'columns' => [
-                // The counter-expenses line is the only one that has anything to
-                // add here, and it needs to: a row with a cost that charges
-                // nobody reads as a mistake until it says why.
+                // The lines no row of the cut can carry — counter expenses, the
+                // discounts, the files returned to the customer — have
+                // something to add here, and they need to: a row with a cost
+                // that charges nobody reads as a mistake until it says why.
                 ['key' => 'label', 'label' => $label, 'sub' => 'label_note'],
                 ['key' => 'files', 'label' => $group === 'work_type' ? 'Works' : 'Files', 'type' => 'count'],
                 ['key' => 'billed', 'label' => 'Billed', 'type' => 'money', 'class' => 'dr'],
