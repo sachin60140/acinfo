@@ -9,8 +9,10 @@ use App\Support\Screen;
 use App\Support\WhatsApp;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -202,6 +204,12 @@ class PartyController extends Controller
      * PartyModel::findForLogin refuses them — but a screen offering to set one
      * says otherwise, and a guard that only exists in the query is a guard one
      * refactor from being the only thing anybody remembers.
+     *
+     * Replacing a login also turns out whoever is signed in with the old one,
+     * at their next page. Nothing here does that: every portal session carries
+     * a fingerprint of the password it was opened with, and
+     * CustomerAuthMiddleware ends one that no longer matches. It is the
+     * office's way of cutting off a phone that should not have the account.
      */
     public function password(Request $req, $id)
     {
@@ -326,7 +334,18 @@ class PartyController extends Controller
             $party->mobile = $req->mobile;
             $party->whatsapp = $req->whatsapp;
             $party->address = $req->address;
-            $party->is_active = $req->boolean('is_active');
+
+            /*
+             * 1 or 0, as the column holds it, not true or false. Eloquent reads
+             * true written over a stored 1 as a change, so every Save — of a
+             * record nobody had touched as much as any other — moved
+             * updated_at. That now signs a customer out of the portal (see
+             * CustomerAuthMiddleware::fingerprint), and opening the record and
+             * saving it as it was should not. Switching a customer off, or on
+             * again, is a change and does move it: that is what ends every
+             * session opened before, used in between or not.
+             */
+            $party->is_active = $req->boolean('is_active') ? 1 : 0;
 
             if ($linking) {
                 $vendorId = $req->filled('linked_vendor_id') ? (int) $req->linked_vendor_id : null;
@@ -390,6 +409,9 @@ class PartyController extends Controller
                 'counter_alloc' => 'nullable|array',
                 'counter_alloc.*.work_file_id' => 'required|integer',
                 'counter_alloc.*.amount' => 'nullable|numeric|min:0|max:99999999',
+
+                // The page's own token, so one page saves once; see savedBefore().
+                'once' => 'nullable|string|max:64',
             ], [
                 'alloc.*.amount.numeric' => 'An amount against a file must be a number.',
                 'counter_alloc.*.amount.numeric' => 'An amount against a file must be a number.',
@@ -456,13 +478,19 @@ class PartyController extends Controller
                 return back()->withInput()->withErrors(['alloc' => $refused]);
             }
 
-            $entry = DB::transaction(function () use ($req, $lines, $type, $writeOff, $cap) {
+            [$entry, $again] = DB::transaction(function () use ($req, $lines, $type, $writeOff, $cap) {
                 /*
                  * One payment for a party at a time. Two typed at once would
                  * otherwise both be checked against the same open amount on a
                  * file, and both adjusted against it.
                  */
                 PartyModel::whereKey($req->party_id)->lockForUpdate()->first();
+
+                // This page's save, sent again: nothing more is written. Asked
+                // before the ledger is read, which the first one has changed.
+                if ($before = self::savedBefore($req)) {
+                    return [$before, true];
+                }
 
                 // Checked here, under the lock, against what the ledger says —
                 // never against what the page showed.
@@ -519,10 +547,19 @@ class PartyController extends Controller
                 // Its lines at its own moment, so they are known as written with it.
                 self::allocate($entry->id, (int) $req->party_id, $lines, $entry->created_at);
 
-                return $entry;
+                self::rememberSaved($req, $entry);
+
+                return [$entry, false];
             });
 
-            $saved = self::savedBack($type)->with('success', ucfirst($entry->entry_type).' entry saved successfully. Transaction ID: '.$entry->id);
+            /*
+             * A second press is answered as the first was, receipt and all:
+             * its answer is the page the browser shows, and the first one's
+             * is never seen.
+             */
+            $saved = self::savedBack($type)->with('success', $again
+                ? 'Entry #'.$entry->id.' was already saved. Save Entry was pressed twice, so the second press saved nothing more.'
+                : ucfirst($entry->entry_type).' entry saved successfully. Transaction ID: '.$entry->id);
 
             /*
              * Money in from a customer: offer them a receipt on WhatsApp.
@@ -773,6 +810,86 @@ class PartyController extends Controller
     }
 
     /**
+     * The entry this page saved already, when what it sends now is that same
+     * save sent again — Save Entry double-clicked, or Enter pressed twice in
+     * the amount box. Found in review: each press was saved, so the statement
+     * showed the money twice and the balance was wrong by the whole of it, and
+     * a set-off cleared twice the amount on both accounts. Nothing said so.
+     *
+     * The page sends a token of its own (once), and what each save wrote is
+     * kept against it; see rememberSaved(). Asked under the party's lock: the
+     * second press waits there for the first, then finds what it saved.
+     *
+     * Only the same post. A page come back to with Back and sent with
+     * something changed is not that save, and told it was, the office would
+     * believe the new figure was in. It is refused, with what was typed put
+     * back on a new page, as the edit screen refuses a different change sent
+     * from the same old page. A page that sends no token — one opened before
+     * this came in — is saved as it always was.
+     */
+    private static function savedBefore(Request $req): ?PartyLedgerModel
+    {
+        $once = (string) $req->input('once');
+
+        if ($once === '') {
+            return null;
+        }
+
+        $saved = Cache::get(self::onceKey($once));
+
+        // Kept for a save that did not go through in the end, it names no entry.
+        $entry = is_array($saved) ? PartyLedgerModel::find($saved['entry'] ?? 0) : null;
+
+        if (! $entry) {
+            return null;
+        }
+
+        if (! hash_equals((string) ($saved['post'] ?? ''), self::entryPrint($req))) {
+            throw ValidationException::withMessages(['once' => 'This page already saved entry #'.$entry->id
+                .', so nothing was saved this time. What you typed is below: check it, and press Save Entry again to save it as a new entry.']);
+        }
+
+        return $entry;
+    }
+
+    /**
+     * What this page's save wrote, kept against its token for savedBefore().
+     * Last in the transaction, so only a save that is written is kept. The
+     * office's cache is the database (CACHE_STORE), so it is written inside
+     * that same transaction, and goes with it if the save does not go.
+     *
+     * In the cache, not the session: the two presses arrive together, and the
+     * second has read its session before the first has written to it, while
+     * the cache is read under the lock, once the first is done. And not on
+     * the entry, which would need a column and a migration run by hand on the
+     * server, for something kept a day. A day is far longer than any second
+     * press, or a page come back to with Back the same afternoon.
+     */
+    private static function rememberSaved(Request $req, PartyLedgerModel $entry): void
+    {
+        $once = (string) $req->input('once');
+
+        if ($once !== '') {
+            Cache::put(self::onceKey($once), ['entry' => (int) $entry->id, 'post' => self::entryPrint($req)], now()->addDay());
+        }
+    }
+
+    private static function onceKey(string $once): string
+    {
+        return 'party-entry-once.'.$once;
+    }
+
+    /**
+     * What the Entry form posted, as one short string: the same page pressed
+     * twice posts the same thing. As the edit screen's postPrint(), which has
+     * no uploads here to count.
+     */
+    private static function entryPrint(Request $req): string
+    {
+        return sha1(json_encode(Arr::except($req->input(), ['_token'])));
+    }
+
+    /**
      * A customer set off against their own vendor account.
      *
      * One person owes the office for files and is owed for work, and the one
@@ -811,7 +928,7 @@ class PartyController extends Controller
             }
         }
 
-        [$customerHalf, $vendorHalf, $customer, $vendor] = DB::transaction(function () use ($req, $type, $lines, $counterLines, $amount) {
+        [$customerHalf, $vendorHalf, $customer, $vendor, $again] = DB::transaction(function () use ($req, $type, $lines, $counterLines, $amount) {
             /*
              * Both accounts, the lower id first, so a set-off and a payment
              * typed on either at the same moment never wait on each other the
@@ -822,6 +939,19 @@ class PartyController extends Controller
 
             foreach ($ids as $id) {
                 PartyModel::whereKey($id)->lockForUpdate()->first();
+            }
+
+            /*
+             * This page's set-off, sent again: nothing more is written. Asked
+             * before the balances are read — the first lowered them, and a
+             * set-off of all there was would be refused as "nothing to set
+             * off" about a save that went. The customer's half is the one
+             * kept, from whichever screen it was typed.
+             */
+            if ($before = self::savedBefore($req)) {
+                $other = PartyLedgerModel::findOrFail($before->setoff_with_id);
+
+                return [$before, $other, PartyModel::findOrFail($before->party_id), PartyModel::findOrFail($other->party_id), true];
             }
 
             $party = PartyModel::findOrFail($req->party_id);
@@ -899,14 +1029,19 @@ class PartyController extends Controller
             self::allocate((int) $customerHalf->id, (int) $customer->id, $customerLines, $customerHalf->created_at);
             self::allocate((int) $vendorHalf->id, (int) $vendor->id, $vendorLines, $vendorHalf->created_at);
 
-            return [$customerHalf, $vendorHalf, $customer, $vendor];
+            self::rememberSaved($req, $customerHalf);
+
+            return [$customerHalf, $vendorHalf, $customer, $vendor, false];
         });
 
         $money = number_format($amount, 2, '.', ',');
 
         return self::savedBack($type)
-            ->with('success', 'Set off '.$money.': '.$customer->name.' owes '.$money.' less as a customer, and is owed '
-                .$money.' less as a vendor. Entry #'.$customerHalf->id.' on the customer, #'.$vendorHalf->id.' on the vendor.')
+            ->with('success', $again
+                ? 'The set-off of '.$money.' was already saved: entry #'.$customerHalf->id.' on the customer, #'.$vendorHalf->id
+                    .' on the vendor. Save Entry was pressed twice, so the second press saved nothing more.'
+                : 'Set off '.$money.': '.$customer->name.' owes '.$money.' less as a customer, and is owed '
+                    .$money.' less as a vendor. Entry #'.$customerHalf->id.' on the customer, #'.$vendorHalf->id.' on the vendor.')
             /*
              * The customer is told, as they are of any adjustment: a message
              * to send on WhatsApp, never sent from here. Their half only —

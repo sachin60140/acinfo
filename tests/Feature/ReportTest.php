@@ -928,10 +928,16 @@ class ReportTest extends TestCase
      * A file whose price is not agreed has no margin yet, and the row says how
      * many it left out rather than quietly covering fewer files than the figure
      * beside it.
+     *
+     * The row's margin is what the files that are priced made, as the heading
+     * adds it up: blank, it took them out of the table's Total row as well
+     * (found in a health check on 2026-10-07).
      */
     public function test_profit_leaves_out_what_it_cannot_know_and_says_so(): void
     {
         $this->actingAs($this->admin());
+
+        $before = WorkFileModel::profitBy('year', '2026-01-01', '2026-12-31')->firstWhere('group_key', '2026');
 
         // Out with a vendor at no agreed rate.
         $this->file($this->customerA, 5000, $this->vendor, null, WorkFileModel::DISPATCHED);
@@ -939,6 +945,7 @@ class ReportTest extends TestCase
         $year = WorkFileModel::profitBy('year', '2026-01-01', '2026-12-31')->firstWhere('group_key', '2026');
 
         $this->assertSame(1, (int) $year->unpriced);
+        $this->assertEquals((float) ($before->margin ?? 0), (float) $year->margin, 'a cost nobody has agreed is not a cost of nothing');
 
         $row = collect($this->getJson(route('report.profit', [
             'group' => 'year',
@@ -946,7 +953,7 @@ class ReportTest extends TestCase
             'to' => '2026-12-31',
         ]))->assertOk()->json('props.rows'))->firstWhere('id', '2026');
 
-        $this->assertNull($row['margin'], 'a cost nobody has agreed is not a cost of nothing');
+        $this->assertEquals((float) $year->margin, $row['margin'], 'the margin of what is priced, not a blank');
         $this->assertNull($row['rate'], 'and a ratio of the two would be a number nobody could act on');
         $this->assertSame('1 awaiting a price', $row['unpriced']);
     }

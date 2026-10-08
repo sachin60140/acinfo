@@ -51,7 +51,21 @@ class UserController extends Controller
         // One message for every failure mode — an unknown mobile, a mobile with no
         // password set, and a wrong password must be indistinguishable, otherwise
         // the form can be used to enumerate which numbers are registered clients.
-        if (! $result || ! filled($result->password) || ! Hash::check($userpass, $result->password)) {
+        //
+        // And one cost, for the same reason. Bcrypt is slow on purpose, so a
+        // refusal that skips it — an unknown mobile, a client with no password —
+        // comes back in a few milliseconds against a quarter of a second for a
+        // real client's wrong password, and a stopwatch tells apart what the
+        // message does not. So a password is always checked: against the
+        // client's own hash when there is one, and otherwise against the
+        // customer portal's dummy hash, which costs the same and matches nothing.
+        // Only after that is the answer decided.
+        $ok = Hash::check(
+            $userpass,
+            $result && filled($result->password) ? $result->password : CustomerPortalController::DUMMY_HASH
+        );
+
+        if (! $result || ! filled($result->password) || ! $ok) {
             return back()->with('error', 'Mobile number or password is incorrect.');
         }
 
