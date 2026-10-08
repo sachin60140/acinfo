@@ -479,6 +479,39 @@ class AuditWorkFiles extends Command
                 $note($id, "$work is not approved but carries an approval date");
             }
         }
+
+        // ---- Nothing comes back before it went ----------------------------
+
+        /*
+         * Papers back to the customer before they came in, or from a vendor
+         * before they went out. The screens refuse both now. Before that, a
+         * refund or a reversal dated ahead of the charge it gives back was
+         * read against nothing on its file — the ledger sets a file's refund
+         * against that file's charges before it — and went on account, to
+         * settle the party's oldest bill instead: the balance right, the bill
+         * it named wrong. Usually it is the return date that was mistyped,
+         * and no screen corrects that, so this is for a person to put right.
+         *
+         * The vendor's side is asked of vendorLines(), the dates their lines
+         * are written with, so it names only a folder whose reversal really
+         * does land before its credit.
+         */
+        $day = fn ($date) => date('d-m-Y', strtotime($date));
+        $onAccount = ' is read as money on account, not against this file; put the dates right by hand';
+
+        if ($file->isReturned() && $file->returned_on && $file->returned_on < $file->received_date) {
+            $note($id, 'went back to the customer on '.$day($file->returned_on).', before it came in on '.$day($file->received_date)
+                .' — its refund'.$onAccount);
+        }
+
+        foreach ($lines['vendor_return'] as $vendor => $back) {
+            $given = $lines['vendor'][$vendor]['date'] ?? null;
+
+            if ($given && $back['date'] < $given) {
+                $note($id, "came back from vendor $vendor on ".$day($back['date']).', before it went to them on '.$day($given)
+                    .' — the reversal'.$onAccount);
+            }
+        }
     }
 
     /**

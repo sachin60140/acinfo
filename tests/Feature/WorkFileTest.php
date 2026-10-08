@@ -975,7 +975,8 @@ class WorkFileTest extends TestCase
 
         if ($first) {
             $this->controller->customerReturn(Request::create('/admin/file/customer-return', 'POST', [
-                'returned_on' => '2026-04-20',
+                // Not before the papers came in, which the screen refuses.
+                'returned_on' => max('2026-04-20', ...$fresh->only($first)->pluck('received_date')->all()),
                 'files' => $first,
                 'amounts' => array_intersect_key($refunds, array_flip($first)),
                 'remark' => reset($remarks) ?: 'Papers returned',
