@@ -88,8 +88,9 @@ class CustomerPortalController extends Controller
         // the customer ends up signed into.
         $req->session()->regenerate();
 
-        session([
-            self::KEY => $party->id,
+        // With a note of the password it was opened with, so that a new one,
+        // set by the customer or by the office, ends it. See the gate.
+        session(CustomerAuthMiddleware::signedInAs($party) + [
             'customer_name' => $party->name,
         ]);
 
@@ -128,6 +129,11 @@ class CustomerPortalController extends Controller
      * into a party — and exactly one place to be sure it is still a customer.
      * A party deactivated while someone is signed in stops being able to read
      * their own ledger at the next page, not at the next login.
+     *
+     * CustomerAuthMiddleware now asks the same before any screen runs, and
+     * ends the session when the answer is no. This still asks as well: it is
+     * where a screen gets its party from, and a screen that gets it here is
+     * not left open the day somebody adds its route outside the gate.
      */
     private function customer(): PartyModel
     {
@@ -641,15 +647,17 @@ class CustomerPortalController extends Controller
             $customer->save();
 
             /*
-             * A new session id for the person who just proved themselves. Any
-             * session someone else had on this account keeps its own id, so
-             * this does not turn them out — which is why the message below does
-             * not claim it did.
+             * A new session id for the person who just proved themselves, with
+             * the new password noted in it, so this phone carries on. Every
+             * other session on the account still carries the old one, and the
+             * gate ends each at its next page — very often the reason the
+             * password is being changed at all.
              */
             $req->session()->regenerate();
+            session(CustomerAuthMiddleware::signedInAs($customer));
 
             return redirect()->route('customer.dashboard')
-                ->with('success', 'Your password has been changed. Use it the next time you sign in.');
+                ->with('success', 'Your password has been changed, and any other phone or computer signed in to your account has been signed out.');
         }
 
         $props = [

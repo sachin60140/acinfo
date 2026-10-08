@@ -201,6 +201,12 @@ class PartyController extends Controller
      * PartyModel::findForLogin refuses them — but a screen offering to set one
      * says otherwise, and a guard that only exists in the query is a guard one
      * refactor from being the only thing anybody remembers.
+     *
+     * Replacing a login also turns out whoever is signed in with the old one,
+     * at their next page. Nothing here does that: every portal session carries
+     * a fingerprint of the password it was opened with, and
+     * CustomerAuthMiddleware ends one that no longer matches. It is the
+     * office's way of cutting off a phone that should not have the account.
      */
     public function password(Request $req, $id)
     {

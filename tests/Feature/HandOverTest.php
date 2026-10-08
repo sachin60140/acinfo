@@ -373,9 +373,7 @@ class HandOverTest extends TestCase
         $file = $this->file($customer);
         $this->handOver([$file], ['collected_by' => 'Rakesh Kumar the driver', 'remark' => 'RC and NOC']);
 
-        $session = ['customer_id' => $customer->id];
-
-        $page = $this->withSession($session)->getJson(route('customer.file', $file->id))->assertOk()->json('page');
+        $page = $this->actingAsCustomer($customer)->getJson(route('customer.file', $file->id))->assertOk()->json('page');
 
         $this->assertSame(date('d-m-Y'), $page['handedOverOn']);
 
@@ -384,7 +382,7 @@ class HandOverTest extends TestCase
         $this->assertNotNull($entry, 'the handover is not on the customer\'s history');
         $this->assertSame('RC and NOC', $entry['remark']);
 
-        $body = $this->withSession($session)->get(route('customer.file', $file->id))->assertOk()->getContent();
+        $body = $this->actingAsCustomer($customer)->get(route('customer.file', $file->id))->assertOk()->getContent();
 
         $this->assertStringContainsString('Papers Handed Over', $body);
         $this->assertStringNotContainsString('Rakesh Kumar the driver', $body);
