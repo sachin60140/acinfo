@@ -198,18 +198,23 @@ class DispatchSheetTest extends TestCase
     /** A sheet travels: no money on it, and no customer's name. */
     public function test_it_carries_no_money_and_no_customer(): void
     {
-        $file = $this->file(7500);
-        $file->vendor_amount = 4000;
+        /*
+         * Paise in both figures: a record number on the page can never look
+         * like them. A round 7500 failed on CI the day an id reached 7500 —
+         * the sheet carried no money, only a link with that number in it.
+         */
+        $file = $this->file(7543.21);
+        $file->vendor_amount = 4012.34;
         $file->save();
         $this->give($file, '2026-09-20');
 
         $said = $this->sheet()->assertOk()->getContent();
 
         $this->assertStringNotContainsString($this->customer->name, $said);
-        $this->assertStringNotContainsString('7,500', $said);
-        $this->assertStringNotContainsString('7500', $said);
-        $this->assertStringNotContainsString('4,000', $said);
-        $this->assertStringNotContainsString('4000', $said);
+        $this->assertStringNotContainsString('7,543', $said);
+        $this->assertStringNotContainsString('7543', $said);
+        $this->assertStringNotContainsString('4,012', $said);
+        $this->assertStringNotContainsString('4012', $said);
     }
 
     public function test_it_offers_the_days_that_vendor_was_given_something(): void

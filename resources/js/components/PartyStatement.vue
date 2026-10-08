@@ -206,6 +206,20 @@ const blocked = computed(() => reason.value.trim() === '');
                             account, is reversed with it, on the same day and for the same reason.
                         </p>
 
+                        <!-- Reversed on its own a carried balance would be in
+                             neither book; the server refuses it. Said here,
+                             before anything is pressed. And found in review:
+                             the Entry screen picks only a customer already on
+                             the list, so one carried to the wrong customer
+                             because the right one had not been made was taken
+                             back first, and the screen left to add them. -->
+                        <p v-if="entry.carried" class="ui-note ui-note--info">
+                            This balance was carried from the old Client Ledger, which now shows it as carried. Reversed
+                            on its own it would be in neither book, so it is taken back only to be entered again — for
+                            the right customer, or the right amount. If the right customer is not on the Customers list
+                            yet, add them first: the Entry screen can pick only a customer already on it.
+                        </p>
+
                         <div class="ui-field">
                             <label class="ui-label" for="ps-reason">Why <span class="ui-label__req">*</span></label>
                             <textarea
@@ -229,7 +243,13 @@ const blocked = computed(() => reason.value.trim() === '');
 
                     <div class="ps-dialog__foot">
                         <button type="button" class="ui-btn" @click="close">Cancel</button>
-                        <button type="submit" name="correct" value="0" class="ui-btn ui-btn--danger" :disabled="blocked || submitting">
+                        <button
+                            v-if="! entry.carried"
+                            type="submit"
+                            name="correct"
+                            value="0"
+                            class="ui-btn ui-btn--danger"
+                            :disabled="blocked || submitting">
                             <i class="bi bi-arrow-counterclockwise"></i> Reverse
                         </button>
                         <button

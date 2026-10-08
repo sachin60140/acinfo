@@ -231,13 +231,23 @@ class ExpenseByVehicleTest extends TestCase
     /** Costs only: what the customer was charged is not a cost. */
     public function test_it_says_nothing_of_what_the_customer_was_charged(): void
     {
-        $this->file($this->plate);
+        $file = $this->file($this->plate);
+
+        /*
+         * Charges with paise in them, which no record number can look like.
+         * Round ones (7500, 5000) failed on CI whenever an id or a clock-made
+         * name on the page happened to contain those digits.
+         */
+        $file->items()->where('work_type_id', $this->tr->id)->update(['customer_amount' => 5043.21]);
+        $file->customer_amount = 7543.21;
+        $file->save();
 
         $said = $this->report(['vehicle' => $this->plate])->getContent();
 
-        $this->assertStringNotContainsString('7500', $said);
-        $this->assertStringNotContainsString('7,500', $said);
-        $this->assertStringNotContainsString('"5000', $said);
+        $this->assertStringNotContainsString('7543', $said);
+        $this->assertStringNotContainsString('7,543', $said);
+        $this->assertStringNotContainsString('5043', $said);
+        $this->assertStringNotContainsString('5,043', $said);
     }
 
     /** Work struck off charges nobody, and cost nobody either. */

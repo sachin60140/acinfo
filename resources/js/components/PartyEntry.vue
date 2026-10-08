@@ -397,6 +397,19 @@ function resetDateField() {
             </div>
 
             <div class="ui-card__body entry-grid">
+                <!-- A balance carried from the old Client Ledger, entered again
+                     on Correct. Found in review: what Correct filled in lasted
+                     one page, and the right customer, if they had not been
+                     made, was added by leaving it — losing which old client it
+                     came from. Opened at its own address the screen is filled
+                     in again, so a reload keeps it; see PartyController::entry(). -->
+                <div v-if="entry.corrects" class="ui-note ui-note--info entry-grid__wide">
+                    Entering again entry #{{ entry.corrects }}, a balance carried from the old Client Ledger. Leave its
+                    Particulars as they are: saved with them, it keeps which old client it came from. If the right
+                    customer is not on the list yet, add them in another tab, then reload this page — it is filled
+                    in again.
+                </div>
+
                 <div class="ui-field">
                     <label class="ui-label" for="party_id">
                         {{ label }} <span class="ui-label__req">*</span>
@@ -520,6 +533,13 @@ function resetDateField() {
                         Printed on the vendor's statement. Leave out customers' names and what they paid —
                         a customer named here is shown as "…".
                     </div>
+                    <!-- A balance carried from the old Client Ledger, entered
+                         again on Correct: which line it was. The server reads
+                         from that line which client it came from, so the
+                         Collection List still dates it from the old book. Here,
+                         with the Particulars that say where it was brought from:
+                         a write-off or a set-off says something else. -->
+                    <input v-if="entry.corrects" type="hidden" name="corrects" :value="entry.corrects">
                 </div>
 
                 <div v-else-if="isWriteOff" class="ui-field entry-grid__wide">
