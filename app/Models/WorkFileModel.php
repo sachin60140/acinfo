@@ -2016,12 +2016,61 @@ class WorkFileModel extends Model
 
     /**
      * The running number shown to the user. Derived from the id rather than a
-     * counter of its own, so it can never collide or leave gaps that look like
-     * missing files.
+     * counter of its own, so it leaves no gaps that look like missing files.
+     *
+     * It can collide, though, with a number typed on the edit screen. A file
+     * renamed there to F-00150 while the newest was the 120th was sitting on
+     * the 150th file's number, and the column is unique: when Receive Files
+     * got there the save failed and took the whole batch at the counter down
+     * with it, every typed row lost. The edit screen now refuses that form
+     * (see mayTakeFileNo), but a file renamed before it did keeps its number.
+     *
+     * So a number already taken is stepped past, to the same number marked as
+     * the second of that name: F-00150-2. Not to F-00151, which is the next
+     * file's own, and taking it would push every file after it along by one.
+     * Asked of the database, so it is matched as the unique index matches it,
+     * f-00150 the same as F-00150.
      */
     public function generateFileNo(): string
     {
-        return 'F-'.str_pad((string) $this->id, 5, '0', STR_PAD_LEFT);
+        $own = self::automaticFileNo((int) $this->id);
+        $number = $own;
+
+        for ($next = 2; static::where('file_no', $number)->whereKeyNot($this->id)->exists(); $next++) {
+            $number = $own.'-'.$next;
+        }
+
+        return $number;
+    }
+
+    /** F- and the id, padded to five: the running number of the file with this id. */
+    public static function automaticFileNo(int $id): string
+    {
+        return 'F-'.str_pad((string) $id, 5, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Whether the edit screen may give this file the number typed.
+     *
+     * F- and digits is the running number's form, given to each file as it
+     * is received. Typed onto some other file, it is a number Receive Files
+     * reaches later, or one it gave a file before; either way it reads as
+     * another file's. So that form is refused, and any other is the office's
+     * to type as before.
+     *
+     * Except the file's own: the number it carries now, which the page posts
+     * back on every save — a file renamed before this rule must still be
+     * correctable — and its running number, which a renamed file can take
+     * back. Compared ignoring case, as the column's unique index does.
+     */
+    public function mayTakeFileNo(string $number): bool
+    {
+        if (! preg_match('/^F-\d+$/i', $number)) {
+            return true;
+        }
+
+        return strcasecmp($number, (string) $this->file_no) === 0
+            || strcasecmp($number, self::automaticFileNo((int) $this->id)) === 0;
     }
 
     /**

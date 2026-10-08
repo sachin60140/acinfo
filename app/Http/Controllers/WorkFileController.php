@@ -2993,6 +2993,21 @@ class WorkFileController extends Controller
                 'documents.*.file.max' => 'Each PDF must be 10 MB or smaller.',
             ]);
 
+            /*
+             * The unique rule above only asks whether a file has the number
+             * now. F-00150 typed while the newest file was the 120th passed
+             * it, and when Receive Files got to the 150th the whole batch at
+             * the counter failed. Numbers of that form are Receive Files' to
+             * give out, so one is taken here only if it is this file's own;
+             * see mayTakeFileNo().
+             */
+            if ($req->filled('file_no') && ! $file->mayTakeFileNo((string) $req->file_no)) {
+                return back()->withInput()->withErrors([
+                    'file_no' => 'Numbers like '.$req->file_no.' are given out by Receive Files, one to each file in turn, '
+                        .'so one typed here can clash with another file\'s. Keep this file\'s own number, or type one in a different form.',
+                ]);
+            }
+
             $adding = collect($req->input('new_works', []))
                 ->filter(fn ($work) => ! empty($work['work_type_id']));
 
