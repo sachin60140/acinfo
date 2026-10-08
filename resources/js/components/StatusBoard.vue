@@ -41,6 +41,16 @@ const props = defineProps({
     // Today, from the server: an approval cannot be dated after it, and the
     // browser's own clock is not the one the ledger is kept by.
     today: { type: String, default: '' },
+    // The states the server refuses without a reason, from the same list the
+    // Update dialog on the Work Report is handed.
+    reasonKeys: { type: Array, default: () => ['cancelled', 'paper_returned'] },
+
+    /*
+     * What was typed into a save the server refused, from the page it sent
+     * the reader back to: { statuses, was, remarks, approved_on,
+     * was_approved_on }, keyed by work. See putBack().
+     */
+    restore: { type: Object, default: null },
 });
 
 /*
@@ -78,6 +88,72 @@ const rows = reactive(
         }))
     )
 );
+
+/*
+ * Put back what a refused save held.
+ *
+ * The board is one form for every work on it, so a single refusal — a
+ * screenshot over the size limit, a work a colleague moved since — sent back a
+ * board drawn fresh, and every status chosen, approval date and remark typed
+ * in that sitting was gone, on the screen where most of them are typed.
+ *
+ * The rules are the Update dialog's; see WorkUpdateDialog's restoreInto(). A
+ * remark always: it is what somebody typed and nothing depends on it. A status
+ * only when the work is still where it was when it was chosen — one a
+ * colleague moved since was refused for exactly that, and filling the old
+ * choice back in would send it straight back the way it came, so it is said
+ * on the work instead. An approval date with the approval it belongs to, and
+ * a corrected one only over the date it corrected: one changed since is the
+ * colleague's. Uploads cannot be put back; the note says so.
+ */
+const restored = ref(false);
+// Works whose chosen status was held back: { id: { chosen, now } }.
+const withheld = reactive({});
+
+function putBack() {
+    const back = props.restore;
+
+    if (! back) {
+        return;
+    }
+
+    for (const row of rows) {
+        const offered = row.file.statuses || props.statuses;
+        const remark = back.remarks?.[row.id];
+        const chosen = back.statuses?.[row.id];
+        const drawn = back.was?.[row.id];
+        const still = drawn === row.status;
+
+        if (typeof remark === 'string' && remark.trim() !== '') {
+            row.remark = remark;
+            restored.value = true;
+        }
+
+        if (chosen && chosen !== drawn && still && chosen in offered && ! checklistOnly(row.status, chosen)) {
+            row.chosen = chosen;
+            restored.value = true;
+        } else if (chosen && chosen !== drawn && drawn !== undefined && ! still) {
+            withheld[row.id] = {
+                chosen: offered[chosen] ?? props.statuses[chosen] ?? chosen,
+                now: offered[row.status] ?? props.statuses[row.status] ?? row.status,
+            };
+        }
+
+        const on = back.approved_on?.[row.id];
+
+        if (! on || ! still || row.chosen !== props.approvedKey) {
+            continue;
+        }
+
+        // Approved now, or a date corrected over the one still stored.
+        if (row.chosen !== row.status || String(back.was_approved_on?.[row.id] ?? '') === String(row.approved_on_iso ?? '')) {
+            row.approvedOn = on;
+            restored.value = true;
+        }
+    }
+}
+
+putBack();
 
 /*
  * What is being looked for.
@@ -139,10 +215,13 @@ const cancelling = (row) => row.chosen === props.cancelledKey;
 
 /*
  * Cancelling strikes work off the folder and takes its charge off the
- * customer's statement, so the server refuses it without a reason. Saying so
- * here beats bouncing the whole board back.
+ * customer's statement; returning the papers gives the charge back. Both move
+ * the customer's balance, so the server refuses either without a reason — and
+ * it says which states those are, as it does to the Update dialog. Saying so
+ * here beats bouncing the whole board back: this asked only of Cancelled, and
+ * a return with no remark was let through to be refused.
  */
-const needsReason = (row) => changed(row) && cancelling(row) && row.remark.trim() === '';
+const needsReason = (row) => changed(row) && props.reasonKeys.includes(row.chosen) && row.remark.trim() === '';
 
 // Approval is evidenced per job, because two approvals days apart arrive with
 // a document each. One already on file is enough.
@@ -275,6 +354,15 @@ function onScreenshot(row, event) {
                 <span class="ui-hint">{{ found }}</span>
             </div>
 
+            <!-- Back from a refused save. Why it was refused is in the alert
+                 above the board; this says what was kept of the sitting. -->
+            <div v-if="restored || Object.keys(withheld).length" class="ui-hint board__restored">
+                <i class="bi bi-arrow-counterclockwise"></i>
+                <template v-if="Object.keys(withheld).length">Some of what you typed has been put back — see the works marked below.</template>
+                <template v-else>What you typed has been put back.</template>
+                Attach any screenshot again — files cannot be kept.
+            </div>
+
             <div class="ui-table-wrap">
                 <table class="ui-table board">
                     <thead>
@@ -354,6 +442,11 @@ function onScreenshot(row, event) {
                                             {{ label }}
                                         </option>
                                     </select>
+
+                                    <div v-if="withheld[row.id]" class="ui-hint ui-hint--error board__withheld">
+                                        This work is now {{ withheld[row.id].now }} — your choice of
+                                        {{ withheld[row.id].chosen }} was not put back. Decide again.
+                                    </div>
 
                                     <!-- The checklist's answer, not the status's:
                                          a file out with a vendor on an override
@@ -504,6 +597,16 @@ function onScreenshot(row, event) {
 .board__find .ui-input {
     padding-left: var(--s-8);
     width: 100%;
+}
+
+/* ---- Back from a refused save ------------------------------------------ */
+
+.board__restored {
+    margin-bottom: var(--s-3);
+}
+
+.board__withheld {
+    margin-top: var(--s-1);
 }
 
 /* ---- The folder heading ------------------------------------------------ */

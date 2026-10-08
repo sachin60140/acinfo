@@ -544,7 +544,11 @@
                 }
             },
             "pendencyKey": "string",
+            "reasonKeys": {
+                "list_of": "string"
+            },
             "resetUrl": "string",
+            "restore": "null",
             "statuses": {
                 "approval_done": "string",
                 "cancelled": "string",

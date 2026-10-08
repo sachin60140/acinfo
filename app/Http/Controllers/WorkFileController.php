@@ -2601,10 +2601,17 @@ class WorkFileController extends Controller
                 ->map(fn ($item) => $name($item).' (now '.(WorkFileModel::STATUSES[$item->status] ?? $item->status)
                     .($item->approved_on && $item->isApproved() ? ', approved '.date('d-m-Y', strtotime($item->approved_on)) : '').')');
 
+            /*
+             * Not "reload the page". The board and the Update dialog both come
+             * back drawn as the work stands now, with what was typed put back;
+             * a reload is a plain visit, which has nothing to put back, and it
+             * threw away everything the page had just been handed. Found in
+             * review.
+             */
             if ($stale->isNotEmpty()) {
                 return back()->withInput()->with(
                     'error',
-                    'Nothing was saved: this work has changed since the page was opened. Reload the page to see where it stands now, then try again: '.$stale->implode(', ')
+                    'Nothing was saved: this work has changed since the page was opened. It is shown below as it stands now; choose again for it and save: '.$stale->implode(', ')
                 );
             }
 
@@ -2753,10 +2760,15 @@ class WorkFileController extends Controller
                 })
                 ->map($name);
 
+            /*
+             * Said for both, because it is refused for both: a reader who was
+             * returning papers was told about cancelling work they were not
+             * cancelling, and left to wonder what they had done.
+             */
             if ($unexplained->isNotEmpty()) {
                 return back()->withInput()->with(
                     'error',
-                    'Cancelling work changes the customer\'s balance, so it needs a reason. Add a remark for: '.$unexplained->implode(', ')
+                    'Cancelling work, or returning its papers to the customer, changes the customer\'s balance, so it needs a reason. Add a remark for: '.$unexplained->implode(', ')
                 );
             }
 
@@ -2957,7 +2969,18 @@ class WorkFileController extends Controller
 
             'approvedKey' => WorkFileModel::APPROVED,
             'cancelledKey' => WorkFileModel::CANCELLED,
+            // The states status() refuses without a reason, as the Update
+            // dialog on the Work Report is told them.
+            'reasonKeys' => [WorkFileModel::CANCELLED, WorkFileModel::RETURNED],
             'files' => $files->map(fn ($file) => self::boardFile($file, $holder, $filter, $lastRemarks, $pendingPapers))->values(),
+
+            /*
+             * What a refused save held. The board is one form for the whole
+             * sitting, and a refusal sent it back drawn fresh — every status
+             * chosen, approval date and remark typed on it gone. StatusBoard
+             * decides what is safe to put back.
+             */
+            'restore' => \App\Support\UpdateDialog::restore(),
         ];
         $statuses = WorkFileModel::STATUSES;
 
