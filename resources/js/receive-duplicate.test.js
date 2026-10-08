@@ -162,3 +162,86 @@ describe('a vehicle with no history', () => {
         expect(submit(host).disabled).toBe(false);
     });
 });
+
+/*
+ * A batch the server sent back for something else.
+ *
+ * The "take it in anyway" tick answers a warning drawn from a lookup, and
+ * nothing had typed the numbers this time. Found in the health check: the
+ * ticked file came back with no warning and no tick, and the next save was
+ * refused for a box that was not on the page.
+ */
+describe('a batch sent back', () => {
+    const restored = (attributes) => ({
+        registration_no: 'BR01JB8140',
+        description: '',
+        works: [{ work_type_id: 2, amount: '5000' }],
+        duplicate_ok: false,
+        ...attributes,
+    });
+
+    /** The screen as the server draws it again, every lookup answered with these files. */
+    async function sentBack(oldRows, files) {
+        const asked = [];
+
+        global.fetch = (url) => {
+            asked.push(url);
+
+            return Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ registration_no: 'BR01JB8140', count: files.length, files }),
+            });
+        };
+
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+
+        const app = createApp(ReceiveFileRows, {
+            workTypes: [HPA, TR],
+            historyUrl: '/admin/api/work-files/history',
+            cancelUrl: '/admin/files',
+            oldRows,
+        });
+
+        app.mount(host);
+        mounted.push({ app, host });
+
+        // Every reply resolved, then Vue renders.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await nextTick();
+
+        return { host, asked };
+    }
+
+    it('comes back with its tick, and the warning the tick answers', async () => {
+        const { host } = await sentBack([restored({ duplicate_ok: true })], [past({})]);
+
+        const alert = host.querySelector('.rcv-clash');
+
+        expect(alert).not.toBeNull();
+        expect(alert.textContent).toContain('F-00050');
+        expect(alert.querySelector('input[type="checkbox"]').checked).toBe(true);
+        expect(byName(host, 'rows[0][duplicate_ok]').value).toBe('1');
+        expect(submit(host).disabled).toBe(false);
+    });
+
+    it('still stops a file that was not ticked', async () => {
+        const { host } = await sentBack([restored({})], [past({})]);
+
+        expect(host.querySelector('.rcv-clash')).not.toBeNull();
+        expect(byName(host, 'rows[0][duplicate_ok]')).toBeNull();
+        expect(submit(host).disabled).toBe(true);
+    });
+
+    it('looks up each number it brought back, and nothing for a card without one', async () => {
+        const { asked } = await sentBack([
+            restored({}),
+            restored({ registration_no: '' }),
+            restored({ registration_no: 'BR06XY4321' }),
+        ], []);
+
+        expect(asked).toHaveLength(2);
+        expect(asked[0]).toContain('BR01JB8140');
+        expect(asked[1]).toContain('BR06XY4321');
+    });
+});
