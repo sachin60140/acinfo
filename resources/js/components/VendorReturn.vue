@@ -12,7 +12,7 @@
  * booked to that vendor, and how much of it is coming back. Blank means all of
  * it, which is the common case and the reason the box may be left alone.
  */
-import { computed, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref } from 'vue';
 import { money } from '../money';
 
 const props = defineProps({
@@ -173,10 +173,42 @@ const summary = computed(() => {
         text: `${count} ${count === 1 ? 'comes' : 'come'} back, ${money(total.value)} off what is owed to vendors.`,
     };
 });
+
+/*
+ * One press, one take-back.
+ *
+ * A double click sent the batch twice, and the second post, read while the
+ * first was still saving, rebuilt the vendor's lines from what it saw and took
+ * away the reversal the first had just written — their statement went on
+ * saying they were owed for work they had handed back. The server makes a
+ * second post wait its turn now and refuses it; this stops it being sent at
+ * all. Released when the browser brings the page back from its history, or the
+ * button would stay dead on a page returned to with Back.
+ */
+const submitting = ref(false);
+
+function onSubmit(event) {
+    if (submitting.value) {
+        event.preventDefault();
+
+        return;
+    }
+
+    submitting.value = true;
+}
+
+function onPageShow(event) {
+    if (event.persisted) {
+        submitting.value = false;
+    }
+}
+
+window.addEventListener('pageshow', onPageShow);
+onBeforeUnmount(() => window.removeEventListener('pageshow', onPageShow));
 </script>
 
 <template>
-    <form class="ui ui-page" :action="action" method="POST">
+    <form class="ui ui-page" :action="action" method="POST" @submit="onSubmit">
         <!-- Rendered here rather than passed as a slot: the component is mounted
              onto a bare element, so there is no server markup to slot in. -->
         <input type="hidden" name="_token" :value="csrf">
@@ -360,7 +392,7 @@ const summary = computed(() => {
                     <span class="ui-hint" :class="{ 'ui-hint--error': summary.tone === 'error' }">{{ summary.text }}</span>
                     <div class="vr-actions">
                         <a :href="cancelUrl" class="ui-btn">Cancel</a>
-                        <button type="submit" class="ui-btn ui-btn--primary" :disabled="!picked.length || blocked">
+                        <button type="submit" class="ui-btn ui-btn--primary" :disabled="submitting || !picked.length || blocked">
                             <i class="bi bi-arrow-return-left"></i> Take Files Back
                         </button>
                     </div>

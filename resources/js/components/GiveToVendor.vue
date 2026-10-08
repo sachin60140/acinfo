@@ -23,7 +23,7 @@
  * list of work leaving, for every folder in the batch. So every ticked job posts
  * its own id — never some folders by job and others whole.
  */
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { balance, money, side } from '../money';
 
 const props = defineProps({
@@ -416,6 +416,38 @@ const summary = computed(() => {
     return parts.join(', ') + '.';
 });
 
+/*
+ * One press, one handover.
+ *
+ * A double click sent the batch twice, and the second post, read while the
+ * first was still saving, rebuilt the vendor's lines from what it saw and took
+ * away the credit the first had just given them. The server makes a second
+ * post wait its turn now and refuses it; this stops it being sent at all. Both
+ * buttons, because Keep in-house posts the same form. Released when the browser
+ * brings the page back from its history, or the buttons would stay dead on a
+ * page returned to with Back.
+ */
+const submitting = ref(false);
+
+function onSubmit(event) {
+    if (submitting.value) {
+        event.preventDefault();
+
+        return;
+    }
+
+    submitting.value = true;
+}
+
+function onPageShow(event) {
+    if (event.persisted) {
+        submitting.value = false;
+    }
+}
+
+window.addEventListener('pageshow', onPageShow);
+onBeforeUnmount(() => window.removeEventListener('pageshow', onPageShow));
+
 const vendorField = ref(null);
 
 onMounted(() => {
@@ -429,7 +461,7 @@ onMounted(() => {
 </script>
 
 <template>
-    <form class="ui" :action="action" method="POST">
+    <form class="ui" :action="action" method="POST" @submit="onSubmit">
         <!-- Rendered here rather than passed as a slot: the component is mounted
              onto a bare element, so there is no server markup to slot in. -->
         <input type="hidden" name="_token" :value="csrf">
@@ -811,12 +843,13 @@ onMounted(() => {
                         class="ui-btn"
                         :formaction="keepUrl"
                         formnovalidate
+                        :disabled="submitting"
                         title="We are doing this work here, so stop offering it to vendors">
                         <i class="bi bi-house-check"></i>
                         Keep {{ goingJobs.length === 1 ? 'it' : 'them' }} in-house
                     </button>
 
-                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="unexplained > 0">
+                    <button type="submit" class="ui-btn ui-btn--primary" :disabled="submitting || unexplained > 0">
                         <i class="bi bi-check2-circle"></i> Give to Vendor
                     </button>
                 </div>
