@@ -3270,6 +3270,62 @@ class WorkFileController extends Controller
                 }
             }
 
+            /*
+             * And work given with no Given On date, which counts as given the
+             * day the papers came in: its vendor's credit is dated from the
+             * received date (see WorkFileModel::vendorLines()), and its
+             * take-back was held to that day (see vendorReturn()).
+             *
+             * Found in review: the two checks above asked neither the
+             * received date nor a cleared Given On box. A folder given with
+             * the box left blank and taken back on the 5th could then be
+             * corrected to have come in on the 8th — its credit moved past
+             * its reversal, and the vendor's statement read the reversal as
+             * paying off their oldest other bill. Clearing the box on a folder
+             * received after its take-back did the same.
+             *
+             * Asked of the works that will carry no day once this save is
+             * done: those with none that the box does not give one, and those
+             * it clears. The box re-dates the same vendor's works that carry
+             * the folder's old day or none (see below); a new vendor is
+             * refused above wherever anything came back. An older folder
+             * carries its day, and its take-back, on itself. Like the checks
+             * above, only where the save moves the day a work counts from, so
+             * a folder already dated so still saves while it is left alone.
+             */
+            $boxDay = $req->filled('vendor_date') ? $req->vendor_date : null;
+
+            // The day a work will carry once this save is done: the box's for
+            // the works it re-dates, its own for the rest.
+            $dayAfter = fn ($work) => $file->vendor_id
+                && (int) $req->vendor_id === (int) $file->vendor_id
+                && (int) $work->vendor_id === (int) $file->vendor_id
+                && (! $work->vendor_date || $work->vendor_date === $file->vendor_date)
+                    ? $boxDay
+                    : $work->vendor_date;
+
+            $worksNow = $file->items()->get();
+
+            $undated = WorkFileModel::isOlderFolder($worksNow)
+                ? collect($file->vendor_returned_on && ! $boxDay
+                    ? [['from' => $file->vendor_date ?: $file->received_date, 'back' => $file->vendor_returned_on]]
+                    : [])
+                : $worksNow
+                    ->filter(fn ($work) => $work->status !== WorkFileModel::CANCELLED && $work->vendor_id && $work->vendor_returned_on)
+                    ->filter(fn ($work) => ! $dayAfter($work))
+                    ->map(fn ($work) => ['from' => $work->vendor_date ?: $file->received_date, 'back' => $work->vendor_returned_on]);
+
+            $backOn = $undated->filter(fn ($work) => $work['from'] !== $req->received_date)->min('back');
+
+            if ($backOn && $req->received_date > $backOn) {
+                $on = date('d-m-Y', strtotime($backOn));
+
+                return back()->withInput()->withErrors([
+                    'received_date' => 'Not after '.$on.', the day work given with no Given On date came back from the vendor.',
+                ])->with('error', 'Work on this file came back from its vendor on '.$on.', and with no Given On date it counts as given '
+                    .'the day the papers came in — so they cannot have come in after that. Check the received date and the Given On date.');
+            }
+
             // The works not approved before this save, to tell which it
             // approved; see below.
             $unapprovedBefore = $file->items()

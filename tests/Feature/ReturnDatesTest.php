@@ -341,6 +341,90 @@ class ReturnDatesTest extends TestCase
         $this->assertSame('2026-09-05', $file->fresh()->vendor_date);
     }
 
+    /**
+     * Found in review: work given with no Given On date counts as given the
+     * day the papers came in, and its take-back was held to that day — but
+     * the received date could then be moved past the take-back, carrying the
+     * vendor's credit past its reversal, which paid off another of their
+     * bills instead.
+     */
+    public function test_the_received_date_cannot_be_moved_past_the_take_back_of_work_given_with_no_day(): void
+    {
+        $older = $this->file('2026-07-01', [[$this->tr, 1000, 500, '2026-07-01']]);
+        $file = $this->file('2026-09-01', [[$this->tr, 3000, 800, null]]);
+        $this->takeBack($file, '2026-09-05')->assertSessionHas('success');
+
+        $this->assertSame([$older->id => 500.0], $this->owed($this->sharma, 'credit'));
+
+        $this->edit($file->fresh(), ['received_date' => '2026-09-08'])
+            ->assertRedirect(route('workfile.edit', $file->id))
+            ->assertSessionHasErrors('received_date')
+            ->assertSessionHas('error', fn ($error) => str_contains($error, '05-09-2026'));
+
+        $this->assertSame('2026-09-01', $file->fresh()->received_date, 'the received date moved');
+        $this->assertSame([$older->id => 500.0], $this->owed($this->sharma, 'credit'), 'the reversal paid off another bill');
+
+        // Up to the day it came back is still a correction it can make.
+        $this->edit($file->fresh(), ['received_date' => '2026-09-05'])->assertSessionHasNoErrors();
+
+        $this->assertSame('2026-09-05', $file->fresh()->received_date);
+        $this->assertSame([$older->id => 500.0], $this->owed($this->sharma, 'credit'));
+    }
+
+    /**
+     * Clearing the Given On box does the same to a folder received after its
+     * take-back: its work then counts from the received date.
+     */
+    public function test_the_given_on_date_cannot_be_cleared_where_the_papers_came_in_after_the_take_back(): void
+    {
+        $older = $this->file('2026-07-01', [[$this->tr, 1000, 500, '2026-07-01']]);
+        $file = $this->file('2026-09-10', [[$this->tr, 3000, 800, '2026-09-02']]);
+        $this->takeBack($file, '2026-09-05')->assertSessionHas('success');
+
+        $this->edit($file->fresh(), ['vendor_date' => ''])
+            ->assertSessionHasErrors('received_date')
+            ->assertSessionHas('error', fn ($error) => str_contains($error, '05-09-2026'));
+
+        $this->assertSame('2026-09-02', $file->items()->first()->vendor_date, 'the day it went out was cleared');
+        $this->assertSame([$older->id => 500.0], $this->owed($this->sharma, 'credit'), 'the reversal paid off another bill');
+    }
+
+    /** An older folder with no day written counts from the received date too. */
+    public function test_an_older_folders_received_date_cannot_be_moved_past_its_take_back(): void
+    {
+        $file = $this->olderFolder('2026-09-01', '2026-09-01');
+        DB::table('work_file')->where('id', $file->id)->update(['vendor_date' => null]);
+        $this->takeBack($file->fresh(), '2026-09-05')->assertSessionHas('success');
+
+        $this->edit($file->fresh(), ['received_date' => '2026-09-08'])
+            ->assertSessionHasErrors('received_date');
+
+        $this->assertSame('2026-09-01', $file->fresh()->received_date);
+    }
+
+    /**
+     * Work that went out on a day of its own is not moved by the received
+     * date; and a folder already dated wrong still saves while its dates are
+     * left alone.
+     */
+    public function test_the_received_date_is_free_where_the_work_carries_its_own_day(): void
+    {
+        $file = $this->file('2026-09-01', [[$this->tr, 3000, 800, '2026-09-02']]);
+        $this->takeBack($file, '2026-09-05')->assertSessionHas('success');
+
+        $this->edit($file->fresh(), ['received_date' => '2026-09-08'])->assertSessionHasNoErrors();
+
+        $this->assertSame('2026-09-08', $file->fresh()->received_date);
+
+        $undated = $this->file('2026-09-01', [[$this->tr, 3000, 800, null]]);
+        $this->takeBack($undated, '2026-09-05')->assertSessionHas('success');
+        DB::table('work_file')->where('id', $undated->id)->update(['received_date' => '2026-09-08']);
+
+        $this->edit($undated->fresh(), ['registration_no' => 'BR01RD0002'])->assertSessionHasNoErrors();
+
+        $this->assertSame('BR01RD0002', $undated->fresh()->registration_no);
+    }
+
     // --------------------------------------------------------- the status board
 
     /** The board's return is dated today too. */
