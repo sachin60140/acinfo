@@ -3565,12 +3565,19 @@ class WorkFileModel extends Model
          * subqueries against the file, and inside an aggregate under a GROUP
          * BY that is something MySQL allows and MariaDB — the live server —
          * refuses ("work_file.id isn't in GROUP BY"). Found in review.
+         *
+         * What a file has cost is a cost whether or not every price on it is
+         * agreed, as the Profit report this chart opens counts it: only the
+         * margin waits. Found in a health check on 2026-10-07: zeroed with the
+         * margin, a rate already agreed on one of its works and on the
+         * vendor's statement, and a challan already paid, showed as nothing
+         * until the last price was in.
          */
         $each = DB::table('work_file')
             ->whereDate('received_date', '>=', $from->toDateString())
             ->selectRaw("DATE_FORMAT(received_date, '%Y-%m') as month")
             ->selectRaw("$earned as billed")
-            ->selectRaw("CASE WHEN $unsettled THEN 0 ELSE ($spent) END as cost")
+            ->selectRaw("$spent as cost")
             ->selectRaw("CASE WHEN $unsettled THEN 0 ELSE $earned - ($spent) END as margin");
 
         $rows = DB::query()
