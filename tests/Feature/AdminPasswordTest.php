@@ -434,6 +434,11 @@ class AdminPasswordTest extends TestCase
      * change still names the account. It also carries the password it was
      * issued under, and the sign-in page reads that now as the office pages
      * do, rather than signing the phone in and sending it on.
+     *
+     * Since Laravel 13.43 the guard reads it first: a cookie whose password is
+     * not the account's signs nobody in, so the phone arrives as a guest and is
+     * shown the sign-in form, where before AdminSessionMiddleware signed it out
+     * and sent it back to the same page. Either way it is not let in.
      */
     public function test_a_cookie_from_before_an_earlier_change_is_turned_away_at_the_sign_in_page(): void
     {
@@ -448,7 +453,8 @@ class AdminPasswordTest extends TestCase
         $this->anotherDevice();
         $this->withCookie($this->recaller(), $phone->getValue())
             ->get('/admin')
-            ->assertRedirect(url('/admin'));
+            ->assertOk()
+            ->assertSee('Login to Your Account');
 
         $this->assertGuest();
 
