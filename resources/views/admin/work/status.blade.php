@@ -15,6 +15,64 @@
             padding: 0.7rem 0.85rem;
         }
 
+        /* A row's chips, in a strip of their own. On a tablet or a desk the
+           strip is no box at all, and the chips wrap beside their label as
+           they always have. */
+        .filter-chips {
+            display: contents;
+        }
+
+        /*
+         * On a phone, one line a row that swipes sideways.
+         *
+         * Wrapped, the three rows took more than a phone's first screen: on a
+         * 390px phone the board began a scroll and a half down, under
+         * fourteen lines of chips. Held sideways a phone is barely 400px tall,
+         * and the rows filled it whole, which is the second query. The strip
+         * runs to the edges of the bar, so a chip cut off there shows the row
+         * goes on; the end with more beyond it fades (chip-strips.js marks
+         * which), and the chosen chip is brought into view.
+         */
+        @media (max-width: 575.98px), (pointer: coarse) and (max-height: 500px) {
+            .filter-chips {
+                display: flex;
+                flex: 1 1 100%;
+                flex-wrap: nowrap;
+                gap: var(--s-1);
+                margin-inline: -0.85rem;
+                min-width: 0;
+                overflow-x: auto;
+                overscroll-behavior-x: contain;
+                padding: 2px 0.85rem;
+                scroll-padding-inline: 0.85rem;
+                scrollbar-width: none;
+            }
+
+            .filter-chips::-webkit-scrollbar {
+                display: none;
+            }
+
+            .filter-chips > * {
+                flex: none;
+                white-space: nowrap;
+            }
+
+            .filter-chips[data-more="end"] {
+                -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
+                mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
+            }
+
+            .filter-chips[data-more="start"] {
+                -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 2.5rem), transparent);
+                mask-image: linear-gradient(to left, #000 calc(100% - 2.5rem), transparent);
+            }
+
+            .filter-chips[data-more="both"] {
+                -webkit-mask-image: linear-gradient(to right, transparent, #000 2.5rem, #000 calc(100% - 2.5rem), transparent);
+                mask-image: linear-gradient(to right, transparent, #000 2.5rem, #000 calc(100% - 2.5rem), transparent);
+            }
+        }
+
         /* ---- Board ------------------------------------------------------ */
 
         .board {
@@ -220,50 +278,56 @@
                 <div class="filter-bar mb-3">
                     <div class="filter-row">
                         <span class="filter-key">Status</span>
-                        @foreach ($tabs as $key => $text)
-                            @php $count = $statusCounts[$key] ?? 0; @endphp
-                            {{-- The work type carries across, so changing status
-                                 never silently widens what you are looking at. --}}
-                            <a href="{{ route('workfile.status', array_filter(['status' => $key, 'work_type' => $workTypeId, 'vendor' => $vendorId])) }}"
-                               class="chip {{ $filter === $key ? 'active' : '' }} {{ $count === 0 ? 'empty' : '' }}">
-                                {{ $text }} <span class="n">{{ $count }}</span>
-                            </a>
-                        @endforeach
+                        <div class="filter-chips">
+                            @foreach ($tabs as $key => $text)
+                                @php $count = $statusCounts[$key] ?? 0; @endphp
+                                {{-- The work type carries across, so changing status
+                                     never silently widens what you are looking at. --}}
+                                <a href="{{ route('workfile.status', array_filter(['status' => $key, 'work_type' => $workTypeId, 'vendor' => $vendorId])) }}"
+                                   class="chip {{ $filter === $key ? 'active' : '' }} {{ $count === 0 ? 'empty' : '' }}">
+                                    {{ $text }} <span class="n">{{ $count }}</span>
+                                </a>
+                            @endforeach
+                        </div>
                     </div>
 
                     <div class="filter-row">
                         <span class="filter-key">Work Type</span>
-                        <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'vendor' => $vendorId])) }}"
-                           class="chip {{ $workTypeId === null ? 'active' : '' }}">
-                            All <span class="n">{{ $statusCounts[$filter] ?? 0 }}</span>
-                        </a>
-                        @forelse ($workTypeCounts as $type)
-                            <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'work_type' => $type->id, 'vendor' => $vendorId])) }}"
-                               class="chip {{ $workTypeId === (int) $type->id ? 'active' : '' }}">
-                                {{ $type->name }} <span class="n">{{ $type->total }}</span>
+                        <div class="filter-chips">
+                            <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'vendor' => $vendorId])) }}"
+                               class="chip {{ $workTypeId === null ? 'active' : '' }}">
+                                All <span class="n">{{ $statusCounts[$filter] ?? 0 }}</span>
                             </a>
-                        @empty
-                            <span class="side-hint">Nothing under this status.</span>
-                        @endforelse
+                            @forelse ($workTypeCounts as $type)
+                                <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'work_type' => $type->id, 'vendor' => $vendorId])) }}"
+                                   class="chip {{ $workTypeId === (int) $type->id ? 'active' : '' }}">
+                                    {{ $type->name }} <span class="n">{{ $type->total }}</span>
+                                </a>
+                            @empty
+                                <span class="side-hint">Nothing under this status.</span>
+                            @endforelse
+                        </div>
                     </div>
 
                     {{-- Chasing work is usually chasing one vendor: you have them
                          on the phone and want their files, not everybody's. --}}
                     <div class="filter-row">
                         <span class="filter-key">Vendor</span>
-                        <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId])) }}"
-                           class="chip {{ $vendorId === null ? 'active' : '' }}">
-                            All <span class="n">{{ $statusCounts[$filter] ?? 0 }}</span>
-                        </a>
-                        @forelse ($vendorCounts as $party)
-                            @php $key = $party->id ? (string) $party->id : $inHouseKey; @endphp
-                            <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId, 'vendor' => $key])) }}"
-                               class="chip {{ (string) $vendorId === $key ? 'active' : '' }}">
-                                {{ $party->name }} <span class="n">{{ $party->total }}</span>
+                        <div class="filter-chips">
+                            <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId])) }}"
+                               class="chip {{ $vendorId === null ? 'active' : '' }}">
+                                All <span class="n">{{ $statusCounts[$filter] ?? 0 }}</span>
                             </a>
-                        @empty
-                            <span class="side-hint">Nothing under this status.</span>
-                        @endforelse
+                            @forelse ($vendorCounts as $party)
+                                @php $key = $party->id ? (string) $party->id : $inHouseKey; @endphp
+                                <a href="{{ route('workfile.status', array_filter(['status' => $filter, 'work_type' => $workTypeId, 'vendor' => $key])) }}"
+                                   class="chip {{ (string) $vendorId === $key ? 'active' : '' }}">
+                                    {{ $party->name }} <span class="n">{{ $party->total }}</span>
+                                </a>
+                            @empty
+                                <span class="side-hint">Nothing under this status.</span>
+                            @endforelse
+                        </div>
                     </div>
                 </div>
 

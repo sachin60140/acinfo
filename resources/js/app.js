@@ -1,3 +1,4 @@
+import { watchChipStrips } from './chip-strips';
 import { mount } from './mounts';
 import { sidebar } from './sidebar';
 import './navigate';
@@ -19,3 +20,7 @@ mount();
 // The menu rolls its sections up. One delegated listener, set once: the
 // sidebar itself is replaced on every visit.
 sidebar();
+
+// The status board's filter chips, as strips to swipe along on a phone: the
+// chosen chip brought into view, and each strip's ends marked.
+watchChipStrips();

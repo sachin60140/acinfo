@@ -340,6 +340,38 @@ class ResponsiveTest extends TestCase
     }
 
     /**
+     * The status board's filters swipe on a phone.
+     *
+     * Wrapped, its three rows of chips took more than a phone's first screen
+     * and the board started a scroll and a half down. Each row's chips are in
+     * a strip of their own, which the page's style makes one swipeable line on
+     * a phone and no box at all anywhere else; the label stays outside it, so
+     * it does not scroll away with the chips.
+     */
+    public function test_the_status_boards_filters_are_strips_to_swipe_on_a_phone(): void
+    {
+        $html = $this->actingAs($this->admin())->get('admin/file/status')->assertOk()->getContent();
+
+        $this->assertSame(3, substr_count($html, 'class="filter-chips"'), 'status, work type and vendor each have a strip');
+
+        foreach (['Status', 'Work Type', 'Vendor'] as $key) {
+            $this->assertMatchesRegularExpression(
+                '#<span class="filter-key">'.$key.'</span>\s*<div class="filter-chips">#',
+                $html,
+                "$key's label sits before its strip, not inside it"
+            );
+        }
+
+        // Every chip is in a strip: none sits loose in a row beside them.
+        preg_match_all('#<div class="filter-chips">(.*?)</div>#s', $html, $strips);
+        $inStrips = substr_count(implode('', $strips[1]), 'class="chip');
+        $this->assertGreaterThan(0, $inStrips);
+        $this->assertSame(substr_count($html, 'class="chip'), $inStrips);
+
+        $this->assertStringContainsString('@media (max-width: 575.98px), (pointer: coarse) and (max-height: 500px)', $html);
+    }
+
+    /**
      * And the pages themselves, as the browser receives them.
      *
      * A stylesheet can be faultless while the markup sets its own width, or a

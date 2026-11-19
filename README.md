@@ -3,12 +3,17 @@
 Work files, party ledgers and the papers that go between them.
 
 **Deploying? Read [DEPLOY.md](DEPLOY.md) first.** A deploy here is a `git pull`,
-so the database does not migrate and the assets do not build unless somebody
-does it. That list says what to run and in what order.
+so the database does not migrate, the assets do not build and the packages in
+`vendor/` do not change unless somebody does it. That list says what to run and
+in what order.
 
-Local setup: `composer install`, `npm install`, copy `.env`, then
-`php artisan migrate`. Tests are `php artisan test` and `npx vitest run`;
-there is no CI, so they run here or nowhere.
+Local setup needs PHP 8.4.1 or newer and MySQL 8.4, the database the office
+runs and CI tests on; use nothing else. The queries use MySQL's own SQL, which
+SQLite does not run. `composer install`, `npm install`, copy `.env.example` to
+`.env` and fill in the database's name and password, then
+`php artisan migrate`. Tests are `php artisan test` and `npx vitest run`; CI
+runs both on every pull request (`.github/workflows/tests.yml`), but run them
+here before you push.
 
 ---
 
