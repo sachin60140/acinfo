@@ -243,6 +243,7 @@ class WorkFileItemTest extends TestCase
             'rows' => [[
                 'registration_no' => 'BR01ZZ0001',
                 'description' => 'Two works, one folder',
+                'owner_mobile' => '9431000000',
                 'works' => [
                     ['work_type_id' => $this->workType->id, 'amount' => '2000'],
                     ['work_type_id' => $second->id, 'amount' => '3000'],
@@ -281,6 +282,7 @@ class WorkFileItemTest extends TestCase
             'customer_id' => $this->customer->id,
             'rows' => [[
                 'registration_no' => 'BR01ZZ0002',
+                'owner_mobile' => '9431000000',
                 'works' => [['work_type_id' => $this->workType->id, 'amount' => '4000']],
             ]],
         ])->assertRedirect();
@@ -298,7 +300,7 @@ class WorkFileItemTest extends TestCase
         $this->post(route('workfile.receive'), [
             'received_date' => now()->toDateString(),
             'customer_id' => $this->customer->id,
-            'rows' => [['registration_no' => 'BR01ZZ0003', 'works' => []]],
+            'rows' => [['registration_no' => 'BR01ZZ0003', 'owner_mobile' => '9431000000', 'works' => []]],
         ])->assertSessionHasErrors('rows.0.works');
     }
 
@@ -1277,6 +1279,7 @@ class WorkFileItemTest extends TestCase
             'customer_id' => $this->customer->id,
             'rows' => [[
                 'registration_no' => 'BR01ZZ0128',
+                'owner_mobile' => '9431000000',
                 'works' => [
                     ['work_type_id' => $this->workType->id, 'amount' => '2000'],
                     ['work_type_id' => $this->workType->id, 'amount' => '3000'],
@@ -1300,8 +1303,8 @@ class WorkFileItemTest extends TestCase
             'received_date' => now()->toDateString(),
             'customer_id' => $this->customer->id,
             'rows' => [
-                ['registration_no' => 'BR01ZZ0129', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '2000']]],
-                ['registration_no' => 'BR01ZZ0130', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '2500']]],
+                ['registration_no' => 'BR01ZZ0129', 'owner_mobile' => '9431000000', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '2000']]],
+                ['registration_no' => 'BR01ZZ0130', 'owner_mobile' => '9431000000', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '2500']]],
             ],
         ])->assertRedirect()->assertSessionMissing('error');
 
@@ -1982,6 +1985,7 @@ class WorkFileItemTest extends TestCase
             'customer_id' => $this->customer->id,
             'rows' => [[
                 'registration_no' => $registration,
+                'owner_mobile' => '9431000000',
                 'works' => [
                     ['work_type_id' => $this->workType->id, 'amount' => '2000'],
                     ['work_type_id' => $second->id, 'amount' => '3000'],

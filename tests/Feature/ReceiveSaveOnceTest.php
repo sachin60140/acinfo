@@ -97,6 +97,7 @@ class ReceiveSaveOnceTest extends TestCase
         return [
             'registration_no' => $plate,
             'description' => $description,
+            'owner_mobile' => '9431000000',
             'works' => [['work_type_id' => $this->tr->id, 'amount' => $amount]],
         ];
     }

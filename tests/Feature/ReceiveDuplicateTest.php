@@ -110,6 +110,7 @@ class ReceiveDuplicateTest extends TestCase
     {
         return array_filter([
             'registration_no' => $plate ?? $this->plate,
+            'owner_mobile' => '9431000000',
             'works' => [['work_type_id' => $type->id, 'amount' => '5000']],
             'duplicate_ok' => $ok ? '1' : null,
         ], fn ($value) => $value !== null);
@@ -233,7 +234,7 @@ class ReceiveDuplicateTest extends TestCase
     {
         $this->existing($this->tr);
 
-        $this->receive([['registration_no' => '', 'works' => [['work_type_id' => $this->tr->id, 'amount' => '5000']]]])
+        $this->receive([['registration_no' => '', 'owner_mobile' => '9431000000', 'works' => [['work_type_id' => $this->tr->id, 'amount' => '5000']]]])
             ->assertSessionMissing('error');
     }
 

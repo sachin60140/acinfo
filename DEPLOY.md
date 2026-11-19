@@ -168,7 +168,9 @@ Every other type asks for nothing until it is set, so Receive Files shows no
 boxes for it and its sticker has no lines for them. Open **Work Types**: each
 type with a setting shows "Asks for …" under its name. For any that needs one
 and has none, edit the type, choose under **When a File Is Received, Also Ask
-For**, and save.
+For**, and save. Do this before the counter opens: Receive Files will not
+take a file without the owner's mobile and what its works ask for, so these
+settings decide what has to be typed for every file that comes in.
 
 **Set up the printer** on the counter's computer. The sticker page opens the
 browser's print dialog by itself. In it, choose the thermal printer with paper
