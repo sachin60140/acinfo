@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { sidebar } from './sidebar';
 
 /*
@@ -153,5 +153,74 @@ describe('the sidebar sections', () => {
 
         expect(written()).toEqual([]);
         expect(items('work-files').hidden).toBe(false);
+    });
+});
+
+/*
+ * The menu over the page, on a phone or a tablet.
+ *
+ * Below 1200px the template slides the menu over the page, and the button that
+ * brought it out was the only way to put it away (tablet audit, 2026-11-19).
+ * The page under it is dimmed by the body's own ::before, so a tap there lands
+ * on the body; that, or Escape, puts it away. At 1200 and over the same class
+ * is a menu the reader hid, and neither may bring it back.
+ */
+describe('the menu over the page', () => {
+    const width = window.innerWidth;
+
+    function at(px) {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: px });
+    }
+
+    beforeEach(() => {
+        menu();
+        document.body.insertAdjacentHTML('afterbegin', '<header class="header"><i class="toggle-sidebar-btn"></i></header>');
+        document.body.classList.add('toggle-sidebar');
+        at(820);
+    });
+
+    afterEach(() => {
+        document.body.classList.remove('toggle-sidebar');
+        at(width);
+    });
+
+    it('goes away on a tap on the page beside it', () => {
+        document.body.click();
+
+        expect(document.body.classList.contains('toggle-sidebar')).toBe(false);
+    });
+
+    it('goes away on Escape', () => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+        expect(document.body.classList.contains('toggle-sidebar')).toBe(false);
+    });
+
+    it('stays for a tap inside it, a section heading included', () => {
+        document.querySelector('.sidebar-nav').click();
+        heading('reports').click();
+
+        expect(document.body.classList.contains('toggle-sidebar')).toBe(true);
+    });
+
+    it('stays for a tap on the header, which has its own buttons', () => {
+        document.querySelector('.header').click();
+
+        expect(document.body.classList.contains('toggle-sidebar')).toBe(true);
+    });
+
+    it('stays for any other key', () => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+        expect(document.body.classList.contains('toggle-sidebar')).toBe(true);
+    });
+
+    it('is left alone at 1200 and over, where the class means a menu the reader hid', () => {
+        at(1280);
+
+        document.body.click();
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+        expect(document.body.classList.contains('toggle-sidebar')).toBe(true);
     });
 });

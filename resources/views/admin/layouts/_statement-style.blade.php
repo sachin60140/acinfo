@@ -54,7 +54,9 @@
     }
 
     .statement-summary .label {
-        font-size: 0.7rem;
+        /* 12px, the smallest the mobile audit left anywhere; at 0.7rem the
+           tile names were 11.2 (tablet audit, 2026-11-19). */
+        font-size: 0.75rem;
         text-transform: uppercase;
         letter-spacing: 0.06em;
         color: #6c757d;

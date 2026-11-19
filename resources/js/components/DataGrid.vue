@@ -1254,6 +1254,10 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
     }
 
     .grid__table tbody td {
+        /* On the line of the words, not the top of the box: a link grown to
+           the tap size centres its words in 44px, and its column's name sat
+           13px above them, reading as a line of its own (tablet audit). */
+        align-items: baseline;
         border-bottom: 0;
         display: flex;
         flex-wrap: wrap;
@@ -1312,6 +1316,34 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
 
     .grid__tools .ui-btn {
         flex: 1 1 auto;
+    }
+}
+
+/*
+ * Two cards a row on a tablet held upright.
+ *
+ * One a row was the phone's layout stretched to 728px: a column's name at the
+ * left edge, its value 600px away at the right, and three files to a screen
+ * (tablet audit, 2026-11-19). Side by side, each card is the width a card
+ * reads at and twice as many are in sight. A group's heading, its subtotal and
+ * the opening and closing lines still take the whole width: they belong to
+ * every card under them, not to one.
+ */
+@media (min-width: 768px) and (max-width: 991.98px) {
+    .grid__table tbody {
+        align-items: start;
+        display: grid;
+        gap: var(--s-3);
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin-bottom: var(--s-3);
+    }
+
+    .grid__table tbody tr {
+        margin-bottom: 0;
+    }
+
+    .grid__table tbody tr:is(.grid__band, .grid__subtotal, .grid__edge) {
+        grid-column: 1 / -1;
     }
 }
 

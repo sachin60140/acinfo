@@ -587,7 +587,7 @@ onMounted(() => {
                                 <th>Details</th>
                                 <th>Customer</th>
                                 <th class="num">Charged</th>
-                                <th class="num" style="min-width: 9rem;">Vendor Amount</th>
+                                <th class="num ui-pin-end" style="min-width: 9rem;">Vendor Amount</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -660,7 +660,7 @@ onMounted(() => {
 
                                             <!-- Back whole from a vendor and offered again: said,
                                                  so it is not taken for work that never went out. -->
-                                            <span v-if="item.came_back_from" class="give-work__with">
+                                            <span v-if="item.came_back_from" class="give-work__with" :title="`came back from ${item.came_back_from}`">
                                                 came back from {{ item.came_back_from }}
                                             </span>
 
@@ -687,7 +687,10 @@ onMounted(() => {
                                              whole one and nobody could see who has the rest. -->
                                         <span v-else class="give-work give-work--fixed">
                                             <span class="give-work__name">{{ item.work_type || '&mdash;' }}</span>
-                                            <span v-if="item.state === 'out'" class="give-work__with">
+                                            <span
+                                                v-if="item.state === 'out'"
+                                                class="give-work__with"
+                                                :title="`with ${item.vendor || 'a vendor'}${item.vendor_date ? ' since ' + item.vendor_date : ''}`">
                                                 with {{ item.vendor || 'a vendor' }}<template v-if="item.vendor_date"> since {{ item.vendor_date }}</template>
                                             </span>
                                             <!-- Handed back, but part of its rate is still theirs,
@@ -729,7 +732,7 @@ onMounted(() => {
                                     </div>
                                 </td>
 
-                                <td data-label="Vendor Amount" class="num">
+                                <td data-label="Vendor Amount" class="num ui-pin-end">
                                     <!-- Disabled rather than hidden: a disabled input
                                          posts nothing, so an amount left on an unticked
                                          row cannot reach the server, and the greying out
@@ -1048,6 +1051,13 @@ onMounted(() => {
     justify-content: flex-start;
 }
 
+/* A floor for the box the rate is typed in. Beside "last 1,550.00 at BR05",
+   which does not wrap, it had none: on a laptop with the menu open, or a
+   tablet, it was squeezed to 26px, room for one digit. */
+.give-job .ui-input--amount {
+    min-width: 6.5rem;
+}
+
 .give-job + .give-job {
     margin-top: var(--s-1);
 }
@@ -1087,6 +1097,11 @@ label.give-work {
 .give-work__with {
     color: var(--n-500);
     font-size: var(--t-xs);
+    /* Capped, or the ellipsis never comes: a table column grows to the
+       whole of a line that may not wrap, and "with Raj Transport Consultants
+       & Associates since 15-10-2026" made Work Type 391px wide and pushed
+       Vendor Amount off a tablet's screen. The whole of it is in the title. */
+    max-width: 12rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

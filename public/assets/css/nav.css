@@ -147,3 +147,22 @@
         min-height: 40px;
     }
 }
+
+/*
+ * The page under the menu, when the menu is over it.
+ *
+ * Below 1200px the template slides the menu over the page and left the page as
+ * it was: bright, and seemingly still there to be tapped, though nothing put
+ * the menu away but the button that brought it out (tablet audit,
+ * 2026-11-19). Dimmed now, under the menu and the header; a tap on it, or
+ * Escape, closes the menu (resources/js/sidebar.js).
+ */
+@media (max-width: 1199.98px) {
+    body.toggle-sidebar::before {
+        background: rgba(1, 41, 112, 0.28);
+        content: "";
+        inset: 60px 0 0;
+        position: fixed;
+        z-index: 995;
+    }
+}

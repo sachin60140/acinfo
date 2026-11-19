@@ -311,7 +311,7 @@ onBeforeUnmount(() => window.removeEventListener('pageshow', onPageShow));
                                     <th>Details</th>
                                     <th>Customer</th>
                                     <th class="num">Booked to Vendor</th>
-                                    <th style="min-width: 10rem;">Reverse</th>
+                                    <th class="ui-pin-end" style="min-width: 10rem;">Reverse</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -360,7 +360,7 @@ onBeforeUnmount(() => window.removeEventListener('pageshow', onPageShow));
                                         <span v-else class="ui-money ui-money--cr">{{ money(row.vendor_amount) }}</span>
                                     </td>
 
-                                    <td data-label="Reverse">
+                                    <td data-label="Reverse" class="ui-pin-end">
                                         <!-- Disabled, so an amount left on an unticked row posts nothing. -->
                                         <input
                                             type="number"

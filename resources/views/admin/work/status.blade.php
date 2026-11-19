@@ -131,7 +131,7 @@
 
         .last-remark {
             color: #94a3b8;
-            font-size: 0.7rem;
+            font-size: 0.75rem;
             margin-top: 0.25rem;
         }
 
