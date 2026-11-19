@@ -35,6 +35,15 @@ function blankRow() {
     return {
         registration_no: '',
         description: '',
+        // For the file's sticker: the vehicle owner's mobile, and whatever the
+        // works ask for (see askedFor below).
+        owner_mobile: '',
+        lender_name: '',
+        financer_name: '',
+        seller_name: '',
+        seller_mobile: '',
+        buyer_name: '',
+        buyer_mobile: '',
         works: [blankWork()],
         // Ticked when the same work really is coming in again on purpose. The
         // server reads it; see the check in WorkFileController::receive().
@@ -63,6 +72,27 @@ const money = (value) =>
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     });
+
+/*
+ * What a file's works ask for, for its sticker: an HPT its lender, an HPA its
+ * financer, a TR its seller and buyer, as each work type is set up (asks_for).
+ * Kind to the names of the works asking, so a box can say which it is for.
+ * The boxes come and go with the works; one that goes is not sent, and the
+ * server takes only what a work on the file asks for.
+ */
+function askedFor(row) {
+    const asked = {};
+
+    for (const work of row.works) {
+        const type = props.workTypes.find((one) => String(one.id) === String(work.work_type_id));
+
+        if (type?.asks_for) {
+            asked[type.asks_for] = [...(asked[type.asks_for] ?? []), type.name];
+        }
+    }
+
+    return Object.fromEntries(Object.entries(asked).map(([kind, names]) => [kind, names.join(', ')]));
+}
 
 // What one file comes to, so a card holding three works says so itself rather
 // than leaving the operator to add them up against the batch total.
@@ -471,6 +501,22 @@ onBeforeUnmount(() => {
                                     maxlength="255"
                                     placeholder="Party name, reference — anything that identifies these papers">
                             </div>
+
+                            <div class="ui-field">
+                                <label class="ui-label" :for="`rcv-owner-${index}`">Owner's Mobile</label>
+                                <input
+                                    :id="`rcv-owner-${index}`"
+                                    type="tel"
+                                    inputmode="numeric"
+                                    class="ui-input"
+                                    :name="`rows[${index}][owner_mobile]`"
+                                    v-model="row.owner_mobile"
+                                    maxlength="10"
+                                    pattern="[0-9]{10}"
+                                    title="10 digits"
+                                    autocomplete="off"
+                                    placeholder="10 digits">
+                            </div>
                         </div>
 
                         <div class="rcv-works">
@@ -576,6 +622,75 @@ onBeforeUnmount(() => {
                                 @click="addWork(row)">
                                 <i class="bi bi-plus-lg"></i> Add another work
                             </button>
+                        </div>
+
+                        <!-- Who the works are about, for the file's sticker: asked
+                             only when a work on the card asks for it. Left blank,
+                             the sticker keeps a line to write it in by hand. -->
+                        <div v-if="Object.keys(askedFor(row)).length" class="rcv-asks">
+                            <div v-if="askedFor(row).lender" class="ui-field">
+                                <label class="ui-label" :for="`rcv-lender-${index}`">
+                                    Lender <span class="rcv-asks__for">for {{ askedFor(row).lender }}</span>
+                                </label>
+                                <input
+                                    :id="`rcv-lender-${index}`"
+                                    type="text"
+                                    class="ui-input"
+                                    :name="`rows[${index}][lender_name]`"
+                                    v-model="row.lender_name"
+                                    maxlength="120"
+                                    placeholder="Bank or finance company">
+                            </div>
+
+                            <div v-if="askedFor(row).financer" class="ui-field">
+                                <label class="ui-label" :for="`rcv-financer-${index}`">
+                                    Financer <span class="rcv-asks__for">for {{ askedFor(row).financer }}</span>
+                                </label>
+                                <input
+                                    :id="`rcv-financer-${index}`"
+                                    type="text"
+                                    class="ui-input"
+                                    :name="`rows[${index}][financer_name]`"
+                                    v-model="row.financer_name"
+                                    maxlength="120"
+                                    placeholder="Bank or finance company">
+                            </div>
+
+                            <template v-if="askedFor(row).parties">
+                                <div v-for="side in ['seller', 'buyer']" :key="side" class="rcv-asks__party">
+                                    <div class="ui-field">
+                                        <label class="ui-label" :for="`rcv-${side}-${index}`">
+                                            {{ side === 'seller' ? 'Seller' : 'Buyer' }}
+                                            <span class="rcv-asks__for">for {{ askedFor(row).parties }}</span>
+                                        </label>
+                                        <input
+                                            :id="`rcv-${side}-${index}`"
+                                            type="text"
+                                            class="ui-input"
+                                            :name="`rows[${index}][${side}_name]`"
+                                            v-model="row[`${side}_name`]"
+                                            maxlength="120"
+                                            placeholder="Name">
+                                    </div>
+                                    <div class="ui-field">
+                                        <label class="ui-label" :for="`rcv-${side}-mobile-${index}`">
+                                            {{ side === 'seller' ? "Seller's" : "Buyer's" }} Mobile
+                                        </label>
+                                        <input
+                                            :id="`rcv-${side}-mobile-${index}`"
+                                            type="tel"
+                                            inputmode="numeric"
+                                            class="ui-input"
+                                            :name="`rows[${index}][${side}_mobile]`"
+                                            v-model="row[`${side}_mobile`]"
+                                            maxlength="10"
+                                            pattern="[0-9]{10}"
+                                            title="10 digits"
+                                            autocomplete="off"
+                                            placeholder="10 digits">
+                                    </div>
+                                </div>
+                            </template>
                         </div>
 
                         <!-- What this vehicle has been charged before. -->
@@ -802,7 +917,32 @@ onBeforeUnmount(() => {
 .rcv-about {
     display: grid;
     gap: var(--s-4);
-    grid-template-columns: minmax(12rem, 18rem) 1fr;
+    grid-template-columns: minmax(12rem, 18rem) 1fr minmax(9rem, 12rem);
+}
+
+/* Who the works are about, for the sticker: the lender, the financer, the
+   seller and the buyer, two boxes a line. */
+.rcv-asks {
+    border-top: 1px dashed var(--n-200);
+    display: grid;
+    gap: var(--s-3) var(--s-4);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: var(--s-3);
+    padding-top: var(--s-3);
+}
+
+/* A seller or a buyer is a name and a mobile, on one line of their own. */
+.rcv-asks__party {
+    display: grid;
+    gap: var(--s-4);
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 2fr) minmax(9rem, 1fr);
+}
+
+.rcv-asks__for {
+    color: var(--n-500);
+    font-weight: 600;
+    text-transform: none;
 }
 
 /* A number plate is read as a block of characters, so it is set as one. */
@@ -1185,6 +1325,11 @@ onBeforeUnmount(() => {
 
 @media (max-width: 767.98px) {
     .rcv-about {
+        grid-template-columns: 1fr;
+    }
+
+    .rcv-asks,
+    .rcv-asks__party {
         grid-template-columns: 1fr;
     }
 

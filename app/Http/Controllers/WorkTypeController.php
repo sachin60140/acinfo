@@ -57,6 +57,7 @@ class WorkTypeController extends Controller
                 'name' => ['required', 'string', 'max:255', Rule::unique('work_type', 'name')->ignore($editing?->id)],
                 'default_rate' => 'nullable|numeric|gte:0|max:99999999',
                 'default_vendor_rate' => 'nullable|numeric|gte:0|max:99999999',
+                'asks_for' => ['nullable', Rule::in(array_keys(WorkTypeModel::ASKS))],
             ]);
 
             $type = $editing ?: new WorkTypeModel;
@@ -65,6 +66,8 @@ class WorkTypeController extends Controller
             // Blank stays null: a rate that varies by vendor or by job has no
             // default worth storing, and blank has always meant "not agreed".
             $type->default_vendor_rate = $req->filled('default_vendor_rate') ? (float) $req->default_vendor_rate : null;
+            // What a file receiving this work asks for, for its sticker.
+            $type->asks_for = $req->filled('asks_for') ? $req->asks_for : null;
             $type->is_active = $editing ? $req->boolean('is_active') : true;
             $type->save();
 
@@ -90,13 +93,16 @@ class WorkTypeController extends Controller
                 'name' => old('name', $isEdit ? $editing->name : ''),
                 'default_rate' => old('default_rate', $isEdit ? $editing->default_rate : ''),
                 'default_vendor_rate' => old('default_vendor_rate', $isEdit ? $editing->default_vendor_rate : ''),
+                'asks_for' => old('asks_for', $isEdit ? ($editing->asks_for ?? '') : ''),
                 'is_active' => (bool) $activeChecked,
             ],
+            'asksOptions' => WorkTypeModel::ASKS,
             'types' => $types->map(fn ($type) => [
                 'id' => (int) $type->id,
                 'name' => $type->name,
                 'default_rate' => $type->default_rate === null ? null : (float) $type->default_rate,
                 'default_vendor_rate' => $type->default_vendor_rate === null ? null : (float) $type->default_vendor_rate,
+                'asks_for' => $type->asks_for,
                 'is_active' => (bool) $type->is_active,
                 'file_count' => (int) $type->file_count,
                 'billed_total' => (float) $type->billed_total,

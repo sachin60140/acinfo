@@ -21,6 +21,8 @@ const props = defineProps({
     cancelUrl: { type: String, required: true },
     filesUrl: { type: String, required: true },
     editingId: { type: Number, default: null },
+    // What a work of a type can ask for when its file is received.
+    asksOptions: { type: Object, default: () => ({}) },
 });
 
 const editing = computed(() => props.editingId !== null);
@@ -49,6 +51,7 @@ const form = reactive({
     name: props.initial.name ?? '',
     default_rate: props.initial.default_rate ?? '',
     default_vendor_rate: props.initial.default_vendor_rate ?? '',
+    asks_for: props.initial.asks_for ?? '',
     is_active: Boolean(props.initial.is_active),
 });
 
@@ -108,6 +111,7 @@ const searchable = computed(() =>
             type.id,
             type.name,
             type.is_active ? '' : 'inactive',
+            type.asks_for ? props.asksOptions[type.asks_for] ?? '' : '',
             type.default_rate === null ? '' : `${type.default_rate} ${money(type.default_rate)}`,
             type.file_count,
             `${type.billed_total} ${money(type.billed_total)}`,
@@ -288,6 +292,17 @@ const sortIcon = (key) => {
                         </div>
                     </div>
 
+                    <div class="ui-field">
+                        <label class="ui-label" for="wt-asks">When a File Is Received, Also Ask For</label>
+                        <select id="wt-asks" class="ui-select" name="asks_for" v-model="form.asks_for">
+                            <option value="">Nothing more</option>
+                            <option v-for="(text, key) in asksOptions" :key="key" :value="key">{{ text }}</option>
+                        </select>
+                        <div class="ui-hint">
+                            Asked on Receive Files and the file's edit screen, and printed on its sticker.
+                        </div>
+                    </div>
+
                     <!-- Only on an existing type: a new one is always active, and
                          the controller does not read the field when adding. -->
                     <div v-if="editing" class="ui-field">
@@ -393,6 +408,7 @@ const sortIcon = (key) => {
                                     <td data-label="Work Type">
                                         <span class="ui-lead">{{ type.name }}</span>
                                         <span v-if="!type.is_active" class="ui-badge ui-badge--neutral">Inactive</span>
+                                        <div v-if="type.asks_for" class="ui-sub">Asks for {{ (asksOptions[type.asks_for] || '').replace(/ \(.*\)$/, '').toLowerCase() }}</div>
                                     </td>
 
                                     <td data-label="Default Rate" class="num">

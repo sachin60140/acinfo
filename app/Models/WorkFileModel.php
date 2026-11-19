@@ -4783,6 +4783,79 @@ class WorkFileModel extends Model
     }
 
     /**
+     * A stored registration number set out the way a plate is read: BR18CK2739
+     * as BR 18 CK 2739. One that is not in the state-district-series-number
+     * form (a BH series, a typing slip) is given back as it was stored.
+     */
+    public static function plateForReading(?string $value): string
+    {
+        $plate = self::normaliseRegistration($value);
+
+        if (preg_match('/^([A-Z]{2})(\d{1,2})([A-Z]{0,3})(\d{1,4})$/', $plate, $m)) {
+            return implode(' ', array_filter([$m[1], $m[2], $m[3], $m[4]], fn ($part) => $part !== ''));
+        }
+
+        return $plate;
+    }
+
+    /**
+     * What a file's sticker says: a 4x6 inch label pasted on the folder when it
+     * is received, so whoever picks it up knows whose it is and what it is for.
+     *
+     * The works as they stand, a cancelled one left off, and for each that asks
+     * for it (work_type.asks_for) the lender, the financer, or the seller and
+     * buyer, named with the works that ask. A detail asked for and not yet
+     * typed is there as null, for the sticker to leave a line to write it on.
+     * The vendor is never on it.
+     */
+    public function sticker(): array
+    {
+        $works = $this->items
+            ->where('status', '!=', self::CANCELLED)
+            ->sortBy('id')
+            ->values();
+
+        $askedBy = [];
+
+        foreach ($works as $work) {
+            if ($kind = $work->workType?->asks_for) {
+                $askedBy[$kind][] = $work->workType->name;
+            }
+        }
+
+        $for = fn (string $kind) => implode(', ', array_unique($askedBy[$kind]));
+
+        $names = $works->map(fn ($work) => $work->workType?->name)->filter()->values()->all();
+
+        return [
+            'file_no' => (string) $this->file_no,
+            'received' => $this->received_date ? date('d-m-Y', strtotime((string) $this->received_date)) : null,
+            'customer' => $this->customer?->name,
+            'customer_mobile' => $this->customer?->mobile,
+            'registration' => self::plateForReading($this->registration_no),
+            'owner_mobile' => $this->owner_mobile,
+            'lender' => isset($askedBy[WorkTypeModel::ASKS_LENDER])
+                ? ['for' => $for(WorkTypeModel::ASKS_LENDER), 'name' => $this->lender_name]
+                : null,
+            'financer' => isset($askedBy[WorkTypeModel::ASKS_FINANCER])
+                ? ['for' => $for(WorkTypeModel::ASKS_FINANCER), 'name' => $this->financer_name]
+                : null,
+            'parties' => isset($askedBy[WorkTypeModel::ASKS_PARTIES])
+                ? [
+                    'for' => $for(WorkTypeModel::ASKS_PARTIES),
+                    'seller' => $this->seller_name,
+                    'seller_mobile' => $this->seller_mobile,
+                    'buyer' => $this->buyer_name,
+                    'buyer_mobile' => $this->buyer_mobile,
+                ]
+                : null,
+            // A file from before works were kept one by one has its own type.
+            'works' => $names ?: array_filter([$this->workType?->name]),
+            'details' => $this->description,
+        ];
+    }
+
+    /**
      * Work files for the party-wise report.
      *
      * One row per file, carrying whichever party the report is grouped by as
@@ -6368,10 +6441,127 @@ class WorkFileModel extends Model
             'returned_amount' => $money($this->returned_amount),
             'description' => (string) $this->description,
             'remarks' => (string) $this->remarks,
+            // What the sticker says about the vehicle's people: a colleague's
+            // lender, typed since the page was drawn, is a change like any other.
+            'details' => array_map(fn ($column) => (string) $this->{$column}, self::DETAIL_COLUMNS),
             'works' => $works,
             'expenses' => $expenses,
             'documents' => $documents,
         ]));
+    }
+
+    /*
+     * What a file says about the vehicle's people, for its sticker.
+     *
+     * The owner's mobile always. The rest only where a work on the file asks
+     * for it, by its type's asks_for: an HPT its lender, an HPA its financer, a
+     * TR (transfer) its seller and buyer. Kept on the file rather than on a
+     * work, as the registration number is: one folder is one vehicle, and its
+     * HPT and its TR are about the same people.
+     */
+    public const DETAIL_COLUMNS = ['owner_mobile', 'lender_name', 'financer_name', 'seller_name', 'seller_mobile', 'buyer_name', 'buyer_mobile'];
+
+    public const ASKED_DETAILS = [
+        WorkTypeModel::ASKS_LENDER => ['lender_name'],
+        WorkTypeModel::ASKS_FINANCER => ['financer_name'],
+        WorkTypeModel::ASKS_PARTIES => ['seller_name', 'seller_mobile', 'buyer_name', 'buyer_mobile'],
+    ];
+
+    /** Validation for the details, under whatever each is posted as. */
+    public static function detailRules(string $prefix = ''): array
+    {
+        $mobile = 'nullable|digits:10';
+        $name = 'nullable|string|max:120';
+
+        return [
+            $prefix.'owner_mobile' => $mobile,
+            $prefix.'lender_name' => $name,
+            $prefix.'financer_name' => $name,
+            $prefix.'seller_name' => $name,
+            $prefix.'seller_mobile' => $mobile,
+            $prefix.'buyer_name' => $name,
+            $prefix.'buyer_mobile' => $mobile,
+        ];
+    }
+
+    /** And what the counter is told when one is wrong. */
+    public static function detailMessages(string $prefix = ''): array
+    {
+        return [
+            $prefix.'owner_mobile.digits' => "The owner's mobile is 10 digits.",
+            $prefix.'seller_mobile.digits' => "The seller's mobile is 10 digits.",
+            $prefix.'buyer_mobile.digits' => "The buyer's mobile is 10 digits.",
+            $prefix.'lender_name.max' => "The lender's name is at most 120 characters.",
+            $prefix.'financer_name.max' => "The financer's name is at most 120 characters.",
+            $prefix.'seller_name.max' => "The seller's name is at most 120 characters.",
+            $prefix.'buyer_name.max' => "The buyer's name is at most 120 characters.",
+        ];
+    }
+
+    /**
+     * What works of these types ask for: some of lender, financer and parties.
+     *
+     * @return array<int, string>
+     */
+    public static function askedBy(iterable $workTypeIds): array
+    {
+        $ids = collect($workTypeIds)->filter()->map(fn ($id) => (int) $id)->unique()->values();
+
+        if ($ids->isEmpty()) {
+            return [];
+        }
+
+        return WorkTypeModel::whereIn('id', $ids)
+            ->whereNotNull('asks_for')
+            ->pluck('asks_for')
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /** What this file's works ask for. A cancelled work asks for nothing. */
+    public function askedDetails(): array
+    {
+        return self::askedBy(
+            $this->items()->where('status', '!=', self::CANCELLED)->pluck('work_type_id')
+        );
+    }
+
+    /**
+     * The details typed for this file, for works of these types.
+     *
+     * The owner's mobile whenever it was sent. The others only where a work
+     * asks for them, so a box the screen was not showing cannot write one; and
+     * one not asked for is left as it is rather than blanked, so a work taken
+     * off and put back finds its lender where it was. A box not sent at all —
+     * a page drawn before these were on it — leaves what is stored alone.
+     */
+    public function takeDetails(array $typed, iterable $workTypeIds): void
+    {
+        if (array_key_exists('owner_mobile', $typed)) {
+            $this->owner_mobile = self::typedDetail($typed['owner_mobile']);
+        }
+
+        $asked = self::askedBy($workTypeIds);
+
+        foreach (self::ASKED_DETAILS as $kind => $columns) {
+            if (! in_array($kind, $asked, true)) {
+                continue;
+            }
+
+            foreach ($columns as $column) {
+                if (array_key_exists($column, $typed)) {
+                    $this->{$column} = self::typedDetail($typed[$column]);
+                }
+            }
+        }
+    }
+
+    private static function typedDetail($value): ?string
+    {
+        $value = trim((string) $value);
+
+        return $value === '' ? null : $value;
     }
 
     /**

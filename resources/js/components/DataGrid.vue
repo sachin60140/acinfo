@@ -73,7 +73,7 @@ const emit = defineEmits(['action']);
 const props = defineProps({
     /*
      * { key, label, type, sortable, exportable, searchable, hidden, width,
-     *   sub, note, subLinkTo, subPdf, class, linkTo, newTab, sortBy, exportOnly }
+     *   sub, note, subLinkTo, subPdf, subNewTab, class, linkTo, newTab, sortBy, exportOnly }
      *
      * type: text | money | balance | count | badge | link
      * sortBy   sort this column on another field's value — a date shown as
@@ -98,6 +98,9 @@ const props = defineProps({
      * newTab   open the link in a new tab. Only for somewhere outside the
      *          application: within it, a second tab loses the filters and the
      *          place in the list the reader was working in
+     * subNewTab  the sub link opens in a new tab: for a page made to be printed
+     *          and closed, like a file's sticker, which leaves the list where it
+     *          was rather than replacing it
      * searchable: false  keep a fixed label like "Edit" out of the search text,
      *          or every row matches the word
      * titleFrom  an action button's tooltip, from this field of its row — what
@@ -915,6 +918,8 @@ const isNum = (column) => ['money', 'balance', 'count'].includes(column.type);
                                         v-if="column.subLinkTo && row[column.subLinkTo]"
                                         :href="row[column.subLinkTo]"
                                         class="ui-link"
+                                        :target="column.subNewTab ? '_blank' : null"
+                                        :rel="column.subNewTab ? 'noopener' : null"
                                         @click="onSubLink($event, column, row)">
                                         {{ row[column.sub] }}
                                     </a>
