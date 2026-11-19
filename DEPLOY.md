@@ -107,11 +107,6 @@ will otherwise stop to ask.
 php artisan migrate --force
 ```
 
-A few migrations leave something to be done in the application once they have
-run. Those are listed under
-[After particular migrations](#after-particular-migrations); look there for any
-this pull brought in.
-
 **6. Check it took.** Everything should say `Ran`.
 
 ```bash
@@ -120,6 +115,11 @@ php artisan migrate:status
 
 **7. Open a screen.** The work files list touches most of the schema, so it is
 the one worth loading. A `Column not found` here means step 5 did not happen.
+
+**8. Do what this pull asks of the office.** Some deploys leave something to
+be done in the application, or change what the counter has to type. Those are
+listed under [After particular deploys](#after-particular-deploys); look there
+for any this pull brought in.
 
 ## When a migration refuses
 
@@ -138,9 +138,56 @@ the others, and run `php artisan migrate --force` again.
 Migrations are written to be safe to re-run: columns are added only when they
 are missing, and backfills only touch rows that have not been filled in.
 
-## After particular migrations
+## After particular deploys
 
-What a migration needs besides step 5, newest first.
+What a deploy needs besides the steps above, newest first. Some come with a
+migration; some only change what a screen asks for.
+
+### Receive Files asks for the sticker details
+
+Brought in by pull request 83 (November 2026). No migration and no packages:
+the pull is the whole deploy. From then on **Receive Files** will not take a
+file without:
+
+- the vehicle owner's mobile, on every file;
+- the lender, where a work on it asks for one (as HPT does);
+- the financer, where a work on it asks for one (as HPA does);
+- the seller's name, the buyer's name and the buyer's mobile, where a work on
+  it asks for them (as TR does).
+
+The seller's mobile stays optional. **Edit File** asks for none of them, so a
+file received before this deploy saves as it always has.
+
+**The sticker comes first.** What a work asks for is the `work_type.asks_for`
+setting, which the sticker's migration (below) adds. A pull that brings both
+needs step 5; without it Receive Files stops with a `Column not found` naming
+`asks_for`.
+
+**Check the work types before the counter opens.** What a type asks for now
+has to be typed for every file of that type: a type set by mistake makes the
+counter type a lender for a fitness file, and one left unset lets a transfer
+in with no buyer. Open **Work Types**; each type with a setting shows "Asks
+for …" under its name. Correct any that are wrong: edit the type, choose under
+**When a File Is Received, Also Ask For**, and save.
+
+**Tell the counter.** Every file now needs the owner's mobile before it can be
+received, so ask for it with the papers. The boxes still to fill have a red
+asterisk, the footer says which file still needs something, and the form will
+not send until they are typed.
+
+**Check it took.** Open **Receive Files**. **Owner's Mobile** has a red
+asterisk, and the footer says *it still needs the owner's mobile* until one is
+typed. Choose an HPT work: a **Lender** box appears, also marked. If nothing is
+marked, the pull did not bring this change; this prints `0` when it is
+missing:
+
+```bash
+grep -c REQUIRED_ON_RECEIPT app/Models/WorkFileModel.php
+```
+
+**Going back** needs only the code, as nothing in the database changed:
+`git reset --hard ORIG_HEAD`. If the same pull brought the sticker, that goes
+back with it; leave its columns, as its own entry says.
 
 ### File stickers: `2026_11_19_000100_let_a_file_carry_its_sticker_details`
 
@@ -168,9 +215,8 @@ Every other type asks for nothing until it is set, so Receive Files shows no
 boxes for it and its sticker has no lines for them. Open **Work Types**: each
 type with a setting shows "Asks for …" under its name. For any that needs one
 and has none, edit the type, choose under **When a File Is Received, Also Ask
-For**, and save. Do this before the counter opens: Receive Files will not
-take a file without the owner's mobile and what its works ask for, so these
-settings decide what has to be typed for every file that comes in.
+For**, and save. Since pull request 83 these settings also decide what has to
+be typed for every file received; see the entry above.
 
 **Set up the printer** on the counter's computer. The sticker page opens the
 browser's print dialog by itself. In it, choose the thermal printer with paper

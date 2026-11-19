@@ -44,14 +44,8 @@ for an HPT, financer for an HPA, seller and buyer for TR, the transfer. Receive
 Files and Edit File show those boxes only for a file whose works ask for them,
 and keep only what is asked for.
 
-**Receive Files will not take a file without them:** the owner's mobile on
-every file, and the lender, the financer, or the seller's name, the buyer's
-name and the buyer's mobile where its works ask for them. Only the seller's
-mobile may be left empty. Each file of a batch is checked on its own, and
-the footer says which still need something before the form is sent. Edit
-File asks for none of them, so a file received before the sticker can still
-be saved. Mobiles are 10 digits. The rule is
-`WorkFileModel::REQUIRED_ON_RECEIPT`.
+Receive Files will not take a file without them; see
+[Required details on Receive Files](#required-details-on-receive-files).
 
 **In the code:** the page is `WorkFileController::stickers()` at
 `admin/file/stickers?ids=…` (`&print=1` opens the dialog), drawing
@@ -59,8 +53,50 @@ be saved. Mobiles are 10 digits. The rule is
 a page of its own sized with `@page { size: 4in 6in; margin: 0 }`. The details
 are columns on `work_file`, and the setting is `work_type.asks_for`; both came
 with `2026_11_19_000100_let_a_file_carry_its_sticker_details`, and
-[DEPLOY.md](DEPLOY.md#after-particular-migrations) says what that migration
+[DEPLOY.md](DEPLOY.md#after-particular-deploys) says what that migration
 needs on the server. Tests are in `tests/Feature/FileStickerTest.php`.
+
+## Required details on Receive Files
+
+A file's sticker details are taken as it comes in, not left for later.
+**Receive Files** will not take a file until these are typed:
+
+| On the file | Required |
+| --- | --- |
+| Every file | the owner's mobile |
+| A work that asks for a lender (HPT) | the lender's name |
+| A work that asks for a financer (HPA) | the financer's name |
+| A work that asks for the seller and buyer (TR) | the seller's name, the buyer's name and the buyer's mobile |
+
+The seller's mobile may be left empty; it prints as a line on the sticker.
+Mobiles are 10 digits. **Edit File** asks for none of these, so a file
+received before they were required still saves as it is.
+
+**At the counter.** The boxes still to fill have a red asterisk, the browser
+will not send the form while one is empty, and the footer says which file
+still needs something (*it still needs the owner's mobile or a detail its
+works ask for*). Each file of a batch is checked on its own. A form that gets
+past the browser is refused whole by the server, which names the file by its
+place in the batch, "File 2 needs the lender's name.", and gives back what was
+typed.
+
+**Changing what is asked.** Which works ask for what is the office's setting,
+on **Work Types**, and needs no code: a type set to ask for a lender makes the
+lender required on every file of that type. What each kind of ask requires is
+code, `WorkFileModel::REQUIRED_ON_RECEIPT`, and the receive form keeps its own
+copy in `resources/js/components/ReceiveFileRows.vue`: `REQUIRED_FOR`, which
+the footer counts from, and the `required` marks on the boxes themselves.
+Change all three together, or the form and the server will disagree about what
+is missing.
+
+**In the code:** `WorkFileController::receive()` adds
+`WorkFileModel::requiredOnReceipt()`, a rule and a message for each file
+posted, to its other rules. Each rule carries the box's full check
+(`required|digits:10`, not a bare `required`): a rule for one row replaces the
+`rows.*` rule before it, so a bare one would let a short mobile through. Tests
+are in `tests/Feature/FileStickerTest.php` and `resources/js/receive.test.js`;
+[DEPLOY.md](DEPLOY.md#receive-files-asks-for-the-sticker-details) says what to
+do on the server and at the counter when it goes live.
 
 ---
 
