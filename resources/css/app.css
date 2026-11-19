@@ -403,6 +403,13 @@
     white-space: nowrap;
 }
 
+/* Under the two lines above it, in line with them. Left alone it sat against
+   the screen's left edge with no gutter at all (tablet audit, 2026-11-19). */
+.footer .build {
+    padding-top: 5px;
+    text-align: center;
+}
+
 .ui-money--void {
     color: var(--n-400);
     text-decoration: line-through;
@@ -674,6 +681,32 @@
     background: var(--n-025);
 }
 
+/*
+ * The column a row is for, pinned to the right edge of its box.
+ *
+ * A table of controls (Give to Vendor, Return from Vendor, Return to Customer)
+ * needs about 1,050 to 1,100px, and a tablet held sideways has 944, a laptop
+ * with the menu open about 960. The table scrolled in its box and the amount
+ * box, the one thing typed on the row, started past the right edge of the
+ * screen (tablet audit, 2026-11-19). Pinned there instead, with a line to show
+ * the rows run on underneath, as the lists do with their action column. Below
+ * 992px these tables are cards and there is nothing to pin.
+ */
+@media (min-width: 992px) {
+    .ui-table .ui-pin-end {
+        box-shadow: inset 1px 0 0 var(--n-200);
+        position: sticky;
+        right: 0;
+        z-index: 1;
+    }
+
+    /* Something has to hide the cells scrolling underneath. Given no weight of
+       its own, so a hovered, ticked or refused row keeps its own colour. */
+    :where(.ui-table td.ui-pin-end) {
+        background: var(--n-000);
+    }
+}
+
 .ui-table .num {
     font-family: var(--font-num);
     font-variant-numeric: tabular-nums;
@@ -790,8 +823,9 @@
         min-width: var(--tap);
     }
 
-    /* The header's logo and profile: 26 to 36px. */
-    .header .logo,
+    /* The header's logo and profile: 26 to 36px. The sign-in pages' logo
+       too, 26px (tablet audit, 2026-11-19). */
+    .logo,
     .header-nav .nav-link {
         min-height: var(--tap);
         min-width: var(--tap);
@@ -842,11 +876,65 @@
         align-items: center;
     }
 
-    /* The date ranges on a statement: This Month, This FY, All. 29px. */
+    /* And the slash before a link in the middle: Bootstrap floats it, so it
+       sat at the top of the 44px link's line, a slash in the air after Home
+       on every screen three deep (tablet audit, 2026-11-19). */
+    .breadcrumb-item {
+        align-items: center;
+        display: inline-flex;
+    }
+
+    .breadcrumb-item + .breadcrumb-item::before {
+        float: none;
+    }
+
+    /* The date ranges on a statement: This Month, This FY, All. 29px, and
+       All 37px wide (tablet audit, 2026-11-19). */
     .quick-ranges a {
         align-items: center;
         display: inline-flex;
+        justify-content: center;
         min-height: var(--tap);
+        min-width: var(--tap);
+    }
+
+    /* A statement's mobile and WhatsApp, 19px: on a phone these are the
+       buttons that ring the customer. The tap size, their line with them,
+       and grown sideways into the dots between them the way a link in a cell
+       is (tablet audit, 2026-11-19). */
+    .statement-period :is(a[href^="tel:"], .wa-link) {
+        align-items: center;
+        display: inline-flex;
+        /* The space between WhatsApp's mark and the number, which a flex box
+           drops. */
+        gap: 0.3em;
+        margin-inline: -11px;
+        min-height: var(--tap);
+        padding-inline: 11px;
+    }
+
+    /*
+     * Bootstrap's own tick and its words (Remember me, Active): a 16px box on
+     * a 24px line. The row is the tap size and the words fill it, so a tap
+     * anywhere on the line ticks it. The box comes out of its float to sit in
+     * the middle of the row, in the gutter it always had.
+     */
+    .form-check {
+        align-items: center;
+        display: flex;
+        min-height: var(--tap);
+    }
+
+    .form-check .form-check-input {
+        flex: none;
+        float: none;
+        margin: 0 0.5em 0 -1.5em;
+    }
+
+    .form-check .form-check-label {
+        align-items: center;
+        align-self: stretch;
+        display: flex;
     }
 
     /* A tick alone in a cell: the whole square around it; see .tick-hit. */
@@ -904,6 +992,13 @@
     .back-to-top {
         bottom: 5.5rem;
     }
+}
+
+/* And on a wider screen, where a page has one: on a tablet held sideways, and
+   on a desk, it covered the end of Give to Vendor and Update File the same way
+   (tablet audit, 2026-11-19). */
+body:has(.ui-card__foot, .wf-save) .back-to-top {
+    bottom: 5.5rem;
 }
 
 @media (prefers-reduced-motion: reduce) {

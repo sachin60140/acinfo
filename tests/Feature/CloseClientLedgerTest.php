@@ -166,7 +166,9 @@ class CloseClientLedgerTest extends TestCase
      * On a phone, a card a client rather than a table 777px wide to scroll
      * sideways (mobile audit, 2026-09-28): the rows say what each cell is,
      * which the cards print beside it, and the picker is not held to its
-     * narrowest by w-auto, which would outrank the card's full width.
+     * narrowest by w-auto, which would outrank the card's full width. On a
+     * tablet held upright too, which has 690px for the 777 (tablet audit,
+     * 2026-11-19).
      */
     public function test_the_close_screen_stacks_on_a_phone(): void
     {
@@ -182,7 +184,7 @@ class CloseClientLedgerTest extends TestCase
 
         $this->assertStringContainsString('form-select form-select-sm cb-pick', $page);
         $this->assertStringNotContainsString('w-auto', $page);
-        $this->assertMatchesRegularExpression('/@media \(max-width: 767\.98px\)\s*\{\s*\.cb-table thead\s*\{\s*display: none;/', $page);
+        $this->assertMatchesRegularExpression('/@media \(max-width: 991\.98px\)\s*\{\s*\.cb-table thead\s*\{\s*display: none;/', $page);
 
         // The header hidden alone leaves a table as wide as before, headerless
         // (found in review): the rows have to become blocks, each value labelled.

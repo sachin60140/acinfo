@@ -13,7 +13,8 @@
         }
 
         .file-facts .label {
-            font-size: 0.7rem;
+            /* 12px, as the statement's tile names (tablet audit). */
+            font-size: 0.75rem;
             text-transform: uppercase;
             letter-spacing: 0.06em;
             color: #6c757d;
@@ -35,7 +36,7 @@
         }
 
         .file-remark .label {
-            font-size: 0.7rem;
+            font-size: 0.75rem;
             text-transform: uppercase;
             letter-spacing: 0.06em;
             color: #6c757d;
@@ -56,7 +57,7 @@
         .file-need .label {
             color: #92400e;
             display: block;
-            font-size: 0.7rem;
+            font-size: 0.75rem;
             font-weight: 700;
             letter-spacing: 0.06em;
             margin-bottom: 0.3rem;

@@ -298,7 +298,7 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                             <th>Customer</th>
                             <th>Status</th>
                             <th class="num">Charged</th>
-                            <th class="num" style="min-width: 10rem;">Refund</th>
+                            <th class="num ui-pin-end" style="min-width: 10rem;">Refund</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -343,7 +343,7 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                                 <span class="ui-money ui-money--dr">{{ money(row.customer_amount) }}</span>
                             </td>
 
-                            <td data-label="Refund">
+                            <td data-label="Refund" class="ui-pin-end">
                                 <!-- Disabled rather than hidden: a disabled input posts
                                      nothing, so an amount left on an unticked row cannot
                                      reach the server. -->

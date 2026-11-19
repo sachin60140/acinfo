@@ -2319,7 +2319,20 @@ onMounted(() => {
     vertical-align: middle;
 }
 
-@media (max-width: 767.98px) {
+/*
+ * A card per work whenever the box has no room for the table.
+ *
+ * Asked of the box, not the screen. From 992px the form shares its row with
+ * the ledger panel, so a tablet held sideways, or a laptop with the menu open,
+ * gave the table about 600px for seven columns. The work's own select shrank
+ * to its arrow, 38px with no name in it, and Approval ran off the edge. The
+ * screen was wide; the box was not.
+ */
+.wf-works {
+    container: wf-works / inline-size;
+}
+
+@container wf-works (max-width: 51.99rem) {
     .wf-works__table,
     .wf-works__table tbody,
     .wf-works__table tr,
@@ -2336,16 +2349,39 @@ onMounted(() => {
         clip: rect(0 0 0 0);
     }
 
+    /* The work and its remove button on the first line, the two prices and
+       Ours under them, then where it stands. Three lines, not seven. */
     .wf-works__table tbody tr {
         border: 1px solid var(--n-200);
         border-radius: var(--r-md);
+        display: grid;
+        gap: var(--s-2) var(--s-3);
+        grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
         margin-bottom: var(--s-3);
-        padding: var(--s-2) var(--s-3);
+        padding: var(--s-3);
     }
 
     .wf-works__table tbody td {
         border-bottom: 0;
-        padding: var(--s-2) 0;
+        padding: 0;
+        width: auto;
+    }
+
+    .wf-works__table tbody td:first-child {
+        grid-column: 1 / 4;
+    }
+
+    .wf-works__table tbody td.wf-works__off {
+        align-self: end;
+        grid-column: 4;
+        grid-row: 1;
+        width: auto;
+    }
+
+    /* Where it stands starts a line of its own, rather than filling the
+       remove button's column on the line above. */
+    .wf-works__table tbody td[data-label="Status"] {
+        grid-column: 1;
     }
 
     .wf-works__table tbody td::before {
@@ -2359,8 +2395,80 @@ onMounted(() => {
         text-transform: uppercase;
     }
 
+    .wf-works__table tbody td.wf-works__off::before {
+        content: none;
+    }
+
     .wf-works__table tbody td.num {
         text-align: left;
+    }
+}
+
+/* A phone: one field a line, the remove button still beside the work. */
+@container wf-works (max-width: 29.99rem) {
+    .wf-works__table tbody tr {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .wf-works__table tbody td {
+        grid-column: 1 / -1;
+    }
+
+    .wf-works__table tbody td:first-child {
+        grid-column: 1;
+    }
+
+    .wf-works__table tbody td.wf-works__off {
+        grid-column: 2;
+    }
+}
+
+/* A browser that cannot ask the box (Safari before 16, which an iPhone 7
+   never gets past) asks the screen, as this did before. */
+@supports not (container-type: inline-size) {
+    @media (max-width: 767.98px) {
+        .wf-works__table,
+        .wf-works__table tbody,
+        .wf-works__table tr,
+        .wf-works__table td {
+            display: block;
+            width: 100%;
+        }
+
+        .wf-works__table thead {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+        }
+
+        .wf-works__table tbody tr {
+            border: 1px solid var(--n-200);
+            border-radius: var(--r-md);
+            margin-bottom: var(--s-3);
+            padding: var(--s-2) var(--s-3);
+        }
+
+        .wf-works__table tbody td {
+            border-bottom: 0;
+            padding: var(--s-2) 0;
+        }
+
+        .wf-works__table tbody td::before {
+            color: var(--n-500);
+            content: attr(data-label);
+            display: block;
+            font-size: var(--t-xs);
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            margin-bottom: var(--s-1);
+            text-transform: uppercase;
+        }
+
+        .wf-works__table tbody td.num {
+            text-align: left;
+        }
     }
 }
 
@@ -2584,15 +2692,16 @@ onMounted(() => {
     margin-top: var(--s-1);
 }
 
+/*
+ * The ledger panel goes under the form below 992px; the form's own fields go
+ * one to a line only below 768. A tablet held upright gives the form 688px,
+ * more than the 603 it has beside the panel at 1024, where the fields already
+ * sit three across; stacking them there made the date and the file number a
+ * line of 700px each (tablet audit, 2026-11-19).
+ */
 @media (max-width: 991.98px) {
-    .wf,
-    .wf-grid {
+    .wf {
         grid-template-columns: minmax(0, 1fr);
-    }
-
-    .wf-2,
-    .wf-3 {
-        grid-column: 1 / -1;
     }
 
     .wf-actions {
@@ -2601,6 +2710,17 @@ onMounted(() => {
 
     .wf-actions .ui-btn {
         flex: 1 1 auto;
+    }
+}
+
+@media (max-width: 767.98px) {
+    .wf-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .wf-2,
+    .wf-3 {
+        grid-column: 1 / -1;
     }
 }
 

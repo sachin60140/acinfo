@@ -76,12 +76,47 @@ function toggle(button) {
     remember(open === startsOpen ? rest : rest.concat(key));
 }
 
+/*
+ * The menu over the page, and the ways out of it.
+ *
+ * Below 1200px the template slides the menu over the page rather than beside
+ * it, and the only way to put it away was the button that brought it out. On
+ * a phone or a tablet the first thing anyone does is tap the page beside it,
+ * and that did nothing (tablet audit, 2026-11-19). nav.css dims the page while
+ * the menu is out; a tap on that, or Escape, puts the menu away.
+ *
+ * Only below 1200: above it the same class means the reverse, a menu the
+ * reader has hidden to give the page its room, and nothing here should open
+ * it again behind their back.
+ */
+const OVER_THE_PAGE_BELOW = 1200;
+
+function menuIsOverThePage() {
+    return document.body.classList.contains('toggle-sidebar')
+        && window.innerWidth < OVER_THE_PAGE_BELOW;
+}
+
 export function sidebar() {
     document.addEventListener('click', (event) => {
         const button = event.target.closest('.nav-heading--toggle');
 
         if (button) {
             toggle(button);
+
+            return;
+        }
+
+        // The dimmed page is the body's own ::before, so a tap on it lands on
+        // the body itself. A tap on anything real, the header included, is
+        // left alone.
+        if (event.target === document.body && menuIsOverThePage()) {
+            document.body.classList.remove('toggle-sidebar');
+        }
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && menuIsOverThePage()) {
+            document.body.classList.remove('toggle-sidebar');
         }
     });
 }

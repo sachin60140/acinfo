@@ -12,9 +12,11 @@
         /*
          * On a phone, a card for each client, not a table 777px wide to scroll
          * sideways (found by the mobile audit): the name and balance, then
-         * the customer to carry to across the whole card.
+         * the customer to carry to across the whole card. And on a tablet held
+         * upright, which has 690px for it: the name went a word to a line and
+         * the customer box ran off the card (tablet audit, 2026-11-19).
          */
-        @media (max-width: 767.98px) {
+        @media (max-width: 991.98px) {
             .cb-table thead {
                 display: none;
             }
@@ -52,6 +54,16 @@
             .cb-table form .btn {
                 min-width: 0;
                 width: 100%;
+            }
+        }
+
+        /* The client's name, which opens their statement: 22px tall on a
+           card, the tap size now (tablet audit, 2026-11-19). */
+        @media (pointer: coarse) {
+            .cb-table td > a {
+                align-items: center;
+                display: inline-flex;
+                min-height: 44px;
             }
         }
     </style>

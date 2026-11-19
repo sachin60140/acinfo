@@ -324,6 +324,9 @@ const anything = computed(() => props.rows.length > 0 && every.value.some((n) =>
 
 .mc-bar__value small {
     color: var(--n-500);
+    /* The smallest size in the system. Bootstrap's own for <small>, 0.875em
+       of the figure, made "over 6 files" 11.2px (tablet audit). */
+    font-size: var(--t-xs);
     font-weight: 600;
     margin-left: var(--s-2);
 }

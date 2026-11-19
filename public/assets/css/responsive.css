@@ -39,16 +39,6 @@
         font-size: 0.95rem;
     }
 
-    /* Filter bars: full-width fields instead of a cramped inline row. */
-    .statement-filter .col-sm-auto {
-        width: 100%;
-    }
-
-    .statement-filter .btn {
-        width: 100%;
-        margin-bottom: 0.3rem;
-    }
-
     .quick-ranges {
         display: flex;
         flex-wrap: wrap;
@@ -59,17 +49,21 @@
         margin-left: 0;
     }
 
-    /* Action buttons in a card header stack to full width rather than
-       squeezing four onto one line. */
+    /*
+     * Action buttons in a card header take the card's width between them.
+     *
+     * Written as a grid of two once, which never drew: the markup carries
+     * Bootstrap's d-flex, whose display is !important. Every button was given
+     * the full width instead, so a tablet held upright showed Work Files'
+     * four buttons as four rows and no files on its first screen (tablet
+     * audit, 2026-11-19). Sharing a line, they fit on one.
+     */
     .card-actions {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 0.4rem;
         width: 100%;
     }
 
     .card-actions .btn {
-        width: 100%;
+        flex: 1 1 auto;
     }
 
     .batch-total {
@@ -95,8 +89,21 @@
         grid-template-columns: 1fr 1fr;
     }
 
-    .card-actions {
-        grid-template-columns: 1fr;
+    /* A button a line on a phone, where four will not share one. */
+    .card-actions .btn {
+        width: 100%;
+    }
+
+    /*
+     * Filter bars: full-width fields on a phone, where an inline row is
+     * cramped. Only on a phone: from 576px the fields are Bootstrap's
+     * col-sm-auto and sit side by side, which a tablet has the room for. Up
+     * to 991px they were made full width too, and From, To, Apply and Reset
+     * took four rows of a tablet's first screen (tablet audit, 2026-11-19).
+     */
+    .statement-filter .btn {
+        width: 100%;
+        margin-bottom: 0.3rem;
     }
 
     .card-body {
