@@ -139,6 +139,7 @@ class FileNumberTest extends TestCase
             'customer_id' => $this->customer->id,
             'rows' => array_map(fn ($row) => [
                 'registration_no' => 'BR01FR'.($first + $row),
+                'owner_mobile' => '9431000000',
                 'works' => [['work_type_id' => $this->tr->id, 'amount' => '3000']],
             ], range(1, $rows)),
         ]);

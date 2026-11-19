@@ -6498,6 +6498,84 @@ class WorkFileModel extends Model
         ];
     }
 
+    /*
+     * What a file cannot be received without, by what its works ask for.
+     *
+     * Asked for by the owner on 2026-11-19, after the sticker: the details are
+     * to be taken as the file comes in, not left for later. The owner's mobile
+     * always; the lender, the financer, and the seller's and buyer's names and
+     * the buyer's mobile where a work asks for them. The seller's mobile was
+     * not on the owner's list and stays optional. Only on Receive Files: a
+     * file received before the sticker has none of these, and Edit File keeps
+     * them optional so it can still be saved.
+     */
+    public const REQUIRED_ON_RECEIPT = [
+        WorkTypeModel::ASKS_LENDER => ['lender_name'],
+        WorkTypeModel::ASKS_FINANCER => ['financer_name'],
+        WorkTypeModel::ASKS_PARTIES => ['seller_name', 'buyer_name', 'buyer_mobile'],
+    ];
+
+    private const DETAIL_NAMES = [
+        'owner_mobile' => "the owner's mobile",
+        'lender_name' => "the lender's name",
+        'financer_name' => "the financer's name",
+        'seller_name' => "the seller's name",
+        'buyer_name' => "the buyer's name",
+        'buyer_mobile' => "the buyer's mobile",
+    ];
+
+    /**
+     * Receive Files' rules for the details each posted row must have, and the
+     * message for each, naming the file by its place in the batch.
+     *
+     * Each rule is whole, required and what detailRules() checks: a rule for
+     * rows.0.owner_mobile beside one for rows.*.owner_mobile replaces what the
+     * wildcard gave it when the validator reaches it after the wildcard, so a
+     * bare 'required' here would let a five-digit mobile through.
+     *
+     * @return array{0: array<string, string>, 1: array<string, string>}
+     */
+    public static function requiredOnReceipt($rows): array
+    {
+        $rules = [];
+        $messages = [];
+        $checks = self::detailRules();
+
+        // No more than a batch may hold: the form's own rules refuse the rest,
+        // and nothing here should be asked of the database first.
+        $rows = array_slice(array_filter(is_array($rows) ? $rows : [], 'is_array'), 0, 50, true);
+
+        $typesOf = fn (array $row) => collect(is_array($row['works'] ?? null) ? $row['works'] : [])
+            ->map(fn ($work) => is_array($work) ? ($work['work_type_id'] ?? null) : null)
+            ->filter(fn ($id) => is_scalar($id) && (int) $id > 0)
+            ->map(fn ($id) => (int) $id);
+
+        // What every type on the batch asks for, in one look.
+        $asks = WorkTypeModel::whereIn('id', collect($rows)->flatMap($typesOf)->unique()->values())
+            ->whereNotNull('asks_for')
+            ->pluck('asks_for', 'id');
+
+        foreach ($rows as $index => $row) {
+            $asked = $typesOf($row)->map(fn ($id) => $asks[$id] ?? null)->filter()->unique()->all();
+
+            $columns = ['owner_mobile'];
+            foreach (self::REQUIRED_ON_RECEIPT as $kind => $needed) {
+                if (in_array($kind, $asked, true)) {
+                    array_push($columns, ...$needed);
+                }
+            }
+
+            foreach ($columns as $column) {
+                $key = "rows.{$index}.{$column}";
+                $rules[$key] = 'required|'.str_replace('nullable|', '', $checks[$column]);
+                $messages[$key.'.required'] = 'File '.(is_int($index) ? $index + 1 : $index)
+                    .' needs '.self::DETAIL_NAMES[$column].'.';
+            }
+        }
+
+        return [$rules, $messages];
+    }
+
     /**
      * What works of these types ask for: some of lender, financer and parties.
      *

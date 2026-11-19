@@ -537,3 +537,85 @@ describe('the office a price was charged at', () => {
         expect(host.querySelectorAll('.rcv-past__open').length).toBe(0);
     });
 });
+
+/*
+ * What a file is not received without (WorkFileModel::REQUIRED_ON_RECEIPT):
+ * the owner's mobile always, and what its works ask for, the seller's mobile
+ * aside. The server refuses the batch without them; the form says so first.
+ */
+describe('the details a file comes in with', () => {
+    const asking = () =>
+        mount({
+            workTypes: [
+                { id: 1, name: 'HPT', default_rate: null, asks_for: 'lender' },
+                { id: 2, name: 'TR', default_rate: null, asks_for: 'parties' },
+                { id: 3, name: 'Fitness', default_rate: null, asks_for: null },
+            ],
+        });
+
+    const choose = async (host, line, typeId) => {
+        const select = byName(host, `rows[0][works][${line}][work_type_id]`);
+        select.value = String(typeId);
+        select.dispatchEvent(new window.Event('change'));
+        await nextTick();
+    };
+
+    const type = async (host, name, value) => {
+        const box = byName(host, name);
+        box.value = value;
+        box.dispatchEvent(new window.Event('input'));
+        await nextTick();
+    };
+
+    const hint = (host) => host.querySelector('.rcv-foot .ui-hint').textContent;
+
+    it("always asks for the owner's mobile", () => {
+        const host = asking();
+
+        expect(byName(host, 'rows[0][owner_mobile]').required).toBe(true);
+    });
+
+    it("asks for what the works want, all but the seller's mobile", async () => {
+        const host = asking();
+        await choose(host, 0, 1);
+        host.querySelector('.rcv-works__add').click();
+        await nextTick();
+        await choose(host, 1, 2);
+
+        expect(byName(host, 'rows[0][lender_name]').required).toBe(true);
+        expect(byName(host, 'rows[0][seller_name]').required).toBe(true);
+        expect(byName(host, 'rows[0][buyer_name]').required).toBe(true);
+        expect(byName(host, 'rows[0][buyer_mobile]').required).toBe(true);
+        expect(byName(host, 'rows[0][seller_mobile]').required).toBe(false);
+        // No work here asks for a financer, so there is no box to fill.
+        expect(byName(host, 'rows[0][financer_name]')).toBeNull();
+    });
+
+    it('says in the footer what is still to be typed, until it is', async () => {
+        const host = asking();
+        await choose(host, 0, 1);
+        await type(host, 'rows[0][works][0][amount]', '1500');
+
+        expect(hint(host)).toContain("it still needs the owner's mobile or a detail its works ask for");
+
+        await type(host, 'rows[0][owner_mobile]', '9431012345');
+        expect(hint(host)).toContain('still needs');
+
+        await type(host, 'rows[0][lender_name]', 'State Bank of India');
+        expect(hint(host)).toBe('1 file, 1 work, all priced.');
+    });
+
+    it('counts the files of a batch that still need theirs', async () => {
+        const host = asking();
+        await choose(host, 0, 3);
+        await type(host, 'rows[0][works][0][amount]', '500');
+        host.querySelector('.rcv-add').click();
+        await nextTick();
+
+        expect(host.querySelectorAll('.rcv-file').length).toBe(2);
+        expect(hint(host)).toContain("2 files still need the owner's mobile or a detail their works ask for");
+
+        await type(host, 'rows[0][owner_mobile]', '9431012345');
+        expect(hint(host)).toContain("1 file still needs the owner's mobile or a detail its works ask for");
+    });
+});

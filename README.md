@@ -28,8 +28,9 @@ thermal printer and pasted on the folder. It shows:
   work on the file asks for them;
 - the works, leaving out cancelled ones, and the file's details.
 
-Anything asked for and not typed prints as a line to write on. It shows no
-amounts and never the vendor.
+Anything not typed prints as a line to write on: the seller's mobile, which
+may be left empty, and anything on a file received before the sticker. It
+shows no amounts and never the vendor.
 
 **Printing it.** After **Receive Files**, a bar offers the stickers for the
 whole batch. Print one again from **Edit File** (Print Sticker), or from the
@@ -41,8 +42,16 @@ choose the thermal printer with paper **4 x 6 in (100 x 150 mm)**, margins
 their names: **Work Types**, *When a File Is Received, Also Ask For*. Lender is
 for an HPT, financer for an HPA, seller and buyer for TR, the transfer. Receive
 Files and Edit File show those boxes only for a file whose works ask for them,
-and keep only what is asked for. All of them, and the owner's mobile, may be
-left empty; a mobile that is typed must be 10 digits.
+and keep only what is asked for.
+
+**Receive Files will not take a file without them:** the owner's mobile on
+every file, and the lender, the financer, or the seller's name, the buyer's
+name and the buyer's mobile where its works ask for them. Only the seller's
+mobile may be left empty. Each file of a batch is checked on its own, and
+the footer says which still need something before the form is sent. Edit
+File asks for none of them, so a file received before the sticker can still
+be saved. Mobiles are 10 digits. The rule is
+`WorkFileModel::REQUIRED_ON_RECEIPT`.
 
 **In the code:** the page is `WorkFileController::stickers()` at
 `admin/file/stickers?ids=…` (`&print=1` opens the dialog), drawing

@@ -114,15 +114,42 @@ const unpriced = computed(() =>
     )
 );
 
+/*
+ * What a file is not received without, as the server says it
+ * (WorkFileModel::REQUIRED_ON_RECEIPT): the owner's mobile, and what its works
+ * ask for, the seller's mobile aside.
+ */
+const REQUIRED_FOR = {
+    lender: ['lender_name'],
+    financer: ['financer_name'],
+    parties: ['seller_name', 'buyer_name', 'buyer_mobile'],
+};
+
+const lacksDetails = (row) =>
+    ['owner_mobile', ...Object.keys(askedFor(row)).flatMap((kind) => REQUIRED_FOR[kind] ?? [])]
+        .some((key) => String(row[key] ?? '').trim() === '');
+
+const undetailed = computed(() => rows.filter(lacksDetails).length);
+
 const summary = computed(() => {
     const files = `${rows.length} ${rows.length === 1 ? 'file' : 'files'}`;
     const works = `${workCount.value} ${workCount.value === 1 ? 'work' : 'works'}`;
+    const still = (count) => (count === 1 ? 'needs' : 'need');
+    const waiting = [];
 
     if (unpriced.value) {
-        return {
-            tone: 'wait',
-            text: `${files}, ${works} — ${unpriced.value} still ${unpriced.value === 1 ? 'needs' : 'need'} a work type and a price.`,
-        };
+        waiting.push(`${unpriced.value} still ${still(unpriced.value)} a work type and a price`);
+    }
+
+    if (undetailed.value === 1) {
+        const which = rows.length === 1 ? 'it' : '1 file';
+        waiting.push(`${which} still needs the owner's mobile or a detail its works ask for`);
+    } else if (undetailed.value > 1) {
+        waiting.push(`${undetailed.value} files still need the owner's mobile or a detail their works ask for`);
+    }
+
+    if (waiting.length) {
+        return { tone: 'wait', text: `${files}, ${works} — ${waiting.join('; ')}.` };
     }
 
     return { tone: 'ready', text: `${files}, ${works}, all priced.` };
@@ -503,7 +530,7 @@ onBeforeUnmount(() => {
                             </div>
 
                             <div class="ui-field">
-                                <label class="ui-label" :for="`rcv-owner-${index}`">Owner's Mobile</label>
+                                <label class="ui-label" :for="`rcv-owner-${index}`">Owner's Mobile <span class="ui-label__req">*</span></label>
                                 <input
                                     :id="`rcv-owner-${index}`"
                                     type="tel"
@@ -515,7 +542,8 @@ onBeforeUnmount(() => {
                                     pattern="[0-9]{10}"
                                     title="10 digits"
                                     autocomplete="off"
-                                    placeholder="10 digits">
+                                    placeholder="10 digits"
+                                    required>
                             </div>
                         </div>
 
@@ -625,12 +653,13 @@ onBeforeUnmount(() => {
                         </div>
 
                         <!-- Who the works are about, for the file's sticker: asked
-                             only when a work on the card asks for it. Left blank,
-                             the sticker keeps a line to write it in by hand. -->
+                             only when a work on the card asks for it, and needed
+                             before the file is received, all but the seller's
+                             mobile (WorkFileModel::REQUIRED_ON_RECEIPT). -->
                         <div v-if="Object.keys(askedFor(row)).length" class="rcv-asks">
                             <div v-if="askedFor(row).lender" class="ui-field">
                                 <label class="ui-label" :for="`rcv-lender-${index}`">
-                                    Lender <span class="rcv-asks__for">for {{ askedFor(row).lender }}</span>
+                                    Lender <span class="ui-label__req">*</span> <span class="rcv-asks__for">for {{ askedFor(row).lender }}</span>
                                 </label>
                                 <input
                                     :id="`rcv-lender-${index}`"
@@ -639,12 +668,13 @@ onBeforeUnmount(() => {
                                     :name="`rows[${index}][lender_name]`"
                                     v-model="row.lender_name"
                                     maxlength="120"
-                                    placeholder="Bank or finance company">
+                                    placeholder="Bank or finance company"
+                                    required>
                             </div>
 
                             <div v-if="askedFor(row).financer" class="ui-field">
                                 <label class="ui-label" :for="`rcv-financer-${index}`">
-                                    Financer <span class="rcv-asks__for">for {{ askedFor(row).financer }}</span>
+                                    Financer <span class="ui-label__req">*</span> <span class="rcv-asks__for">for {{ askedFor(row).financer }}</span>
                                 </label>
                                 <input
                                     :id="`rcv-financer-${index}`"
@@ -653,15 +683,15 @@ onBeforeUnmount(() => {
                                     :name="`rows[${index}][financer_name]`"
                                     v-model="row.financer_name"
                                     maxlength="120"
-                                    placeholder="Bank or finance company">
+                                    placeholder="Bank or finance company"
+                                    required>
                             </div>
 
                             <template v-if="askedFor(row).parties">
                                 <div v-for="side in ['seller', 'buyer']" :key="side" class="rcv-asks__party">
                                     <div class="ui-field">
                                         <label class="ui-label" :for="`rcv-${side}-${index}`">
-                                            {{ side === 'seller' ? 'Seller' : 'Buyer' }}
-                                            <span class="rcv-asks__for">for {{ askedFor(row).parties }}</span>
+                                            {{ side === 'seller' ? 'Seller' : 'Buyer' }} <span class="ui-label__req">*</span> <span class="rcv-asks__for">for {{ askedFor(row).parties }}</span>
                                         </label>
                                         <input
                                             :id="`rcv-${side}-${index}`"
@@ -670,11 +700,13 @@ onBeforeUnmount(() => {
                                             :name="`rows[${index}][${side}_name]`"
                                             v-model="row[`${side}_name`]"
                                             maxlength="120"
-                                            placeholder="Name">
+                                            placeholder="Name"
+                                            required>
                                     </div>
                                     <div class="ui-field">
                                         <label class="ui-label" :for="`rcv-${side}-mobile-${index}`">
                                             {{ side === 'seller' ? "Seller's" : "Buyer's" }} Mobile
+                                            <span v-if="side === 'buyer'" class="ui-label__req">*</span>
                                         </label>
                                         <input
                                             :id="`rcv-${side}-mobile-${index}`"
@@ -687,7 +719,8 @@ onBeforeUnmount(() => {
                                             pattern="[0-9]{10}"
                                             title="10 digits"
                                             autocomplete="off"
-                                            placeholder="10 digits">
+                                            placeholder="10 digits"
+                                            :required="side === 'buyer'">
                                     </div>
                                 </div>
                             </template>

@@ -103,6 +103,7 @@ class WorkFileTest extends TestCase
                 'description' => $payload['description'] ?? null,
                 // One job, which is what these tests are about. Receiving for
                 // several at once is covered in WorkFileItemTest.
+                'owner_mobile' => '9431000000',
                 'works' => [[
                     'work_type_id' => $payload['work_type_id'],
                     'amount' => $payload['customer_amount'],
@@ -400,9 +401,9 @@ class WorkFileTest extends TestCase
             'customer_id' => $this->customer->id,
             'remarks' => 'Batch of three',
             'rows' => [
-                ['description' => 'UP32-AB-1234', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '5000']]],
-                ['description' => 'UP32-AB-1234', 'works' => [['work_type_id' => $second->id, 'amount' => '2500']]],
-                ['description' => 'Ramesh Kumar', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '1200']]],
+                ['description' => 'UP32-AB-1234', 'owner_mobile' => '9431000000', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '5000']]],
+                ['description' => 'UP32-AB-1234', 'owner_mobile' => '9431000000', 'works' => [['work_type_id' => $second->id, 'amount' => '2500']]],
+                ['description' => 'Ramesh Kumar', 'owner_mobile' => '9431000000', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '1200']]],
             ],
         ]));
 
@@ -448,8 +449,8 @@ class WorkFileTest extends TestCase
                 'received_date' => '2026-04-01',
                 'customer_id' => $this->customer->id,
                 'rows' => [
-                    ['works' => [['work_type_id' => $this->workType->id, 'amount' => '5000']]],
-                    ['works' => [['work_type_id' => 999999, 'amount' => '2500']]],
+                    ['owner_mobile' => '9431000000', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '5000']]],
+                    ['owner_mobile' => '9431000000', 'works' => [['work_type_id' => 999999, 'amount' => '2500']]],
                 ],
             ]));
             $this->fail('Expected the batch to be rejected.');
@@ -1542,6 +1543,7 @@ class WorkFileTest extends TestCase
             'customer_id' => $this->customer->id,
             'rows' => [[
                 'registration_no' => 'br 01 ab-1234',
+                'owner_mobile' => '9431000000',
                 'works' => [['work_type_id' => $this->workType->id, 'amount' => '5000']],
             ]],
         ]));
@@ -1555,8 +1557,8 @@ class WorkFileTest extends TestCase
             'received_date' => '2026-04-01',
             'customer_id' => $this->customer->id,
             'rows' => [
-                ['registration_no' => 'BR01AB1234', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '5000']]],
-                ['registration_no' => 'BR09ZZ9999', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '1000']]],
+                ['registration_no' => 'BR01AB1234', 'owner_mobile' => '9431000000', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '5000']]],
+                ['registration_no' => 'BR09ZZ9999', 'owner_mobile' => '9431000000', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '1000']]],
             ],
         ]));
 
@@ -1578,7 +1580,7 @@ class WorkFileTest extends TestCase
         $this->controller->receive(Request::create('/admin/file/receive', 'POST', [
             'received_date' => '2026-04-01',
             'customer_id' => $this->customer->id,
-            'rows' => [['registration_no' => 'BR02CD5678', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '4000']]]],
+            'rows' => [['registration_no' => 'BR02CD5678', 'owner_mobile' => '9431000000', 'works' => [['work_type_id' => $this->workType->id, 'amount' => '4000']]]],
         ]));
 
         $file = WorkFileModel::latest('id')->first();

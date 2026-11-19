@@ -23,8 +23,10 @@ use Tests\TestCase;
  *
  * Which work asks for which is a setting on its type (work_type.asks_for),
  * not a reading of its name. Read for: the setting is kept and checked; a file
- * keeps only what its works ask for; an edit sent without a box leaves what
- * is stored; the sticker says what was asked, a line where nothing was typed,
+ * is not received without the owner's mobile and what its works ask for, the
+ * seller's mobile aside, while Edit File asks for none of them; a file keeps
+ * only what its works ask for; an edit sent without a box leaves what is
+ * stored; the sticker says what was asked, a line where nothing was typed,
  * and never the vendor; and the buttons that lead to it.
  *
  * See the note in PartyLedgerTest: DatabaseTransactions, never RefreshDatabase.
@@ -90,6 +92,20 @@ class FileStickerTest extends TestCase
         return $type;
     }
 
+    /**
+     * Every box, typed: what a file cannot be received without, whichever of
+     * them its works ask for. A test leaves one empty by sending it as ''.
+     */
+    private const TYPED = [
+        'owner_mobile' => '9431012345',
+        'lender_name' => 'State Bank of India',
+        'financer_name' => 'Bajaj Finance',
+        'seller_name' => 'Ramesh Kumar',
+        'seller_mobile' => '9835011111',
+        'buyer_name' => 'Sunita Devi',
+        'buyer_mobile' => '9835022222',
+    ];
+
     /** One file received through the screen, with these works and boxes. */
     private function receive(array $types, array $boxes = [])
     {
@@ -100,10 +116,22 @@ class FileStickerTest extends TestCase
                 'registration_no' => 'br-01-xy-'.random_int(1000, 9999),
                 'description' => 'Papers from the dealer',
                 'works' => array_map(fn ($type) => ['work_type_id' => $type->id, 'amount' => 1500], $types),
+                ...self::TYPED,
                 ...$boxes,
             ]],
             'once' => 'sticker-'.uniqid(),
         ]);
+    }
+
+    /** A file received before the sticker: none of its details were ever asked. */
+    private function receivedBeforeTheSticker(array $types): WorkFileModel
+    {
+        $this->receive($types)->assertSessionHasNoErrors();
+        $file = $this->newest();
+        DB::table('work_file')->where('id', $file->id)
+            ->update(array_fill_keys(WorkFileModel::DETAIL_COLUMNS, null));
+
+        return $file->fresh();
     }
 
     private function newest(): WorkFileModel
@@ -201,6 +229,103 @@ class FileStickerTest extends TestCase
             ->assertSessionHasErrors(['rows.0.owner_mobile', 'rows.0.buyer_mobile']);
 
         $this->assertSame(0, WorkFileModel::where('customer_id', $this->customer->id)->count());
+    }
+
+    // ---- What a file cannot be received without -------------------------------
+
+    /**
+     * Asked for by the owner on 2026-11-19, after the sticker: the details are
+     * taken as the file comes in. The owner's mobile on every file, whatever
+     * its works.
+     */
+    public function test_no_file_is_received_without_the_owners_mobile(): void
+    {
+        $this->receive([$this->fitness], ['owner_mobile' => ''])
+            ->assertSessionHasErrors(['rows.0.owner_mobile' => "File 1 needs the owner's mobile."]);
+
+        $this->assertSame(0, WorkFileModel::where('customer_id', $this->customer->id)->count());
+    }
+
+    /** And what its works ask for: all of it but the seller's mobile. */
+    public function test_no_file_is_received_without_what_its_works_ask_for(): void
+    {
+        $this->receive([$this->hpt, $this->hpa, $this->to], [
+            'lender_name' => '',
+            'financer_name' => ' ',
+            'seller_name' => '',
+            'seller_mobile' => '',
+            'buyer_name' => '',
+            'buyer_mobile' => '',
+        ])
+            ->assertSessionHasErrors([
+                'rows.0.lender_name' => "File 1 needs the lender's name.",
+                'rows.0.financer_name' => "File 1 needs the financer's name.",
+                'rows.0.seller_name' => "File 1 needs the seller's name.",
+                'rows.0.buyer_name' => "File 1 needs the buyer's name.",
+                'rows.0.buyer_mobile' => "File 1 needs the buyer's mobile.",
+            ])
+            ->assertSessionDoesntHaveErrors(['rows.0.seller_mobile', 'rows.0.owner_mobile']);
+
+        $this->assertSame(0, WorkFileModel::where('customer_id', $this->customer->id)->count());
+    }
+
+    /** The seller's mobile was not on the owner's list. */
+    public function test_the_sellers_mobile_may_be_left_empty(): void
+    {
+        $this->receive([$this->to], ['seller_mobile' => ''])
+            ->assertSessionHasNoErrors()
+            ->assertRedirect(route('workfile.index'));
+
+        $this->assertNull($this->newest()->seller_mobile);
+        $this->assertSame('Sunita Devi', $this->newest()->buyer_name);
+    }
+
+    /** A work that asks for nothing more needs nothing more. */
+    public function test_a_work_that_asks_for_nothing_needs_only_the_owners_mobile(): void
+    {
+        $this->receive([$this->fitness], array_fill_keys(['lender_name', 'financer_name', 'seller_name', 'buyer_name', 'buyer_mobile'], ''))
+            ->assertSessionHasNoErrors()
+            ->assertRedirect(route('workfile.index'));
+    }
+
+    /**
+     * Each file of a batch is asked for what its own works need, and named
+     * by its place in the batch; one short refuses the batch, as any other
+     * mistake in it does.
+     */
+    public function test_each_file_of_a_batch_is_asked_for_its_own(): void
+    {
+        $this->actingAs($this->admin)->post(route('workfile.receive'), [
+            'received_date' => now()->toDateString(),
+            'customer_id' => $this->customer->id,
+            'rows' => [
+                ['registration_no' => 'BR01ST1001', 'owner_mobile' => '9431012345',
+                    'works' => [['work_type_id' => $this->fitness->id, 'amount' => 1500]]],
+                // Sent without the box at all, as a form made by hand could be.
+                ['registration_no' => 'BR01ST1002', 'owner_mobile' => '9431012346',
+                    'works' => [['work_type_id' => $this->hpt->id, 'amount' => 1500]]],
+            ],
+            'once' => 'sticker-'.uniqid(),
+        ])
+            ->assertSessionHasErrors(['rows.1.lender_name' => "File 2 needs the lender's name."])
+            ->assertSessionDoesntHaveErrors(['rows.0.lender_name', 'rows.0.owner_mobile', 'rows.1.owner_mobile']);
+
+        $this->assertSame(0, WorkFileModel::where('customer_id', $this->customer->id)->count());
+    }
+
+    /**
+     * Only Receive Files asks. A file from before the sticker has none of
+     * these, and Edit File still saves it with them empty.
+     */
+    public function test_edit_file_does_not_ask_for_them(): void
+    {
+        $file = $this->receivedBeforeTheSticker([$this->hpt, $this->to]);
+
+        $this->edit($file, array_fill_keys(WorkFileModel::DETAIL_COLUMNS, ''))
+            ->assertSessionHasNoErrors();
+
+        $this->assertNull($file->fresh()->owner_mobile);
+        $this->assertNull($file->fresh()->lender_name);
     }
 
     public function test_receiving_offers_a_sticker_for_every_file(): void
@@ -318,11 +443,17 @@ class FileStickerTest extends TestCase
         $this->assertStringContainsString('size: 4in 6in', $this->sticker($this->newest()));
     }
 
-    /** Asked for and not typed: a line, to write it in by hand. */
+    /**
+     * Asked for and not typed: a line, to write it in by hand. Since every
+     * file comes in with the rest, that is the seller's mobile, which may be
+     * left empty, and anything on a file received before the sticker.
+     */
     public function test_a_detail_not_yet_typed_leaves_a_line(): void
     {
-        $this->receive([$this->hpt]);
-        $page = $this->sticker($this->newest());
+        $this->receive([$this->to], ['seller_mobile' => '']);
+        $this->assertSame(1, substr_count($this->sticker($this->newest()), 'class="st-blank"'), "the seller's mobile");
+
+        $page = $this->sticker($this->receivedBeforeTheSticker([$this->hpt]));
 
         $this->assertStringContainsString('Lender &middot; '.e($this->hpt->name), $page);
         $this->assertSame(2, substr_count($page, 'class="st-blank"'), "the owner's mobile and the lender");

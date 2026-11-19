@@ -508,6 +508,10 @@ class WorkFileController extends Controller
     public function receive(Request $req)
     {
         if ($req->isMethod('POST')) {
+            // What each file cannot come in without: the owner's mobile, and
+            // what its works ask for. See WorkFileModel::REQUIRED_ON_RECEIPT.
+            [$neededRules, $neededMessages] = WorkFileModel::requiredOnReceipt($req->input('rows'));
+
             $req->validate([
                 'received_date' => 'required|date_format:Y-m-d',
                 'customer_id' => ['required', 'integer', Rule::exists('party', 'id')->where('party_type', 'customer')],
@@ -528,12 +532,14 @@ class WorkFileController extends Controller
                 // The owner's mobile, and the lender, financer, seller and buyer
                 // the works ask for: for the file's sticker.
                 ...WorkFileModel::detailRules('rows.*.'),
+                ...$neededRules,
             ], [
                 'rows.required' => 'Add at least one file.',
                 'rows.*.works.required' => 'Every file needs at least one work.',
                 'rows.*.works.*.work_type_id.required' => 'Every work needs a type.',
                 'rows.*.works.*.amount.required' => 'Every work needs an amount.',
                 ...WorkFileModel::detailMessages('rows.*.'),
+                ...$neededMessages,
             ]);
 
             /*
