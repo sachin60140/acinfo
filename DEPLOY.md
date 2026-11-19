@@ -107,6 +107,11 @@ will otherwise stop to ask.
 php artisan migrate --force
 ```
 
+A few migrations leave something to be done in the application once they have
+run. Those are listed under
+[After particular migrations](#after-particular-migrations); look there for any
+this pull brought in.
+
 **6. Check it took.** Everything should say `Ran`.
 
 ```bash
@@ -132,6 +137,49 @@ the others, and run `php artisan migrate --force` again.
 
 Migrations are written to be safe to re-run: columns are added only when they
 are missing, and backfills only touch rows that have not been filled in.
+
+## After particular migrations
+
+What a migration needs besides step 5, newest first.
+
+### File stickers: `2026_11_19_000100_let_a_file_carry_its_sticker_details`
+
+Brought in by the 4 x 6 inch file sticker (November 2026). It adds what the
+sticker prints and the file never held:
+
+- on `work_file`: the vehicle owner's mobile, a lender, a financer, and a
+  seller and a buyer, each with a mobile;
+- on `work_type`: `asks_for`, the setting that says which of those a work
+  needs.
+
+Every column is new, so nothing already saved changes; the only thing it fills
+in is the work types' starting setting, below. It needs no new packages; step 5
+runs it like any other.
+
+**Check it took.** In step 6 it should say `Ran`. Then open **Receive Files**:
+each file should have an **Owner's Mobile** box. A `Column not found` naming
+`owner_mobile` or `asks_for` means step 5 did not run.
+
+**Check the work types it set, and set any it could not.** It gives a starting
+setting to the types named exactly HPT (lender), HPA (financer) and TR, the
+transfer (seller and buyer), ignoring case and spaces either side. A type
+named TO gets the same as TR. It changes no type that already has a setting.
+Every other type asks for nothing until it is set, so Receive Files shows no
+boxes for it and its sticker has no lines for them. Open **Work Types**: each
+type with a setting shows "Asks for …" under its name. For any that needs one
+and has none, edit the type, choose under **When a File Is Received, Also Ask
+For**, and save.
+
+**Set up the printer** on the counter's computer. The sticker page opens the
+browser's print dialog by itself. In it, choose the thermal printer with paper
+size **4 x 6 in (100 x 150 mm)**, margins **None** and scale **100%**. The page
+repeats these above the stickers. If the printer offers no
+4 x 6 in paper, add that size in its own driver settings first.
+
+**Going back** needs only the code. The code from before the pull never reads
+these columns, and they are nullable, so `git reset --hard ORIG_HEAD` is enough.
+Leave the columns where they are: rolling the migration back would drop them,
+and with them every mobile and name typed in since the deploy.
 
 ## When the packages change
 

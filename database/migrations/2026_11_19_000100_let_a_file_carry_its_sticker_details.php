@@ -12,13 +12,16 @@ use Illuminate\Support\Facades\Schema;
  * received, with the customer and their mobile, the vehicle, the vehicle
  * owner's mobile, the works, and for some works the people they are about.
  * An HPT (hypothecation terminated) names its lender, an HPA (hypothecation
- * added) its financer, a TO (transfer of ownership) its seller and buyer.
+ * added) its financer, a transfer of ownership its seller and buyer.
  *
  * Which works ask for which is a setting on the work type, work_type.asks_for,
  * rather than a reading of its name: types are named by the office and can be
- * renamed. The three types named exactly HPT, HPA and TO are given theirs here
- * to start with, and only where nothing has been chosen; any other is set on
- * the Work Types screen.
+ * renamed. The types named exactly HPT, HPA and TR are given theirs here to
+ * start with, and only where nothing has been chosen; any other is set on the
+ * Work Types screen. TR is the office's own name for a transfer, as its paper
+ * checklist says (Forms 29 and 30, 2026_09_17_000100); TO, the owner's word
+ * for it when asking for the sticker, is given the same in case a type is
+ * named that.
  *
  * Every column is new and nullable, and added only where it is missing, so
  * this is safe to run again.
@@ -52,7 +55,7 @@ return new class extends Migration
             }
         });
 
-        foreach (['HPT' => 'lender', 'HPA' => 'financer', 'TO' => 'parties'] as $name => $asks) {
+        foreach (['HPT' => 'lender', 'HPA' => 'financer', 'TR' => 'parties', 'TO' => 'parties'] as $name => $asks) {
             DB::table('work_type')
                 ->whereRaw('UPPER(TRIM(name)) = ?', [$name])
                 ->whereNull('asks_for')

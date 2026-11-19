@@ -4013,7 +4013,7 @@ class WorkFileController extends Controller
 
                 /*
                  * The sticker's details, asked of the works as they stand now:
-                 * a TO added on this save asks for its seller and buyer, and
+                 * a TR added on this save asks for its seller and buyer, and
                  * the boxes for them were on the form when it was.
                  */
                 $file->takeDetails(

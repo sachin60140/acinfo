@@ -6455,9 +6455,9 @@ class WorkFileModel extends Model
      *
      * The owner's mobile always. The rest only where a work on the file asks
      * for it, by its type's asks_for: an HPT its lender, an HPA its financer, a
-     * TO its seller and buyer. Kept on the file rather than on a work, as the
-     * registration number is: one folder is one vehicle, and its HPT and its
-     * TO are about the same people.
+     * TR (transfer) its seller and buyer. Kept on the file rather than on a
+     * work, as the registration number is: one folder is one vehicle, and its
+     * HPT and its TR are about the same people.
      */
     public const DETAIL_COLUMNS = ['owner_mobile', 'lender_name', 'financer_name', 'seller_name', 'seller_mobile', 'buyer_name', 'buyer_mobile'];
 

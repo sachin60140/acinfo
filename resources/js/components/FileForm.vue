@@ -440,7 +440,7 @@ const keeping = computed(() => works.filter((work) => ! going(work)));
 
 /*
  * What the file's works ask for, for its sticker: an HPT its lender, an HPA
- * its financer, a TO its seller and buyer (asks_for, on each work type). The
+ * its financer, a TR its seller and buyer (asks_for, on each work type). The
  * works as they will stand once saved — the ones staying, not cancelled, and
  * the ones being added — which is what the server asks them of too.
  */

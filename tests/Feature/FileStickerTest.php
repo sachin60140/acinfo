@@ -18,7 +18,8 @@ use Tests\TestCase;
  * Asked for by the owner on 2026-11-19: a 4x6 inch thermal sticker pasted on
  * each folder, saying the customer and their mobile, the vehicle, the vehicle
  * owner's mobile, the lender if an HPT is asked for, the financer for an HPA,
- * the seller and buyer for a TO, and the works.
+ * the seller and buyer for a transfer (TR, or TO as the owner put it), and
+ * the works.
  *
  * Which work asks for which is a setting on its type (work_type.asks_for),
  * not a reading of its name. Read for: the setting is kept and checked; a file
@@ -396,28 +397,34 @@ class FileStickerTest extends TestCase
     // ---- The migration's starting settings ------------------------------------
 
     /**
-     * Types named exactly HPT, HPA and TO start asking for theirs; one already
-     * set, or named anything else, is left alone; and it can run again.
+     * Types named exactly HPT, HPA and TR (the office's transfer; TO too)
+     * start asking for theirs; one already set, or named anything else, is
+     * left alone; and it can run again.
      */
-    public function test_the_migration_starts_hpt_hpa_and_to_off_and_runs_again_safely(): void
+    public function test_the_migration_starts_hpt_hpa_and_tr_off_and_runs_again_safely(): void
     {
         $plain = function (string $name) {
-            DB::table('work_type')->where('name', $name)->delete();
+            DB::table('work_type')->whereRaw('UPPER(TRIM(name)) = ?', [strtoupper(trim($name))])->delete();
 
             return DB::table('work_type')->insertGetId(['name' => $name, 'is_active' => 1]);
         };
 
         $hpt = $plain('HPT');
-        $to = $plain(' to ');
-        $tr = $plain('TR');
+        $hpa = $plain('HPA');
+        $tr = $plain(' tr ');
+        $to = $plain('TO');
+        $other = $plain('Duplicate RC');
         DB::table('work_type')->where('id', $to)->update(['asks_for' => WorkTypeModel::ASKS_LENDER]);
 
         $migration = require database_path('migrations/2026_11_19_000100_let_a_file_carry_its_sticker_details.php');
         $migration->up();
         $migration->up();
 
-        $this->assertSame(WorkTypeModel::ASKS_LENDER, DB::table('work_type')->where('id', $hpt)->value('asks_for'));
-        $this->assertSame(WorkTypeModel::ASKS_LENDER, DB::table('work_type')->where('id', $to)->value('asks_for'), 'one already chosen is kept');
-        $this->assertNull(DB::table('work_type')->where('id', $tr)->value('asks_for'));
+        $asks = fn (int $id) => DB::table('work_type')->where('id', $id)->value('asks_for');
+        $this->assertSame(WorkTypeModel::ASKS_LENDER, $asks($hpt));
+        $this->assertSame(WorkTypeModel::ASKS_FINANCER, $asks($hpa));
+        $this->assertSame(WorkTypeModel::ASKS_PARTIES, $asks($tr), 'TR is the office\'s transfer, whatever its case and spaces');
+        $this->assertSame(WorkTypeModel::ASKS_LENDER, $asks($to), 'one already chosen is kept');
+        $this->assertNull($asks($other));
     }
 }

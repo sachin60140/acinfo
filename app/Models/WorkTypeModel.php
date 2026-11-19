@@ -14,8 +14,9 @@ class WorkTypeModel extends Model
 
     /*
      * What a work of this type asks for when a file is received, for the file
-     * and its sticker: an HPT names its lender, an HPA its financer, a TO its
-     * seller and buyer. Set on the Work Types screen; null asks for nothing.
+     * and its sticker: an HPT names its lender, an HPA its financer, a TR (a
+     * transfer of ownership, TO) its seller and buyer. Set on the Work Types
+     * screen; null asks for nothing.
      */
     public const ASKS_LENDER = 'lender';
 
@@ -27,7 +28,7 @@ class WorkTypeModel extends Model
     public const ASKS = [
         self::ASKS_LENDER => 'Lender (as for HPT)',
         self::ASKS_FINANCER => 'Financer (as for HPA)',
-        self::ASKS_PARTIES => 'Seller and buyer (as for TO)',
+        self::ASKS_PARTIES => 'Seller and buyer (as for TR, transfer)',
     ];
 
     /**

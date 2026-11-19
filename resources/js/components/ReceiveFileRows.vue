@@ -75,7 +75,7 @@ const money = (value) =>
 
 /*
  * What a file's works ask for, for its sticker: an HPT its lender, an HPA its
- * financer, a TO its seller and buyer, as each work type is set up (asks_for).
+ * financer, a TR its seller and buyer, as each work type is set up (asks_for).
  * Kind to the names of the works asking, so a box can say which it is for.
  * The boxes come and go with the works; one that goes is not sent, and the
  * server takes only what a work on the file asks for.
