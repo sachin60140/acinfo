@@ -64,9 +64,10 @@ class PartyModel extends Model
             )
             /*
              * party.password is grouped rather than left to functional
-             * dependency on the primary key: MySQL 8 works that out, MariaDB is
-             * less willing, and production is MariaDB. Grouping by it changes
-             * nothing — party.id is already here and is unique.
+             * dependency on the primary key. MySQL 8.4 works that out; MariaDB,
+             * which production ran when this was written, was less willing.
+             * Grouping by it changes nothing — party.id is already here and is
+             * unique.
              */
             ->groupBy('party.id', 'party.name', 'party.mobile', 'party.whatsapp', 'party.address', 'party.is_active', 'party.password')
             ->orderBy('party.name', 'asc')

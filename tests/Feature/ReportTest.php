@@ -1126,16 +1126,18 @@ class ReportTest extends TestCase
     /**
      * No grouped report selects a correlated subquery.
      *
-     * The live server runs MariaDB and this machine runs MySQL, and they part
-     * company on exactly one thing here: a correlated subquery inside an
-     * aggregate under a GROUP BY. MySQL works out that it is valid; MariaDB
-     * refuses it with "work_file.id isn't in GROUP BY". So the profit report
-     * ran perfectly here and failed the moment it was deployed.
+     * Written when the live server ran MariaDB and development ran MySQL,
+     * which part company on exactly one thing here: a correlated subquery
+     * inside an aggregate under a GROUP BY. MySQL works out that it is valid;
+     * MariaDB refused it with "work_file.id isn't in GROUP BY". So the profit
+     * report ran perfectly in development and failed the moment it was
+     * deployed.
      *
-     * The fix is structural — each file is worked out in a subquery with no
-     * grouping, and the grouping is done over that — and this is what holds it:
-     * the shape that broke cannot come back without failing here first, on a
-     * database that would otherwise accept it.
+     * The office, development and CI all run MySQL 8.4 now, which accepts that
+     * shape, so it would no longer fail anywhere. The fix was structural, each
+     * file worked out in a subquery with no grouping and the grouping done over
+     * that, and this still holds the reports to it: plain columns under every
+     * GROUP BY, whatever the database would let pass.
      */
     public function test_no_grouped_report_selects_a_correlated_subquery(): void
     {
@@ -1186,7 +1188,7 @@ class ReportTest extends TestCase
             $grouped++;
 
             // Everything before the first FROM is the select list, which is
-            // where MariaDB objects. A subquery in the WHERE is fine: it runs
+            // where MariaDB objected. A subquery in the WHERE is fine: it runs
             // per row, before anything is grouped.
             $selectList = substr($lower, 0, strpos($lower, ' from '));
 
@@ -1200,7 +1202,7 @@ class ReportTest extends TestCase
         $this->assertSame(
             [],
             $problems,
-            "These group by while selecting a subquery, which MariaDB refuses:\n  ".implode("\n  ", $problems)
+            "These group by while selecting a subquery, the shape the reports were rebuilt out of:\n  ".implode("\n  ", $problems)
         );
     }
 

@@ -1510,8 +1510,8 @@ class WorkFileModel extends Model
      *  - on a folder none of whose works ever named a vendor, the folder's own
      *    vendor has all of it, dated from the folder.
      *
-     * Nothing correlated: the older test is a derived table joined in, so the
-     * grouping is MariaDB-safe at every level.
+     * Nothing correlated: the older test is a derived table joined in, so
+     * every level of the grouping is over plain columns.
      */
     public static function vendorPerformance(?string $from = null, ?string $to = null)
     {
@@ -3062,10 +3062,10 @@ class WorkFileModel extends Model
          * Every file worked out on its own, before anything is grouped.
          *
          * The outstanding test is a correlated subquery against this file, and
-         * inside an aggregate under a GROUP BY that is something MySQL allows
-         * and MariaDB — which is what the live server runs — refuses. Here
-         * there is no grouping for it to sit under, and the grouping below has
-         * nothing correlated left in it.
+         * inside an aggregate under a GROUP BY that is something MySQL 8.4
+         * allows and MariaDB, which the live server ran when this was written,
+         * refused. Here there is no grouping for it to sit under, and the
+         * grouping below has nothing correlated left in it.
          */
         $each = DB::table('work_file')
             ->selectRaw("$key as group_key")
@@ -3145,8 +3145,9 @@ class WorkFileModel extends Model
      */
     private static function profitByVendor(?string $from, ?string $to)
     {
-        // Ungrouped, each folder alone: the correlated tests sit where
-        // MariaDB allows them. Then named, then grouped over plain columns.
+        // Ungrouped, each folder alone: the correlated tests sit where no
+        // GROUP BY is over them (MariaDB, the server's database then, refused
+        // them under one). Then named, then grouped over plain columns.
         $each = DB::table('work_file')
             ->whereRaw('NOT ('.self::SHARED_HOLDERS.')')
             ->selectRaw(self::SOLE_HOLDER.' as holder_id')
@@ -3464,8 +3465,9 @@ class WorkFileModel extends Model
         /*
          * Every work worked out on its own, before anything is grouped — as
          * profitBy() does each file, for the same reason: the outstanding test
-         * is a correlated subquery, which MariaDB refuses inside an aggregate
-         * under a GROUP BY and MySQL allows.
+         * is a correlated subquery, which MySQL 8.4 allows inside an aggregate
+         * under a GROUP BY and MariaDB, the server's database when this was
+         * written, refused.
          */
         $each = DB::table('work_file_item')
             ->join('work_file', 'work_file.id', '=', 'work_file_item.work_file_id')
@@ -3715,8 +3717,9 @@ class WorkFileModel extends Model
          * Every file worked out on its own, then grouped — as profitBy() does,
          * for its reason: the cost and the outstanding test are correlated
          * subqueries against the file, and inside an aggregate under a GROUP
-         * BY that is something MySQL allows and MariaDB — the live server —
-         * refuses ("work_file.id isn't in GROUP BY"). Found in review.
+         * BY that is something MySQL 8.4 allows and MariaDB, the live server's
+         * database then, refused ("work_file.id isn't in GROUP BY"). Found in
+         * review.
          *
          * What a file has cost is a cost whether or not every price on it is
          * agreed, as the Profit report this chart opens counts it: only the
@@ -4281,8 +4284,8 @@ class WorkFileModel extends Model
 
     /**
      * One row per work, with who holds it: its own vendor — or, on an older
-     * folder, the folder's — and 0 for nobody. Ungrouped: grouped over, it is
-     * MariaDB-safe, having nothing correlated in it.
+     * folder, the folder's — and 0 for nobody. Ungrouped, and with nothing
+     * correlated in it, so whatever groups over it groups over plain columns.
      */
     private static function worksByHolder(bool $openFolders = false)
     {
