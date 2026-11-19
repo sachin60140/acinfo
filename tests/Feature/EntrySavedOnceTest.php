@@ -540,8 +540,8 @@ class EntrySavedOnceTest extends TestCase
      * the same error this puts right, the other way. So a pair either of whose
      * entries has been reversed is left out.
      *
-     * No GROUP BY and nothing inside an aggregate, so MariaDB on the server
-     * takes it as MySQL here does.
+     * No GROUP BY and nothing inside an aggregate: plain SQL, which MySQL 8.4,
+     * the office's database and CI's, runs as it is written.
      */
     private const DOUBLES = <<<'SQL'
         SELECT a.id AS first_entry, b.id AS second_entry, a.party_id, a.entry_type, a.amount, a.txn_date,
