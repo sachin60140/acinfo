@@ -59,7 +59,7 @@ be saved. Mobiles are 10 digits. The rule is
 a page of its own sized with `@page { size: 4in 6in; margin: 0 }`. The details
 are columns on `work_file`, and the setting is `work_type.asks_for`; both came
 with `2026_11_19_000100_let_a_file_carry_its_sticker_details`, and
-[DEPLOY.md](DEPLOY.md#after-particular-migrations) says what that migration
+[DEPLOY.md](DEPLOY.md#after-particular-deploys) says what that migration
 needs on the server. Tests are in `tests/Feature/FileStickerTest.php`.
 
 ---
