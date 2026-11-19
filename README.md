@@ -15,6 +15,44 @@ SQLite does not run. `composer install`, `npm install`, copy `.env.example` to
 runs both on every pull request (`.github/workflows/tests.yml`), but run them
 here before you push.
 
+## File stickers
+
+Every file received can have a 4 x 6 inch sticker, printed on the counter's
+thermal printer and pasted on the folder. It shows:
+
+- the file number and the date it was received;
+- the customer and their mobile;
+- the registration number, large and boxed, as a plate is read;
+- the vehicle owner's mobile;
+- the lender, the financer, or the seller and buyer with their mobiles, when a
+  work on the file asks for them;
+- the works, leaving out cancelled ones, and the file's details.
+
+Anything asked for and not typed prints as a line to write on. It shows no
+amounts and never the vendor.
+
+**Printing it.** After **Receive Files**, a bar offers the stickers for the
+whole batch. Print one again from **Edit File** (Print Sticker), or from the
+link under the file number in the files list. Each opens the print dialog;
+choose the thermal printer with paper **4 x 6 in (100 x 150 mm)**, margins
+**None** and scale **100%**.
+
+**What a file asks for** is a setting on its works' types, not a reading of
+their names: **Work Types**, *When a File Is Received, Also Ask For*. Lender is
+for an HPT, financer for an HPA, seller and buyer for TR, the transfer. Receive
+Files and Edit File show those boxes only for a file whose works ask for them,
+and keep only what is asked for. All of them, and the owner's mobile, may be
+left empty; a mobile that is typed must be 10 digits.
+
+**In the code:** the page is `WorkFileController::stickers()` at
+`admin/file/stickers?ids=…` (`&print=1` opens the dialog), drawing
+`WorkFileModel::sticker()` into `resources/views/admin/work/stickers.blade.php`,
+a page of its own sized with `@page { size: 4in 6in; margin: 0 }`. The details
+are columns on `work_file`, and the setting is `work_type.asks_for`; both came
+with `2026_11_19_000100_let_a_file_carry_its_sticker_details`, and
+[DEPLOY.md](DEPLOY.md#after-particular-migrations) says what that migration
+needs on the server. Tests are in `tests/Feature/FileStickerTest.php`.
+
 ---
 
 Everything below is the stock Laravel readme.
