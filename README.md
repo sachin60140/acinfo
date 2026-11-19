@@ -7,11 +7,13 @@ so the database does not migrate, the assets do not build and the packages in
 `vendor/` do not change unless somebody does it. That list says what to run and
 in what order.
 
-Local setup needs PHP 8.4.1 or newer and MySQL or MariaDB: the queries use
-MySQL's own SQL, which SQLite does not run. `composer install`, `npm install`,
-copy `.env` and point it at the database, then `php artisan migrate`. Tests are
-`php artisan test` and `npx vitest run`; CI runs both on every pull request
-(`.github/workflows/tests.yml`), but run them here before you push.
+Local setup needs PHP 8.4.1 or newer and MySQL 8.4, the database the office
+runs and CI tests on; use nothing else. The queries use MySQL's own SQL, which
+SQLite does not run. `composer install`, `npm install`, copy `.env.example` to
+`.env` and fill in the database's name and password, then
+`php artisan migrate`. Tests are `php artisan test` and `npx vitest run`; CI
+runs both on every pull request (`.github/workflows/tests.yml`), but run them
+here before you push.
 
 ---
 
