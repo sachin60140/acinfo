@@ -35,6 +35,19 @@
     </div>
 @endif
 
+{{-- Files just received: a sticker for each, before they leave the counter. --}}
+@if (is_array(session('stickers')) && ! empty(session('stickers')['url']))
+    <div class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2 sticker-offer">
+        <span>
+            {{ session('stickers')['count'] === 1 ? 'Its sticker' : 'A sticker for each of the '.session('stickers')['count'].' files' }},
+            4x6 inch, for the thermal printer.
+        </span>
+        <a href="{{ session('stickers')['url'] }}" class="btn btn-sm btn-primary" target="_blank" rel="noopener">
+            <i class="bi bi-printer me-1"></i> Print {{ session('stickers')['count'] === 1 ? 'sticker' : 'stickers' }}
+        </a>
+    </div>
+@endif
+
 @if (Session::has('error'))
     <div class="alert alert-danger bg-danger text-light border-0 alert-dismissible fade show" role="alert">
         {{ Session::get('error') }}

@@ -149,6 +149,8 @@ Route::group(['middleware' => 'admin'], function () {
 
     // The three moments in a file's life, each on its own screen.
     Route::match(['get', 'post'], 'admin/file/receive', [WorkFileController::class, 'receive'])->name('workfile.receive');
+    // A 4x6 inch sticker for each file asked for, for the thermal printer.
+    Route::get('admin/file/stickers', [WorkFileController::class, 'stickers'])->name('workfile.stickers');
 
     // Step 2: papers checked. The queue and the counter's Mark received, then
     // one file's checklist.

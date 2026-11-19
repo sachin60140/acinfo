@@ -285,6 +285,7 @@
                 "partly_approved": "string",
                 "under_verification": "string"
             },
+            "stickerUrl": "string",
             "timeline": {
                 "list_of": {
                     "date": "string",
@@ -300,14 +301,21 @@
             "today": "string",
             "typed": "null",
             "values": {
+                "buyer_mobile": "string",
+                "buyer_name": "string",
                 "customer_amount": "string",
                 "customer_id": "number",
                 "description": "string",
                 "file_no": "string",
+                "financer_name": "string",
                 "in_house": "bool",
+                "lender_name": "string",
+                "owner_mobile": "string",
                 "registration_no": "string",
                 "remarks": "null",
                 "returned_amount": "null",
+                "seller_mobile": "string",
+                "seller_name": "string",
                 "status": "string",
                 "vendor_amount": "string",
                 "vendor_id": "number",
@@ -324,8 +332,10 @@
             "wasStatus": "string",
             "workTypes": {
                 "list_of": {
+                    "asks_for": "null",
                     "id": "number",
                     "label": "string",
+                    "name": "string",
                     "rate": "null"
                 }
             }
@@ -469,9 +479,16 @@
             "historyUrl": "string",
             "oldRows": {
                 "list_of": {
+                    "buyer_mobile": "string",
+                    "buyer_name": "string",
                     "description": "string",
                     "duplicate_ok": "bool",
+                    "financer_name": "string",
+                    "lender_name": "string",
+                    "owner_mobile": "string",
                     "registration_no": "string",
+                    "seller_mobile": "string",
+                    "seller_name": "string",
                     "works": {
                         "list_of": {
                             "amount": "string",
@@ -483,6 +500,7 @@
             "ratesUrl": "string",
             "workTypes": {
                 "list_of": {
+                    "asks_for": "null",
                     "default_rate": "null",
                     "id": "number",
                     "name": "string"
@@ -651,6 +669,8 @@
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
+                    "sticker": "string",
+                    "sticker_url": "string",
                     "vendor": "string",
                     "vendor_url": "null",
                     "work_type": "string",
@@ -731,6 +751,8 @@
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
+                    "sticker": "string",
+                    "sticker_url": "string",
                     "vendor": "string",
                     "vendor_url": "null",
                     "work_type": "string",
@@ -811,6 +833,8 @@
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
+                    "sticker": "string",
+                    "sticker_url": "string",
                     "vendor": "string",
                     "vendor_url": "null",
                     "work_type": "string",
@@ -891,6 +915,8 @@
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
+                    "sticker": "string",
+                    "sticker_url": "string",
                     "vendor": "string",
                     "vendor_url": "null",
                     "work_type": "string",
@@ -1014,6 +1040,8 @@
                     "screenshot_url": "null",
                     "status": "string",
                     "status_key": "string",
+                    "sticker": "string",
+                    "sticker_url": "string",
                     "vendor": "string",
                     "vendor_url": "string",
                     "work_type": "string",
@@ -1835,11 +1863,17 @@
     "work-types": {
         "vue-work-types": {
             "action": "string",
+            "asksOptions": {
+                "financer": "string",
+                "lender": "string",
+                "parties": "string"
+            },
             "cancelUrl": "string",
             "csrf": "string",
             "editingId": "null",
             "filesUrl": "string",
             "initial": {
+                "asks_for": "string",
                 "default_rate": "string",
                 "default_vendor_rate": "string",
                 "is_active": "bool",
@@ -1847,6 +1881,7 @@
             },
             "types": {
                 "list_of": {
+                    "asks_for": "null",
                     "billed_total": "number",
                     "default_rate": "null",
                     "default_vendor_rate": "null",

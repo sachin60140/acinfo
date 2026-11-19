@@ -29,6 +29,8 @@ const props = defineProps({
     action: { type: String, required: true },
     csrf: { type: String, required: true },
     indexUrl: { type: String, required: true },
+    // This file's sticker, to print or print again; none until it exists.
+    stickerUrl: { type: String, default: null },
     isEdit: { type: Boolean, default: false },
     statuses: { type: Object, default: () => ({}) },
     // What the edit page was drawn from, so a save can tell the file changed
@@ -127,6 +129,14 @@ const form = reactive({
     work_type_id: props.values.work_type_id ?? '',
     registration_no: props.values.registration_no ?? '',
     description: props.values.description ?? '',
+    // For the file's sticker: the owner's mobile, and what the works ask for.
+    owner_mobile: props.values.owner_mobile ?? '',
+    lender_name: props.values.lender_name ?? '',
+    financer_name: props.values.financer_name ?? '',
+    seller_name: props.values.seller_name ?? '',
+    seller_mobile: props.values.seller_mobile ?? '',
+    buyer_name: props.values.buyer_name ?? '',
+    buyer_mobile: props.values.buyer_mobile ?? '',
     customer_id: props.values.customer_id ?? '',
     customer_amount: props.values.customer_amount ?? '',
     vendor_id: props.values.vendor_id ?? '',
@@ -427,6 +437,58 @@ function toggleRemove(work) {
 // What the file is left for, so the last work cannot be taken off and the
 // totals above say what will actually be charged.
 const keeping = computed(() => works.filter((work) => ! going(work)));
+
+/*
+ * What the file's works ask for, for its sticker: an HPT its lender, an HPA
+ * its financer, a TO its seller and buyer (asks_for, on each work type). The
+ * works as they will stand once saved — the ones staying, not cancelled, and
+ * the ones being added — which is what the server asks them of too.
+ */
+const askedFor = computed(() => {
+    const ids = [
+        ...(multiWork.value
+            ? keeping.value.filter((work) => work.status !== props.cancelledKey).map((work) => work.work_type_id)
+            : [form.work_type_id]),
+        ...newWorks.map((work) => work.work_type_id),
+    ];
+
+    const asked = {};
+
+    for (const id of ids) {
+        const type = props.workTypes.find((one) => String(one.id) === String(id));
+
+        if (type?.asks_for) {
+            asked[type.asks_for] = [...new Set([...(asked[type.asks_for] ?? []), type.name])];
+        }
+    }
+
+    return Object.fromEntries(Object.entries(asked).map(([kind, names]) => [kind, names.join(', ')]));
+});
+
+// The boxes for them, in the order the sticker prints them.
+const detailBoxes = computed(() => {
+    const asked = askedFor.value;
+    const boxes = [];
+
+    if (asked.lender) {
+        boxes.push({ name: 'lender_name', label: 'Lender', for: asked.lender, placeholder: 'Bank or finance company' });
+    }
+
+    if (asked.financer) {
+        boxes.push({ name: 'financer_name', label: 'Financer', for: asked.financer, placeholder: 'Bank or finance company' });
+    }
+
+    if (asked.parties) {
+        boxes.push(
+            { name: 'seller_name', label: 'Seller', for: asked.parties, placeholder: 'Name' },
+            { name: 'seller_mobile', label: "Seller's Mobile", mobile: true },
+            { name: 'buyer_name', label: 'Buyer', for: asked.parties, placeholder: 'Name' },
+            { name: 'buyer_mobile', label: "Buyer's Mobile", mobile: true },
+        );
+    }
+
+    return boxes;
+});
 
 /*
  * What the office paid out on this file.
@@ -886,9 +948,16 @@ onMounted(() => {
             <div class="ui-card">
                 <div class="ui-card__head">
                     <h2 class="ui-card__title">File Details</h2>
-                    <a :href="indexUrl" class="ui-btn ui-btn--sm">
-                        <i class="bi bi-list-ul"></i> All Files
-                    </a>
+                    <div class="wf-head-actions">
+                        <!-- In a tab of its own, which prints and is closed;
+                             this form, and anything typed on it, stays. -->
+                        <a v-if="stickerUrl" :href="stickerUrl" class="ui-btn ui-btn--sm" target="_blank" rel="noopener">
+                            <i class="bi bi-printer"></i> Print Sticker
+                        </a>
+                        <a :href="indexUrl" class="ui-btn ui-btn--sm">
+                            <i class="bi bi-list-ul"></i> All Files
+                        </a>
+                    </div>
                 </div>
 
                 <div class="ui-card__body">
@@ -1112,6 +1181,55 @@ onMounted(() => {
                             <div class="ui-hint">Shown next to the work type on the customer's statement. Never on the vendor's.</div>
                             <div v-if="errors.description" class="ui-hint ui-hint--error">
                                 {{ errors.description }}
+                            </div>
+                        </div>
+
+                        <div class="ui-field wf-3">
+                            <label class="ui-label" for="owner_mobile">Owner's Mobile</label>
+                            <div class="wf-affix">
+                                <span class="wf-affix__tag"><i class="bi bi-phone"></i></span>
+                                <input
+                                    id="owner_mobile"
+                                    type="tel"
+                                    inputmode="numeric"
+                                    name="owner_mobile"
+                                    class="ui-input"
+                                    :class="{ 'ui-input--invalid': errors.owner_mobile }"
+                                    v-model="form.owner_mobile"
+                                    maxlength="10"
+                                    pattern="[0-9]{10}"
+                                    title="10 digits"
+                                    autocomplete="off"
+                                    placeholder="10 digits">
+                            </div>
+                            <div class="ui-hint">The vehicle owner's, for the file's sticker.</div>
+                            <div v-if="errors.owner_mobile" class="ui-hint ui-hint--error">
+                                {{ errors.owner_mobile }}
+                            </div>
+                        </div>
+
+                        <!-- Who the works are about, for the sticker: shown while
+                             a work on the file asks for it (see askedFor). -->
+                        <div v-for="box in detailBoxes" :key="box.name" class="ui-field wf-3">
+                            <label class="ui-label" :for="box.name">
+                                {{ box.label }}
+                                <span v-if="box.for" class="wf-asks__for">for {{ box.for }}</span>
+                            </label>
+                            <input
+                                :id="box.name"
+                                :type="box.mobile ? 'tel' : 'text'"
+                                :inputmode="box.mobile ? 'numeric' : null"
+                                :name="box.name"
+                                class="ui-input"
+                                :class="{ 'ui-input--invalid': errors[box.name] }"
+                                v-model="form[box.name]"
+                                :maxlength="box.mobile ? 10 : 120"
+                                :pattern="box.mobile ? '[0-9]{10}' : null"
+                                :title="box.mobile ? '10 digits' : null"
+                                autocomplete="off"
+                                :placeholder="box.mobile ? '10 digits' : box.placeholder">
+                            <div v-if="errors[box.name]" class="ui-hint ui-hint--error">
+                                {{ errors[box.name] }}
                             </div>
                         </div>
 
@@ -2032,6 +2150,20 @@ onMounted(() => {
     display: grid;
     gap: var(--s-4);
     grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+
+/* The header's buttons, side by side and wrapping when the card is narrow. */
+.wf-head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    justify-content: flex-end;
+}
+
+.wf-asks__for {
+    color: var(--n-500);
+    font-weight: 600;
+    text-transform: none;
 }
 
 .wf-side {

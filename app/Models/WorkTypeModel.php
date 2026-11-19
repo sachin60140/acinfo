@@ -12,6 +12,24 @@ class WorkTypeModel extends Model
 
     use HasFactory;
 
+    /*
+     * What a work of this type asks for when a file is received, for the file
+     * and its sticker: an HPT names its lender, an HPA its financer, a TO its
+     * seller and buyer. Set on the Work Types screen; null asks for nothing.
+     */
+    public const ASKS_LENDER = 'lender';
+
+    public const ASKS_FINANCER = 'financer';
+
+    public const ASKS_PARTIES = 'parties';
+
+    /** Each choice as the Work Types screen offers it. */
+    public const ASKS = [
+        self::ASKS_LENDER => 'Lender (as for HPT)',
+        self::ASKS_FINANCER => 'Financer (as for HPA)',
+        self::ASKS_PARTIES => 'Seller and buyer (as for TO)',
+    ];
+
     /**
      * Work types with how much work has been booked against each.
      *
@@ -41,12 +59,13 @@ class WorkTypeModel extends Model
                 'work_type.name',
                 'work_type.default_rate',
                 'work_type.default_vendor_rate',
+                'work_type.asks_for',
                 'work_type.is_active',
                 DB::raw('COUNT(work_file_item.id) as file_count'),
                 DB::raw('COALESCE(SUM(work_file_item.customer_amount), 0) as billed_total')
             )
             // ONLY_FULL_GROUP_BY: every non-aggregate column has to be listed.
-            ->groupBy('work_type.id', 'work_type.name', 'work_type.default_rate', 'work_type.default_vendor_rate', 'work_type.is_active')
+            ->groupBy('work_type.id', 'work_type.name', 'work_type.default_rate', 'work_type.default_vendor_rate', 'work_type.asks_for', 'work_type.is_active')
             ->orderBy('work_type.name', 'asc')
             ->get();
     }
@@ -70,7 +89,7 @@ class WorkTypeModel extends Model
                     $q->orWhereIn('id', (array) $includeId);
                 }
             })
-            ->select('id', 'name', 'default_rate', 'default_vendor_rate', 'is_active')
+            ->select('id', 'name', 'default_rate', 'default_vendor_rate', 'asks_for', 'is_active')
             ->orderBy('name', 'asc')
             ->get();
     }

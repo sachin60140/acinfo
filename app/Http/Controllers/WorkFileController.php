@@ -316,6 +316,10 @@ class WorkFileController extends Controller
 
                 'action' => 'Edit',
 
+                // Its sticker, under the file number, to print again.
+                'sticker' => 'Print sticker',
+                'sticker_url' => route('workfile.stickers', ['ids' => $f->id, 'print' => 1]),
+
                 // Greys the whole row. A closed file is still worth seeing but is
                 // no longer in play, and should not read like live work.
                 'row_class' => $isClosed ? 'is-closed' : '',
@@ -369,7 +373,10 @@ class WorkFileController extends Controller
                 ['key' => 'detail', 'label' => 'Details'],
             ],
             'columns' => [
-                ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
+                // With the file's sticker under its number: printed when the
+                // file came in, and again from here when one is lost or spoilt.
+                ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url',
+                    'sub' => 'sticker', 'subLinkTo' => 'sticker_url', 'subNewTab' => true],
                 ['key' => 'registration_no', 'label' => 'Vehicle'],
                 // Shown dd-mm-yyyy, sorted on the raw Y-m-d each row also carries,
                 // so oldest-first and newest-first both mean what they say.
@@ -518,11 +525,15 @@ class WorkFileController extends Controller
                 'remarks' => 'nullable|string|max:255',
                 // The page's own token, so one page saves once; see receivedBefore().
                 'once' => 'nullable|string|max:64',
+                // The owner's mobile, and the lender, financer, seller and buyer
+                // the works ask for: for the file's sticker.
+                ...WorkFileModel::detailRules('rows.*.'),
             ], [
                 'rows.required' => 'Add at least one file.',
                 'rows.*.works.required' => 'Every file needs at least one work.',
                 'rows.*.works.*.work_type_id.required' => 'Every work needs a type.',
                 'rows.*.works.*.amount.required' => 'Every work needs an amount.',
+                ...WorkFileModel::detailMessages('rows.*.'),
             ]);
 
             /*
@@ -664,6 +675,7 @@ class WorkFileController extends Controller
                     $file->status = WorkFileModel::IN_OFFICE;
                     $file->description = $row['description'] ?? null;
                     $file->remarks = $req->remarks;
+                    $file->takeDetails($row, array_column($works, 'work_type_id'));
                     $file->save();
 
                     // Derived from the id the insert just produced, still inside the
@@ -738,7 +750,13 @@ class WorkFileController extends Controller
              */
             return redirect()->route('workfile.index')
                 ->with('success', count($saved).' '.Str::plural('file', count($saved)).' received: '.$numbers
-                    .($outcome['again'] ? '. Receive Files was pressed twice, so the second press saved nothing more.' : ''));
+                    .($outcome['again'] ? '. Receive Files was pressed twice, so the second press saved nothing more.' : ''))
+                // A sticker for each, to paste on the files before they leave
+                // the counter; see stickers().
+                ->with('stickers', [
+                    'url' => self::stickersUrl($saved, true),
+                    'count' => count($saved),
+                ]);
         }
 
         $workTypes = WorkTypeModel::selectList();
@@ -747,12 +765,15 @@ class WorkFileController extends Controller
         // On a validation failure the user gets their rows back, not a blank form.
         // A bounced submission gets its rows back, works and all.
         $oldRows = old('rows', [['registration_no' => '', 'description' => '', 'works' => [['work_type_id' => '', 'amount' => '']]]]);
+        $noDetails = array_fill_keys(WorkFileModel::DETAIL_COLUMNS, '');
 
         $props = [
             'workTypes' => $workTypes->map(fn ($type) => [
                 'id' => $type->id,
                 'name' => $type->name,
                 'default_rate' => $type->default_rate,
+                // What a work of this type asks for: lender, financer, parties.
+                'asks_for' => $type->asks_for,
             ])->values(),
             'historyUrl' => route('api.workfile.history'),
             // What this customer has paid before, looked up when one is chosen.
@@ -761,6 +782,8 @@ class WorkFileController extends Controller
             'oldRows' => collect($oldRows)->map(fn ($row) => [
                 'registration_no' => $row['registration_no'] ?? '',
                 'description' => $row['description'] ?? '',
+                // The sticker's details, as they were typed.
+                ...array_map(fn ($value) => (string) $value, array_intersect_key($row, $noDetails) + $noDetails),
                 'works' => collect($row['works'] ?? [[]])->map(fn ($work) => [
                     'work_type_id' => $work['work_type_id'] ?? '',
                     'amount' => $work['amount'] ?? '',
@@ -788,6 +811,51 @@ class WorkFileController extends Controller
              */
             'once' => Str::random(40),
         ])->toResponse($req);
+    }
+
+    /**
+     * A sticker for each file asked for: 4 inches wide and 6 long, for the
+     * thermal printer at the counter, to paste on the folder.
+     *
+     * Asked for by the owner on 2026-11-19, to print as files are received.
+     * One page a sticker, sized to the label (@page in the view), so the
+     * printer's own driver needs no margins and no scaling. ?print=1 opens the
+     * print dialog at once, as every button that leads here asks; the page
+     * has its own Print button for another copy.
+     *
+     * Fifty at most, a batch of Receive Files being fifty files at most.
+     */
+    public function stickers(Request $req)
+    {
+        $ids = collect(explode(',', (string) $req->query('ids')))
+            ->map(fn ($id) => (int) trim($id))
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->take(50)
+            ->values();
+
+        abort_if($ids->isEmpty(), 404);
+
+        $files = WorkFileModel::with(['customer', 'workType', 'items.workType'])
+            ->whereIn('id', $ids)
+            ->orderBy('id')
+            ->get();
+
+        abort_if($files->isEmpty(), 404);
+
+        return view('admin.work.stickers', [
+            'stickers' => $files->map(fn (WorkFileModel $file) => $file->sticker())->all(),
+            'autoPrint' => $req->boolean('print'),
+        ]);
+    }
+
+    /** Where the stickers for these files are printed. */
+    private static function stickersUrl(array $files, bool $print = false): string
+    {
+        return route('workfile.stickers', array_filter([
+            'ids' => implode(',', array_map(fn ($file) => (int) $file->id, $files)),
+            'print' => $print ? 1 : null,
+        ]));
     }
 
     /**
@@ -3294,7 +3362,12 @@ class WorkFileController extends Controller
                 // Documents being taken off the file, by id.
                 'remove_documents' => 'nullable|array',
                 'remove_documents.*' => 'integer',
+
+                // The owner's mobile, and the lender, financer, seller and buyer
+                // the works ask for: for the file's sticker.
+                ...WorkFileModel::detailRules(),
             ], [
+                ...WorkFileModel::detailMessages(),
                 'vendor_id.required_with' => 'Select the vendor this file was given to before entering a vendor amount.',
                 'items.*.work_type_id.required' => 'Every work on the file needs a type.',
                 'items.*.customer_amount.required' => 'Every work on the file needs a charge.',
@@ -3938,6 +4011,17 @@ class WorkFileController extends Controller
                     $file->save();
                 }
 
+                /*
+                 * The sticker's details, asked of the works as they stand now:
+                 * a TO added on this save asks for its seller and buyer, and
+                 * the boxes for them were on the form when it was.
+                 */
+                $file->takeDetails(
+                    $req->all(),
+                    $file->items()->where('status', '!=', WorkFileModel::CANCELLED)->pluck('work_type_id')
+                );
+                $file->save();
+
                 $file->syncLedger();
 
                 // Only a real move earns a timeline entry here; the edit screen is
@@ -4023,6 +4107,8 @@ class WorkFileController extends Controller
             'action' => $action,
             'csrf' => csrf_token(),
             'indexUrl' => route('workfile.index'),
+            // This file's sticker, to print or print again.
+            'stickerUrl' => $isEdit ? self::stickersUrl([$file], true) : null,
             'isEdit' => $isEdit,
             'statuses' => $statuses,
 
@@ -4048,6 +4134,9 @@ class WorkFileController extends Controller
                     .($wt->default_rate !== null ? ' — '.number_format((float) $wt->default_rate, 2, '.', ',') : '')
                     .($wt->is_active ? '' : ' (retired)'),
                 'rate' => $wt->default_rate,
+                'name' => $wt->name,
+                // What a work of this type asks for: lender, financer, parties.
+                'asks_for' => $wt->asks_for,
             ])->values(),
             'customers' => $customers->map(fn ($c) => [
                 'id' => $c->id,
@@ -4067,6 +4156,11 @@ class WorkFileController extends Controller
                 'work_type_id' => old('work_type_id', $isEdit ? $file->work_type_id : ''),
                 'registration_no' => old('registration_no', $isEdit ? $file->registration_no : ''),
                 'description' => old('description', $isEdit ? $file->description : ''),
+                // The sticker's details; which of them the form shows is the
+                // works' to decide (asks_for, on each work type).
+                ...collect(WorkFileModel::DETAIL_COLUMNS)->mapWithKeys(fn ($column) => [
+                    $column => (string) old($column, $isEdit ? ($file->{$column} ?? '') : ''),
+                ])->all(),
                 'customer_id' => old('customer_id', $isEdit ? $file->customer_id : ''),
                 'customer_amount' => old('customer_amount', $isEdit ? $file->customer_amount : ''),
                 'vendor_id' => old('vendor_id', $isEdit ? $file->vendor_id : ''),
