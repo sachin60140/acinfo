@@ -143,6 +143,40 @@ are missing, and backfills only touch rows that have not been filled in.
 What a deploy needs besides the steps above, newest first. Some come with a
 migration; some only change what a screen asks for.
 
+### Return Files: a search box, and files charged nothing
+
+Brought in by pull requests 85 and 86 (November 2026). No migration and no
+packages: the pull is the whole deploy, and nothing changes in what the
+database stores.
+
+- **Return to Customer** and **Return from Vendor** each have a search box
+  beside **Select all**, the same as Give to Vendor's. It finds a file by its
+  number, vehicle, customer, work or details, and on Return from Vendor by the
+  vendor too. Every word typed narrows the list.
+- **Return to Customer** now takes back a file charged nothing. The refund box
+  stays blank and says *Nothing was charged, so nothing is refunded*; it used
+  to fill in 0.00 and then refuse it. A 0 typed for a file that was charged is
+  still refused: blank refunds all of it.
+
+**Tell the counter.** The search only narrows what is on screen. A file ticked
+before searching still goes back even when the search hides it, and the footer
+says how many are hidden that way; **Select all** ticks only the files shown.
+Clear the search to see everything ticked before pressing the button.
+
+**Check it took.** Open **Return to Customer**: a search box sits beside
+**Select all**, and typing a customer's name leaves only their files. Then
+**Return from Vendor**, the same with a vendor's name. If there is no box,
+reload the page once; if there is still none, the pull did not bring this
+change, and this prints `0`:
+
+```bash
+grep -c 'Search files you can return' resources/js/components/CustomerReturn.vue
+```
+
+**Going back** needs only the code: `git reset --hard ORIG_HEAD`. Files charged
+nothing that went back in the meantime stay returned; only the screens go back
+to how they were.
+
 ### Receive Files asks for the sticker details
 
 Brought in by pull request 83 (November 2026). No migration and no packages:
