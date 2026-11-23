@@ -143,6 +143,48 @@ are missing, and backfills only touch rows that have not been filled in.
 What a deploy needs besides the steps above, newest first. Some come with a
 migration; some only change what a screen asks for.
 
+### Paper Returns report
+
+Brought in by pull request 87 (November 2026). No migration and no packages:
+the pull is the whole deploy. It adds **Paper Returns** under **Reports** in the
+sidebar: papers returned to customers, and papers vendors handed back, with the
+Customer-wise / Vendor-wise switch, one customer or vendor to narrow it to, and
+the days the papers went back. README's
+[Paper Returns report](README.md#paper-returns-report) says what every column
+shows.
+
+It only reads what is already stored, so every return made before the deploy is
+on it from the first day, back to the start of the books. Nothing it shows is
+new data.
+
+**Tell the office.** It is under Reports, beside Approval Time. Customer-wise,
+narrowed to one customer, is safe to print for them: it never names a vendor,
+though unnarrowed it lists every customer's files. Vendor-wise names the
+customer on every row, so it is the office's own and not one to send a vendor.
+
+**Check it took.** Open **Reports → Paper Returns**, then switch to
+**Vendor-wise**; both should list the returns made so far. Pick one customer
+and one file on it, and check its **Refunded** against that file's
+*papers returned* line on the customer's statement: they are the same figure.
+If the menu has no Paper Returns, the pull did not bring this change, and this
+prints `0`:
+
+```bash
+grep -c "report.paperreturns" routes/web.php
+```
+
+**What may look odd, and is not:**
+
+- A file charged nothing shows 0.00 throughout. It is listed because the
+  papers went back.
+- A **Reason** can be blank for a return made before 15 August 2026, when the
+  files' history began: the reason is read from it.
+- A file taken off Paper Returned, or cancelled, is not on the report, though it
+  went back once. Its refund left the statement at the same time.
+
+**Going back** needs only the code: `git reset --hard ORIG_HEAD`. Nothing in the
+database changed, and the report goes with the pull.
+
 ### Return Files: a search box, and files charged nothing
 
 Brought in by pull requests 85 and 86 (November 2026). No migration and no

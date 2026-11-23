@@ -134,6 +134,9 @@ also match a date.
 - **Select all** ticks, and unticks, only the files shown.
 - The search box posts nothing, and when nothing matches the screen says so.
 
+Afterwards, every return made on these two screens is listed in the
+[Paper Returns report](#paper-returns-report).
+
 **In the code:** `resources/js/components/CustomerReturn.vue` and
 `VendorReturn.vue` search the same way `GiveToVendor.vue` does. `matches()`
 reads each row, and rows that do not match are hidden with `v-show`, never
@@ -143,6 +146,71 @@ a file ticked earlier would silently stop going back. The server is
 never reaches it. Tests are in `resources/js/customer-return.test.js` and
 `resources/js/vendor-return.test.js`, and the refunds in
 `tests/Feature/WorkFileTest.php`.
+
+## Paper Returns report
+
+**Reports → Paper Returns** lists the papers that went back, either way, over a
+period. It has the **Customer-wise / Vendor-wise** switch the other reports
+have, a box to narrow it to one customer or vendor, and **Returned from / to**
+dates: the day the papers went back, whatever day the file came in.
+
+Rows are banded by customer or vendor, the one with the latest return on top
+and their latest return first. Each band has its sums under it, and everyone's
+are at the foot. Copy, CSV, Excel, PDF and Print are on the grid, as on the
+other reports.
+
+**Customer-wise**, a row for each file returned to its customer:
+
+| Column | Shows |
+| --- | --- |
+| File No. | the file, and opens it |
+| Vehicle, Work | the vehicle and the works on the file |
+| Received, Returned | the day the file came in, and the day it went back |
+| Charged | what the customer was charged for the file |
+| Refunded | what their statement was credited when it went back |
+| Kept | Charged less Refunded: what the office kept, for fees paid or a trip made |
+| Reason | what was typed on Return to Customer |
+
+**Vendor-wise**, a row for each vendor's work handed back, one per vendor per
+file:
+
+| Column | Shows |
+| --- | --- |
+| File No. | the file, and opens it |
+| Vehicle | the vehicle |
+| Work | the work that came back, with *Still with them: …* under it when the vendor holds more of that file (its own column in an export) |
+| Customer | whose file it is |
+| Given On, Returned | the day the work went out to the vendor, and the day the last of it came back |
+| Booked | what the vendor's statement was credited for that work |
+| Reversed | what was taken back off it |
+| Reason | what was typed on Return from Vendor, with only this vendor's part of the line where two were taken back together |
+
+**What it lists, and what it leaves out:**
+
+- A file charged nothing, and work given out at nothing, are listed at 0.00:
+  the papers went back, which is what the report is for.
+- A file shared between two vendors is listed once for each.
+- A file taken off Paper Returned is not listed (its refund leaves the
+  customer's statement with it), and nor is a cancelled file, whose lines are
+  withdrawn from every statement.
+- Customer-wise never names a vendor, by the owner's rule. Vendor-wise names the
+  customer, as Approval Time does, so it is the office's report and not one to
+  send a vendor.
+
+**The figures are the statements' own.** Refunded is
+`WorkFileModel::refundToCustomer()`. Booked and Reversed are `vendorLines()`,
+which writes each vendor's statement and which `files:audit` checks the ledger
+against; an older folder (from before works carried a vendor) is read off the
+folder, as `vendorLines()` reads it. So the report and a statement cannot
+disagree, and if they ever seem to, the file's lines on that statement are the
+place to look.
+
+**In the code:** `ReportController::paperReturns()`, with
+`returnedToCustomers()` and `returnedByVendors()` reading each side and
+`ownClause()` cutting a two-vendor history line to one vendor's part. The page
+is `resources/views/admin/reports/paper-returns.blade.php`, drawn by DataGrid
+(`vue-paper-returns` in `resources/js/mounts.js`). Tests are in
+`tests/Feature/PaperReturnsReportTest.php`.
 
 ---
 

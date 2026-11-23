@@ -97,6 +97,7 @@
               ['label' => 'Vendor Report', 'icon' => 'bi-truck', 'href' => route('report.vendors'), 'active' => $req->routeIs('report.vendors')],
               ['label' => 'Vendor Payments', 'icon' => 'bi-wallet2', 'href' => route('report.payable'), 'active' => $req->routeIs('report.payable')],
               ['label' => 'Approval Time', 'icon' => 'bi-stopwatch', 'href' => route('report.approvaltime'), 'active' => $req->routeIs('report.approvaltime')],
+              ['label' => 'Paper Returns', 'icon' => 'bi-arrow-return-left', 'href' => route('report.paperreturns'), 'active' => $req->routeIs('report.paperreturns')],
               ['label' => 'Collection List', 'icon' => 'bi-telephone-outbound', 'href' => route('report.collection'), 'active' => $req->routeIs('report.collection')],
               ['label' => 'Not Yet Collected', 'icon' => 'bi-hourglass-split', 'href' => route('report.uncollected'), 'active' => $req->routeIs('report.uncollected')],
           ],
