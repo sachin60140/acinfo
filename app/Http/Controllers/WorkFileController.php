@@ -1708,7 +1708,9 @@ class WorkFileController extends Controller
                 'files' => 'required|array|min:1',
                 'files.*' => 'integer',
                 'amounts' => 'nullable|array',
-                'amounts.*' => 'nullable|numeric|gt:0|max:99999999',
+                // Zero passes here and is judged per file below: it is all of
+                // a file charged nothing, and no refund at all of one charged.
+                'amounts.*' => 'nullable|numeric|gte:0|max:99999999',
                 // Money moves back, so it has to say why.
                 'remark' => 'required|string|max:200',
             ], [
@@ -1716,8 +1718,31 @@ class WorkFileController extends Controller
                 'remark.required' => 'Returning a file changes the customer\'s balance, so it needs a reason.',
             ]);
 
-            $amounts = $req->input('amounts', []);
+            $amounts = (array) ($req->input('amounts') ?? []);
             $ticked = WorkFileModel::whereIn('id', $req->input('files'))->get();
+
+            /*
+             * A zero typed for a file that was charged is a rejected batch, not
+             * a nil refund, as before. For a file charged nothing it is all of
+             * it, and refusing it there left such a file with no way back to
+             * its customer: the screen filled in 0.00 and then refused it
+             * (reported 2026-11-23).
+             */
+            $nilRefund = $ticked
+                ->filter(function ($file) use ($amounts) {
+                    $amount = $amounts[$file->id] ?? null;
+
+                    return $amount !== null && $amount !== ''
+                        && (float) $amount === 0.0 && (float) $file->customer_amount > 0;
+                })
+                ->pluck('file_no');
+
+            if ($nilRefund->isNotEmpty()) {
+                return back()->withInput()->with(
+                    'error',
+                    'A refund must be more than zero; leave it blank to refund all of the charge. Check: '.$nilRefund->implode(', ')
+                );
+            }
 
             $overRefunded = $ticked
                 ->filter(function ($file) use ($amounts) {

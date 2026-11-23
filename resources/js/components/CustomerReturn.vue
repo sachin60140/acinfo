@@ -47,9 +47,11 @@ const remark = ref(props.oldRemark ?? '');
 
 const typed = (row) => String(row.amount).trim();
 
+const charged = (row) => Number(row.customer_amount) || 0;
+
 /** What this row credits: what was typed, or the whole charge when left blank. */
 const refundOf = (row) =>
-    typed(row) === '' ? Number(row.customer_amount) || 0 : Number(typed(row)) || 0;
+    typed(row) === '' ? charged(row) : Number(typed(row)) || 0;
 
 const chosen = computed(() => rows.filter((row) => row.picked));
 const total = computed(() => chosen.value.reduce((sum, row) => sum + refundOf(row), 0));
@@ -62,8 +64,21 @@ const somePicked = computed(() => chosen.value.length > 0);
 const overRefunded = (row) =>
     row.picked && typed(row) !== '' && Number(typed(row)) > Number(row.customer_amount);
 
-// 'nullable|numeric|gt:0' — a zero or a minus is a rejected batch, not a nil refund.
-const notPositive = (row) => row.picked && typed(row) !== '' && !(Number(typed(row)) > 0);
+/*
+ * A zero or a minus on a file that was charged is a rejected batch, not a nil
+ * refund. A file charged nothing refunds nothing, and a 0 there is all of it:
+ * refusing it once left such a file with no way back to its customer (reported
+ * 2026-11-23). The server reads both the same way; see customerReturn().
+ */
+const notPositive = (row) => {
+    if (!row.picked || typed(row) === '') {
+        return false;
+    }
+
+    const value = Number(typed(row));
+
+    return !(value > 0) && !(value === 0 && charged(row) === 0);
+};
 
 const invalid = (row) => overRefunded(row) || notPositive(row);
 
@@ -113,8 +128,10 @@ const summary = computed(() => {
  * make the box impossible to clear or edit.
  */
 function prefill(row) {
-    if (row.picked && typed(row) === '') {
-        row.amount = Number(row.customer_amount).toFixed(2);
+    // Nothing charged, nothing to show: a 0.00 filled in reads as a figure
+    // typed, where blank says plainly that all of nothing goes back.
+    if (row.picked && typed(row) === '' && charged(row) > 0) {
+        row.amount = charged(row).toFixed(2);
     }
 }
 
@@ -347,9 +364,12 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                                 <!-- Disabled rather than hidden: a disabled input posts
                                      nothing, so an amount left on an unticked row cannot
                                      reach the server. -->
+                                <!-- A file charged nothing may say 0, or the browser
+                                     refuses the box itself: its least would be above
+                                     its most. -->
                                 <input
                                     type="number"
-                                    min="0.01"
+                                    :min="charged(row) > 0 ? 0.01 : 0"
                                     step="0.01"
                                     :max="row.customer_amount"
                                     class="ui-input ui-input--amount"
@@ -365,6 +385,9 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                                 </div>
                                 <div v-else-if="notPositive(row)" class="ui-hint ui-hint--error">
                                     Must be more than zero
+                                </div>
+                                <div v-else-if="row.picked && charged(row) === 0" class="ui-hint">
+                                    Nothing was charged, so nothing is refunded
                                 </div>
                                 <div v-else-if="row.picked && typed(row) === ''" class="ui-hint">
                                     Blank returns all {{ money(row.customer_amount) }}
