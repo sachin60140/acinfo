@@ -130,22 +130,61 @@ const needsReason = computed(() => picked.value.length > 0 && reason.value.trim(
 
 const blocked = computed(() => needsReason.value || wrong.value.length > 0);
 
+/*
+ * Search, asked for on 2026-11-23, the same as Give to Vendor's: the vendor
+ * at the counter is one name, and their files are among everyone's.
+ *
+ * Rows are hidden with v-show and never v-if: removed, a ticked row would take
+ * its tick and its reversal with it and silently stop coming back. So they
+ * stay on the form, Select all takes only what is shown, and the footer says
+ * how many ticked files the search is covering.
+ */
+const search = ref('');
+
+const terms = computed(() => search.value.trim().toLowerCase().split(/\s+/).filter(Boolean));
+
+const haystack = (row) => [
+    row.file_no,
+    row.registration_no,
+    row.vendor,
+    row.vendor_date,
+    row.work_type,
+    row.description,
+    row.customer,
+].filter(Boolean).join(' ').toLowerCase();
+
+// Every word has to be on the row somewhere, so a second word narrows.
+const matches = (row) => !terms.value.length || terms.value.every((term) => haystack(row).includes(term));
+
+const shown = computed(() => rows.filter(matches));
+const hiddenPicked = computed(() => rows.filter((row) => row.picked && !matches(row)).length);
+
+// All of what is shown; unticking leaves the hidden ones as they were.
 const allPicked = computed({
-    get: () => rows.length > 0 && rows.every((row) => row.picked),
+    get: () => shown.value.length > 0 && shown.value.every((row) => row.picked),
     set: (value) => {
-        rows.forEach((row) => {
+        shown.value.forEach((row) => {
             row.picked = value;
             prefill(row);
         });
     },
 });
 
-const somePicked = computed(() => rows.some((row) => row.picked));
+const somePicked = computed(() => shown.value.some((row) => row.picked));
 
 const summary = computed(() => {
     if (!picked.value.length) {
-        return { tone: 'quiet', text: 'Nothing ticked yet.' };
+        return {
+            tone: 'quiet',
+            text: terms.value.length && !shown.value.length ? 'No files match that search.' : 'Nothing ticked yet.',
+        };
     }
+
+    // Ticked and out of sight: still coming back, so said here — with an error
+    // too, which may be on one of those very rows.
+    const hidden = hiddenPicked.value
+        ? ` ${hiddenPicked.value} ticked ${hiddenPicked.value === 1 ? 'file is' : 'files are'} not shown by the search, and still ${hiddenPicked.value === 1 ? 'comes' : 'come'} back.`
+        : '';
 
     if (wrong.value.length) {
         const overs = rows.filter((row) => problem(row) === 'over').length;
@@ -159,18 +198,18 @@ const summary = computed(() => {
             parts.push(`${zeros} ${zeros === 1 ? 'is' : 'are'} not an amount`);
         }
 
-        return { tone: 'error', text: parts.join(', ') + '.' };
+        return { tone: 'error', text: parts.join(', ') + '.' + hidden };
     }
 
     if (needsReason.value) {
-        return { tone: 'error', text: 'A reason is required — the vendor\'s balance moves.' };
+        return { tone: 'error', text: 'A reason is required — the vendor\'s balance moves.' + hidden };
     }
 
     const count = picked.value.length;
 
     return {
         tone: 'ready',
-        text: `${count} ${count === 1 ? 'comes' : 'come'} back, ${money(total.value)} off what is owed to vendors.`,
+        text: `${count} ${count === 1 ? 'comes' : 'come'} back, ${money(total.value)} off what is owed to vendors.${hidden}`,
     };
 });
 
@@ -287,14 +326,29 @@ onBeforeUnmount(() => window.removeEventListener('pageshow', onPageShow));
                         </div>
                     </div>
 
-                    <label class="vr-all">
-                        <input
-                            type="checkbox"
-                            class="vr-tick"
-                            v-model="allPicked"
-                            :indeterminate="somePicked && !allPicked">
-                        Select all
-                    </label>
+                    <div class="vr-tools">
+                        <div class="vr-search">
+                            <i class="bi bi-search"></i>
+                            <!-- No name, so it posts nothing. It narrows what is on
+                                 screen and never what is sent. -->
+                            <input
+                                type="search"
+                                class="ui-input"
+                                v-model="search"
+                                placeholder="Search file, vehicle, vendor, customer or work"
+                                aria-label="Search files out with vendors">
+                        </div>
+
+                        <label class="vr-all">
+                            <input
+                                type="checkbox"
+                                class="vr-tick"
+                                v-model="allPicked"
+                                :indeterminate="somePicked && !allPicked"
+                                :disabled="!shown.length">
+                            Select all
+                        </label>
+                    </div>
                 </div>
 
                 <div class="ui-card__body">
@@ -315,8 +369,11 @@ onBeforeUnmount(() => window.removeEventListener('pageshow', onPageShow));
                                 </tr>
                             </thead>
                             <tbody>
+                                <!-- v-show, never v-if: a ticked row hidden by the
+                                     search still posts its tick and its reversal. -->
                                 <tr
                                     v-for="row in rows"
+                                    v-show="matches(row)"
                                     :key="row.key"
                                     :class="{ 'is-picked': row.picked, 'is-blocked': problem(row) !== null }">
                                     <td data-label="Take back" class="vr-pick">
@@ -377,6 +434,9 @@ onBeforeUnmount(() => window.removeEventListener('pageshow', onPageShow));
                                             {{ hint(row) }}
                                         </div>
                                     </td>
+                                </tr>
+                                <tr v-if="terms.length && !shown.length" class="vr-none">
+                                    <td colspan="10">No files match &ldquo;{{ search.trim() }}&rdquo;.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -444,6 +504,39 @@ onBeforeUnmount(() => window.removeEventListener('pageshow', onPageShow));
 .vr-blurb {
     margin-top: var(--s-1);
     max-width: 46rem;
+}
+
+/* The search and Select all share the right of the heading, and wrap under it
+   on a phone rather than squeezing the box to nothing. As Give to Vendor's. */
+.vr-tools {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-3);
+    justify-content: flex-end;
+}
+
+.vr-search {
+    align-items: center;
+    display: flex;
+    flex: 1 1 18rem;
+    gap: var(--s-2);
+    max-width: 26rem;
+}
+
+.vr-search i {
+    color: var(--n-400);
+}
+
+.vr-search .ui-input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.vr-table tbody tr.vr-none td {
+    color: var(--n-500);
+    padding: var(--s-5);
+    text-align: center;
 }
 
 .vr-all {

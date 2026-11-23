@@ -95,3 +95,65 @@ describe('a page from before rows had keys', () => {
         expect(host.querySelector('input.vr-tick[name="files[]"]').value).toBe('12');
     });
 });
+
+/*
+ * Search, asked for on 2026-11-23. It narrows what is on screen and never what
+ * is sent: a ticked file hidden by the search still comes back, and the footer
+ * says so.
+ */
+describe('searching the files out with vendors', () => {
+    const files = () => [
+        { ...row(5, 'Sharma', 1000), id: 12, key: '12:5', file_no: 'F-00012' },
+        { ...row(6, 'Shailendra', 1500), id: 13, key: '13:6', file_no: 'F-00013', registration_no: 'BR06CD5678' },
+        { ...row(5, 'Sharma', 800), id: 14, key: '14:5', file_no: 'F-00014', customer: 'Maa Durga Auto', registration_no: 'BR01EF9999' },
+    ];
+
+    const search = async (host, text) => {
+        const box = host.querySelector('input[type="search"]');
+        box.value = text;
+        box.dispatchEvent(new window.Event('input'));
+        await nextTick();
+    };
+
+    const visible = (host) => [...host.querySelectorAll('input.vr-tick[name="files[]"]')]
+        .filter((tick) => tick.closest('tr').style.display !== 'none')
+        .map((tick) => tick.value);
+
+    it('finds by vendor, customer, vehicle or file, every word narrowing', async () => {
+        const host = mount({ files: files() });
+
+        expect(host.querySelector('input[type="search"]').name).toBe('');
+
+        await search(host, 'sharma');
+        expect(visible(host)).toEqual(['12:5', '14:5']);
+
+        await search(host, 'sharma maa durga');
+        expect(visible(host)).toEqual(['14:5']);
+
+        await search(host, 'br 06');
+        expect(visible(host)).toEqual(['13:6']);
+    });
+
+    it('selects all of what is shown, and keeps a hidden tick going back', async () => {
+        const host = mount({ files: files(), pickedIds: ['13:6'], remark: 'Vendor sent them back' });
+
+        await search(host, 'sharma');
+        const all = host.querySelector('.vr-all input');
+        all.checked = true;
+        all.dispatchEvent(new window.Event('change'));
+        await nextTick();
+
+        const ticked = [...host.querySelectorAll('input.vr-tick[name="files[]"]')].filter((tick) => tick.checked).map((tick) => tick.value);
+        expect(ticked).toEqual(['12:5', '13:6', '14:5']);
+        expect(host.textContent).toContain('1 ticked file is not shown by the search, and still comes back.');
+    });
+
+    it('says when nothing matches', async () => {
+        const host = mount({ files: files() });
+
+        await search(host, 'nobody');
+
+        expect(visible(host)).toEqual([]);
+        expect(host.textContent).toContain('No files match “nobody”.');
+    });
+});

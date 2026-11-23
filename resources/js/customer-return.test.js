@@ -127,3 +127,99 @@ describe('a file that was charged', () => {
         expect(host.textContent).toContain('2 files go back, 3,000.00 credited.');
     });
 });
+
+/*
+ * Search, asked for on 2026-11-23. It narrows what is on screen and never what
+ * is sent: a ticked file hidden by the search still goes back, and the footer
+ * says so.
+ */
+describe('searching the files you can return', () => {
+    const files = () => [
+        { ...file(1, 3000), customer: 'Car4Sales', registration_no: 'BR01AB1234', work_type: 'HPA' },
+        { ...file(2, 1500), customer: 'Car4Sales', registration_no: 'BR06CD5678', work_type: 'TR' },
+        { ...file(3, 2000), customer: 'Maa Durga Auto', registration_no: 'BR01EF9999', work_type: 'HPA' },
+    ];
+
+    const search = async (host, text) => {
+        const box = host.querySelector('input[type="search"]');
+        box.value = text;
+        box.dispatchEvent(new window.Event('input'));
+        await nextTick();
+    };
+
+    const visible = (host) => [...host.querySelectorAll('input[name="files[]"]')]
+        .filter((tick) => tick.closest('tr').style.display !== 'none')
+        .map((tick) => tick.value);
+
+    const selectAll = async (host, on) => {
+        const box = host.querySelector('.cr-all input');
+        box.checked = on;
+        box.dispatchEvent(new window.Event('change'));
+        await nextTick();
+    };
+
+    it('posts nothing of its own', () => {
+        const host = mount(files());
+
+        expect(host.querySelector('input[type="search"]').name).toBe('');
+    });
+
+    it('finds by customer, vehicle, file or work, every word narrowing', async () => {
+        const host = mount(files());
+
+        await search(host, 'car4sales');
+        expect(visible(host)).toEqual(['1', '2']);
+
+        await search(host, 'car4sales hpa');
+        expect(visible(host)).toEqual(['1']);
+
+        // A plate typed with spaces, as it is read.
+        await search(host, 'br 01 ab');
+        expect(visible(host)).toEqual(['1']);
+
+        await search(host, 'F-0003');
+        expect(visible(host)).toEqual(['3']);
+
+        await search(host, '');
+        expect(visible(host)).toEqual(['1', '2', '3']);
+    });
+
+    it('selects all of what is shown, and only that', async () => {
+        const host = mount(files());
+
+        await search(host, 'car4sales');
+        await selectAll(host, true);
+
+        const ticked = [...host.querySelectorAll('input[name="files[]"]')].filter((tick) => tick.checked).map((tick) => tick.value);
+        expect(ticked).toEqual(['1', '2']);
+    });
+
+    it('keeps a ticked file going back when the search hides it, and says so', async () => {
+        const host = mount(files());
+        await tick(host, 3);
+
+        await search(host, 'car4sales');
+        expect(visible(host)).toEqual(['1', '2']);
+
+        // Still on the form, ticked and with its refund, so it is still sent.
+        const hidden = host.querySelector('input[name="files[]"][value="3"]');
+        expect(hidden.checked).toBe(true);
+        expect(amountOf(host, 3).disabled).toBe(false);
+        expect(host.textContent).toContain('1 ticked file is not shown by the search, and still goes back.');
+
+        // Unticking what is shown leaves it as it was.
+        await selectAll(host, true);
+        await selectAll(host, false);
+        expect(hidden.checked).toBe(true);
+    });
+
+    it('says when nothing matches', async () => {
+        const host = mount(files());
+
+        await search(host, 'nobody');
+
+        expect(visible(host)).toEqual([]);
+        expect(host.textContent).toContain('No files match “nobody”.');
+        expect(host.textContent).toContain('No files match that search.');
+    });
+});

@@ -56,8 +56,40 @@ const refundOf = (row) =>
 const chosen = computed(() => rows.filter((row) => row.picked));
 const total = computed(() => chosen.value.reduce((sum, row) => sum + refundOf(row), 0));
 
-const allPicked = computed(() => rows.length > 0 && chosen.value.length === rows.length);
+/*
+ * Search, asked for on 2026-11-23, the same as Give to Vendor's. The list is
+ * every file not yet back with its customer, which on a busy week runs longer
+ * than the screen, and the customer at the counter is one name or one vehicle.
+ *
+ * Rows are hidden with v-show and never v-if: removed, a ticked row would take
+ * its tick and its refund with it and silently stop going back. So they stay
+ * on the form, Select all takes only what is shown, and the footer says how
+ * many ticked files the search is covering.
+ */
+const search = ref('');
+
+const terms = computed(() => search.value.trim().toLowerCase().split(/\s+/).filter(Boolean));
+
+const haystack = (row) => [
+    row.file_no,
+    row.registration_no,
+    row.description,
+    row.customer,
+    row.work_type,
+    row.received_date,
+    row.status_label,
+].filter(Boolean).join(' ').toLowerCase();
+
+// Every word has to be on the row somewhere, so a second word narrows: "car4sales
+// hpa" is that customer's hypothecation work, "br 01 ab" a run of plates.
+const matches = (row) => !terms.value.length || terms.value.every((term) => haystack(row).includes(term));
+
+const shown = computed(() => rows.filter(matches));
+const hiddenPicked = computed(() => rows.filter((row) => row.picked && !matches(row)).length);
+
+const allPicked = computed(() => shown.value.length > 0 && shown.value.every((row) => row.picked));
 const somePicked = computed(() => chosen.value.length > 0);
+const someShownPicked = computed(() => shown.value.some((row) => row.picked));
 
 // You cannot hand back more than the customer was charged; the server checks
 // this too and names the offending files.
@@ -95,6 +127,13 @@ const summary = computed(() => {
     const zero = rows.filter(notPositive).length;
     const parts = [];
 
+    // Ticked and out of sight: still going back, which is right and surprising,
+    // so said here rather than found in the message afterwards. Said with an
+    // error too, which may be on one of those very rows.
+    const hidden = hiddenPicked.value
+        ? ` ${hiddenPicked.value} ticked ${hiddenPicked.value === 1 ? 'file is' : 'files are'} not shown by the search, and still ${hiddenPicked.value === 1 ? 'goes' : 'go'} back.`
+        : '';
+
     if (needsReason.value) {
         parts.push("Returning a file changes the customer's balance, so it needs a reason.");
     }
@@ -106,18 +145,21 @@ const summary = computed(() => {
     }
 
     if (parts.length) {
-        return { tone: 'error', text: parts.join(' ') };
+        return { tone: 'error', text: parts.join(' ') + hidden };
     }
 
     if (!somePicked.value) {
-        return { tone: 'quiet', text: 'Tick the files going back.' };
+        return {
+            tone: 'quiet',
+            text: terms.value.length && !shown.value.length ? 'No files match that search.' : 'Tick the files going back.',
+        };
     }
 
     const count = chosen.value.length;
 
     return {
         tone: 'ready',
-        text: `${count} ${count === 1 ? 'file goes' : 'files go'} back, ${money(total.value)} credited.`,
+        text: `${count} ${count === 1 ? 'file goes' : 'files go'} back, ${money(total.value)} credited.${hidden}`,
     };
 });
 
@@ -135,8 +177,11 @@ function prefill(row) {
     }
 }
 
+// All of what is shown. With a search typed, ticking every file in the list
+// would send back ones nobody can see; unticking leaves the hidden ones as
+// they were, for the mirror of that reason.
 function toggleAll(checked) {
-    rows.forEach((row) => {
+    shown.value.forEach((row) => {
         row.picked = checked;
         prefill(row);
     });
@@ -291,15 +336,30 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                     </div>
                 </div>
 
-                <label class="cr-all">
-                    <input
-                        type="checkbox"
-                        class="cr-check"
-                        :checked="allPicked"
-                        :indeterminate="somePicked && !allPicked"
-                        @change="toggleAll($event.target.checked)">
-                    Select all
-                </label>
+                <div class="cr-tools">
+                    <div class="cr-search">
+                        <i class="bi bi-search"></i>
+                        <!-- No name, so it posts nothing. It narrows what is on
+                             screen and never what is sent. -->
+                        <input
+                            type="search"
+                            class="ui-input"
+                            v-model="search"
+                            placeholder="Search file, vehicle, customer or work"
+                            aria-label="Search files you can return">
+                    </div>
+
+                    <label class="cr-all">
+                        <input
+                            type="checkbox"
+                            class="cr-check"
+                            :checked="allPicked"
+                            :indeterminate="someShownPicked && !allPicked"
+                            :disabled="!shown.length"
+                            @change="toggleAll($event.target.checked)">
+                        Select all
+                    </label>
+                </div>
             </div>
 
             <div class="ui-table-wrap">
@@ -319,8 +379,11 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                         </tr>
                     </thead>
                     <tbody>
+                        <!-- v-show, never v-if: a ticked row hidden by the search
+                             still posts its tick and its refund. -->
                         <tr
                             v-for="row in rows"
+                            v-show="matches(row)"
                             :key="row.id"
                             :class="{ 'is-picked': row.picked, 'is-blocked': invalid(row) }">
                             <td data-label="Return" class="cr-tick">
@@ -394,6 +457,9 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
                                 </div>
                             </td>
                         </tr>
+                        <tr v-if="terms.length && !shown.length" class="cr-none">
+                            <td colspan="10">No files match &ldquo;{{ search.trim() }}&rdquo;.</td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -442,6 +508,39 @@ const displayDate = stamp ? `${stamp[3]}-${stamp[2]}-${stamp[1]}` : '';
 
 .cr-when__date { flex: 0 0 12rem; }
 .cr-when__reason { flex: 1 1 24rem; }
+
+/* The search and Select all share the right of the heading, and wrap under it
+   on a phone rather than squeezing the box to nothing. As Give to Vendor's. */
+.cr-tools {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-3);
+    justify-content: flex-end;
+}
+
+.cr-search {
+    align-items: center;
+    display: flex;
+    flex: 1 1 18rem;
+    gap: var(--s-2);
+    max-width: 26rem;
+}
+
+.cr-search i {
+    color: var(--n-400);
+}
+
+.cr-search .ui-input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.cr-table tbody tr.cr-none td {
+    color: var(--n-500);
+    padding: var(--s-5);
+    text-align: center;
+}
 
 .cr-all {
     align-items: center;
