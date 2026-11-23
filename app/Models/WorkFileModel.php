@@ -6515,6 +6515,24 @@ class WorkFileModel extends Model
         WorkTypeModel::ASKS_PARTIES => ['seller_name', 'buyer_name', 'buyer_mobile'],
     ];
 
+    /** What every file needs, whatever its works ask for. */
+    public const ALWAYS_ON_RECEIPT = ['owner_mobile'];
+
+    /**
+     * The rule above as one value, for Receive Files to send its form.
+     *
+     * The form marks the boxes, lets the browser hold back an empty one, and
+     * counts what is missing in its footer, all from this, so it keeps no copy
+     * of its own to fall out of step with what requiredOnReceipt() refuses.
+     * Asked for on 2026-11-23: until then the rule was written three times.
+     *
+     * @return array{always: array<int, string>, asked: array<string, array<int, string>>}
+     */
+    public static function receiptRule(): array
+    {
+        return ['always' => self::ALWAYS_ON_RECEIPT, 'asked' => self::REQUIRED_ON_RECEIPT];
+    }
+
     private const DETAIL_NAMES = [
         'owner_mobile' => "the owner's mobile",
         'lender_name' => "the lender's name",
@@ -6558,7 +6576,7 @@ class WorkFileModel extends Model
         foreach ($rows as $index => $row) {
             $asked = $typesOf($row)->map(fn ($id) => $asks[$id] ?? null)->filter()->unique()->all();
 
-            $columns = ['owner_mobile'];
+            $columns = self::ALWAYS_ON_RECEIPT;
             foreach (self::REQUIRED_ON_RECEIPT as $kind => $needed) {
                 if (in_array($kind, $asked, true)) {
                     array_push($columns, ...$needed);

@@ -83,11 +83,12 @@ typed.
 **Changing what is asked.** Which works ask for what is the office's setting,
 on **Work Types**, and needs no code: a type set to ask for a lender makes the
 lender required on every file of that type. What each kind of ask requires is
-code, `WorkFileModel::REQUIRED_ON_RECEIPT`, and the receive form keeps its own
-copy in `resources/js/components/ReceiveFileRows.vue`: `REQUIRED_FOR`, which
-the footer counts from, and the `required` marks on the boxes themselves.
-Change all three together, or the form and the server will disagree about what
-is missing.
+code, in one place: `WorkFileModel::REQUIRED_ON_RECEIPT`, with what every file
+needs in `ALWAYS_ON_RECEIPT`. The server refuses a file by it, and sends it to
+the receive form as `requiredOnReceipt` (`WorkFileModel::receiptRule()`); the
+form keeps no copy of its own, and marks the boxes, holds back an empty one and
+counts what is missing in its footer from what it is sent. Change the rule there
+and both follow.
 
 **In the code:** `WorkFileController::receive()` adds
 `WorkFileModel::requiredOnReceipt()`, a rule and a message for each file

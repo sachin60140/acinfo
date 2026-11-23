@@ -22,6 +22,13 @@ const props = defineProps({
     ratesUrl: { type: String, default: '' },
     cancelUrl: { type: String, default: '' },
     oldRows: { type: Array, default: () => [] },
+    /*
+     * What a file cannot be received without, as the server refuses it
+     * (WorkFileModel::receiptRule()): every detail in `always`, and those of
+     * each kind its works ask for in `asked`. Nothing by default: the rule is
+     * the server's, and this form keeps no copy of it.
+     */
+    requiredOnReceipt: { type: Object, default: () => ({ always: [], asked: {} }) },
 });
 
 /*
@@ -115,19 +122,20 @@ const unpriced = computed(() =>
 );
 
 /*
- * What a file is not received without, as the server says it
- * (WorkFileModel::REQUIRED_ON_RECEIPT): the owner's mobile, and what its works
- * ask for, the seller's mobile aside.
+ * What this file is not received without, by the server's rule: the details
+ * every file needs, and those its works ask for. The boxes' marks, the
+ * browser's own check and the footer all ask this, so none of them can say
+ * something the server does not.
  */
-const REQUIRED_FOR = {
-    lender: ['lender_name'],
-    financer: ['financer_name'],
-    parties: ['seller_name', 'buyer_name', 'buyer_mobile'],
-};
+const requiredOf = (row) => new Set([
+    ...(props.requiredOnReceipt.always ?? []),
+    ...Object.keys(askedFor(row)).flatMap((kind) => props.requiredOnReceipt.asked?.[kind] ?? []),
+]);
+
+const isRequired = (row, detail) => requiredOf(row).has(detail);
 
 const lacksDetails = (row) =>
-    ['owner_mobile', ...Object.keys(askedFor(row)).flatMap((kind) => REQUIRED_FOR[kind] ?? [])]
-        .some((key) => String(row[key] ?? '').trim() === '');
+    [...requiredOf(row)].some((key) => String(row[key] ?? '').trim() === '');
 
 const undetailed = computed(() => rows.filter(lacksDetails).length);
 
@@ -530,7 +538,7 @@ onBeforeUnmount(() => {
                             </div>
 
                             <div class="ui-field">
-                                <label class="ui-label" :for="`rcv-owner-${index}`">Owner's Mobile <span class="ui-label__req">*</span></label>
+                                <label class="ui-label" :for="`rcv-owner-${index}`">Owner's Mobile <span v-if="isRequired(row, 'owner_mobile')" class="ui-label__req">*</span></label>
                                 <input
                                     :id="`rcv-owner-${index}`"
                                     type="tel"
@@ -543,7 +551,7 @@ onBeforeUnmount(() => {
                                     title="10 digits"
                                     autocomplete="off"
                                     placeholder="10 digits"
-                                    required>
+                                    :required="isRequired(row, 'owner_mobile')">
                             </div>
                         </div>
 
@@ -653,13 +661,13 @@ onBeforeUnmount(() => {
                         </div>
 
                         <!-- Who the works are about, for the file's sticker: asked
-                             only when a work on the card asks for it, and needed
-                             before the file is received, all but the seller's
-                             mobile (WorkFileModel::REQUIRED_ON_RECEIPT). -->
+                             only when a work on the card asks for it. Which of
+                             them a file cannot come in without is the server's
+                             rule (requiredOnReceipt), marked box by box. -->
                         <div v-if="Object.keys(askedFor(row)).length" class="rcv-asks">
                             <div v-if="askedFor(row).lender" class="ui-field">
                                 <label class="ui-label" :for="`rcv-lender-${index}`">
-                                    Lender <span class="ui-label__req">*</span> <span class="rcv-asks__for">for {{ askedFor(row).lender }}</span>
+                                    Lender <span v-if="isRequired(row, 'lender_name')" class="ui-label__req">*</span> <span class="rcv-asks__for">for {{ askedFor(row).lender }}</span>
                                 </label>
                                 <input
                                     :id="`rcv-lender-${index}`"
@@ -669,12 +677,12 @@ onBeforeUnmount(() => {
                                     v-model="row.lender_name"
                                     maxlength="120"
                                     placeholder="Bank or finance company"
-                                    required>
+                                    :required="isRequired(row, 'lender_name')">
                             </div>
 
                             <div v-if="askedFor(row).financer" class="ui-field">
                                 <label class="ui-label" :for="`rcv-financer-${index}`">
-                                    Financer <span class="ui-label__req">*</span> <span class="rcv-asks__for">for {{ askedFor(row).financer }}</span>
+                                    Financer <span v-if="isRequired(row, 'financer_name')" class="ui-label__req">*</span> <span class="rcv-asks__for">for {{ askedFor(row).financer }}</span>
                                 </label>
                                 <input
                                     :id="`rcv-financer-${index}`"
@@ -684,14 +692,14 @@ onBeforeUnmount(() => {
                                     v-model="row.financer_name"
                                     maxlength="120"
                                     placeholder="Bank or finance company"
-                                    required>
+                                    :required="isRequired(row, 'financer_name')">
                             </div>
 
                             <template v-if="askedFor(row).parties">
                                 <div v-for="side in ['seller', 'buyer']" :key="side" class="rcv-asks__party">
                                     <div class="ui-field">
                                         <label class="ui-label" :for="`rcv-${side}-${index}`">
-                                            {{ side === 'seller' ? 'Seller' : 'Buyer' }} <span class="ui-label__req">*</span> <span class="rcv-asks__for">for {{ askedFor(row).parties }}</span>
+                                            {{ side === 'seller' ? 'Seller' : 'Buyer' }} <span v-if="isRequired(row, `${side}_name`)" class="ui-label__req">*</span> <span class="rcv-asks__for">for {{ askedFor(row).parties }}</span>
                                         </label>
                                         <input
                                             :id="`rcv-${side}-${index}`"
@@ -701,12 +709,12 @@ onBeforeUnmount(() => {
                                             v-model="row[`${side}_name`]"
                                             maxlength="120"
                                             placeholder="Name"
-                                            required>
+                                            :required="isRequired(row, `${side}_name`)">
                                     </div>
                                     <div class="ui-field">
                                         <label class="ui-label" :for="`rcv-${side}-mobile-${index}`">
                                             {{ side === 'seller' ? "Seller's" : "Buyer's" }} Mobile
-                                            <span v-if="side === 'buyer'" class="ui-label__req">*</span>
+                                            <span v-if="isRequired(row, `${side}_mobile`)" class="ui-label__req">*</span>
                                         </label>
                                         <input
                                             :id="`rcv-${side}-mobile-${index}`"
@@ -720,7 +728,7 @@ onBeforeUnmount(() => {
                                             title="10 digits"
                                             autocomplete="off"
                                             placeholder="10 digits"
-                                            :required="side === 'buyer'">
+                                            :required="isRequired(row, `${side}_mobile`)">
                                     </div>
                                 </div>
                             </template>
