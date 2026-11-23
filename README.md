@@ -134,6 +134,25 @@ also match a date.
 - **Select all** ticks, and unticks, only the files shown.
 - The search box posts nothing, and when nothing matches the screen says so.
 
+**The Paper Returns report** (Reports, *Paper Returns*) lists the returns
+afterwards, with the Customer-wise / Vendor-wise switch the other reports have,
+a customer or vendor to narrow it to, and dates that are the day the papers
+went back:
+
+- **Customer-wise**: each file returned, with its work, the day it came in and
+  the day it went back, what it was **Charged**, what was **Refunded**, what the
+  office **Kept**, and the reason typed. It never names a vendor.
+- **Vendor-wise**: each vendor's work handed back, a row per vendor per file,
+  with the customer, the day it was given out and the day it came back, what was
+  **Booked** to them and **Reversed**, the reason, and a note where they still
+  hold other work on that file.
+
+Its figures are the statements' own, `refundToCustomer()` and `vendorLines()`,
+so the report and a party's statement cannot disagree. A file charged nothing,
+and work given out at nothing, are listed at 0.00. A file taken off Paper
+Returned, or cancelled, is not listed. It is `ReportController::paperReturns()`,
+tested in `tests/Feature/PaperReturnsReportTest.php`.
+
 **In the code:** `resources/js/components/CustomerReturn.vue` and
 `VendorReturn.vue` search the same way `GiveToVendor.vue` does. `matches()`
 reads each row, and rows that do not match are hidden with `v-show`, never

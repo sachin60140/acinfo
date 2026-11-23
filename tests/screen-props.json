@@ -1708,6 +1708,64 @@
             }
         }
     },
+    "report-paper-returns": {
+        "vue-paper-returns": {
+            "columns": [
+                "party_name:text",
+                "file_no:link",
+                "registration_no:text",
+                "work_type:text",
+                "received:text",
+                "returned:text",
+                "charged:money",
+                "refunded:money",
+                "kept:money",
+                "reason:text:no-sort"
+            ],
+            "emptyText": "string",
+            "groupBy": "string",
+            "groupLabel": "string",
+            "perPage": "number",
+            "rows": "[]",
+            "sortedBy": "string",
+            "sortedDesc": "bool",
+            "title": "string",
+            "totals": {
+                "charged": "string",
+                "kept": "string",
+                "refunded": "string"
+            }
+        }
+    },
+    "report-paper-returns-vendor": {
+        "vue-paper-returns": {
+            "columns": [
+                "party_name:text",
+                "file_no:link",
+                "registration_no:text",
+                "work_type:text",
+                "counterparty:text",
+                "given:text",
+                "returned:text",
+                "booked:money",
+                "reversed:money",
+                "reason:text:no-sort",
+                "part:text"
+            ],
+            "emptyText": "string",
+            "groupBy": "string",
+            "groupLabel": "string",
+            "perPage": "number",
+            "rows": "[]",
+            "sortedBy": "string",
+            "sortedDesc": "bool",
+            "title": "string",
+            "totals": {
+                "booked": "string",
+                "reversed": "string"
+            }
+        }
+    },
     "report-vendor": {
         "vue-work-report": {
             "action": "string",

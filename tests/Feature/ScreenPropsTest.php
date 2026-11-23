@@ -327,6 +327,8 @@ class ScreenPropsTest extends TestCase
             'report-vendor-payments' => 'admin/reports/vendor-payments',
             'report-approval-time' => 'admin/reports/approval-time',
             'report-approval-time-vendor' => 'admin/reports/approval-time?party_type=vendor',
+            'report-paper-returns' => 'admin/reports/paper-returns',
+            'report-paper-returns-vendor' => 'admin/reports/paper-returns?party_type=vendor',
             // The old book: Add, Receipt and Payment are closed and mount
             // nothing now (see CloseClientLedgerController); its list,
             // statements and logins stay.

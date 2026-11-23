@@ -1780,4 +1780,341 @@ class ReportController extends Controller
             'misdated' => $misdated,
         ])->toResponse($req);
     }
+
+    /**
+     * Papers returned: to customers, and by vendors.
+     *
+     * Asked for by the owner on 2026-11-23, both sides with the switch the
+     * other reports have. Customer-wise is each file handed back to its
+     * customer: what it was charged, what was refunded, what was kept, and
+     * why. Vendor-wise is each vendor's work handed back: what was booked to
+     * them, what of it was reversed, and why. The dates are the day the papers
+     * went back, which is what the period on this report means.
+     *
+     * The figures are the ledger's own — refundToCustomer() and vendorLines(),
+     * which write the statements — so this report cannot say one thing while a
+     * party's statement says another. A file charged nothing, or work given out
+     * at nothing, is listed all the same: the papers went back, which is what
+     * the report is for, and it reads 0.00.
+     *
+     * Customer-wise never names a vendor, by the owner's rule.
+     */
+    public function paperReturns(Request $req)
+    {
+        $req->validate([
+            'party_type' => ['nullable', Rule::in(array_keys(PartyModel::TYPES))],
+            'party_id' => 'nullable|integer|exists:party,id',
+            'from' => 'nullable|date_format:Y-m-d',
+            'to' => 'nullable|date_format:Y-m-d|after_or_equal:from',
+        ]);
+
+        $partyType = $req->query('party_type', 'customer');
+        $partyId = $req->query('party_id') ? (int) $req->query('party_id') : null;
+        $from = $req->query('from');
+        $to = $req->query('to');
+
+        // A party of the other side would silently return nothing.
+        if ($partyId && PartyModel::whereKey($partyId)->value('party_type') !== $partyType) {
+            $partyId = null;
+        }
+
+        $toCustomers = $partyType === 'customer';
+
+        $rows = $toCustomers
+            ? self::returnedToCustomers($partyId, $from, $to)
+            : self::returnedByVendors($partyId, $from, $to);
+
+        /*
+         * Latest first, as Approval Time: one band a party, the party with the
+         * most recent return on top, and in each band the latest return first.
+         */
+        $latest = $rows->groupBy('party_id')->map(fn ($mine) => $mine->max('returned_raw'));
+
+        $rows = $rows->sort(fn ($a, $b) => [$latest[$b['party_id']], mb_strtolower($a['party_name']), $a['party_id'], $b['returned_raw'], $b['file_no']]
+            <=> [$latest[$a['party_id']], mb_strtolower($b['party_name']), $b['party_id'], $a['returned_raw'], $a['file_no']])->values();
+
+        $partyLabel = PartyModel::label($partyType);
+        $period = ($from || $to)
+            ? ($from ? date('d-m-Y', strtotime($from)) : 'from the beginning').' to '.($to ? date('d-m-Y', strtotime($to)) : date('d-m-Y'))
+            : null;
+
+        $money = $toCustomers ? ['charged', 'refunded', 'kept'] : ['booked', 'reversed'];
+
+        $props = [
+            'title' => 'Paper Returns — '.$partyLabel.'-wise'.($period ? ' — returned '.$period : ''),
+            'groupBy' => 'party_id',
+            'groupLabel' => 'party_name',
+            // Each party's sums under their files, and everyone's at the foot.
+            'totals' => array_fill_keys($money, 'sum'),
+            'sortedBy' => 'returned',
+            'sortedDesc' => true,
+            // One page: a party split across two would be summed twice, on half each time.
+            'perPage' => max($rows->count(), 1),
+            'emptyText' => ($partyId || $from || $to)
+                ? 'No papers went back in this period. Try widening the dates or clearing the '.strtolower($partyLabel).'.'
+                : ($toCustomers ? 'No file has been returned to a customer yet.' : 'No vendor has handed papers back yet.'),
+            'columns' => $toCustomers
+                ? [
+                    // Exported, never drawn: the band says who on screen, and a
+                    // spreadsheet has no bands.
+                    ['key' => 'party_name', 'label' => $partyLabel, 'exportOnly' => true],
+                    ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
+                    ['key' => 'registration_no', 'label' => 'Vehicle'],
+                    ['key' => 'work_type', 'label' => 'Work'],
+                    ['key' => 'received', 'label' => 'Received', 'sortBy' => 'received_raw'],
+                    ['key' => 'returned', 'label' => 'Returned', 'sortBy' => 'returned_raw', 'sortDesc' => true],
+                    ['key' => 'charged', 'label' => 'Charged', 'type' => 'money', 'class' => 'dr'],
+                    ['key' => 'refunded', 'label' => 'Refunded', 'type' => 'money', 'class' => 'cr'],
+                    ['key' => 'kept', 'label' => 'Kept', 'type' => 'money', 'class' => 'fw-bold'],
+                    ['key' => 'reason', 'label' => 'Reason', 'sortable' => false],
+                ]
+                : [
+                    ['key' => 'party_name', 'label' => $partyLabel, 'exportOnly' => true],
+                    ['key' => 'file_no', 'label' => 'File No.', 'type' => 'link', 'linkTo' => 'edit_url'],
+                    ['key' => 'registration_no', 'label' => 'Vehicle'],
+                    // The works that came back, and a word where some of theirs has not.
+                    ['key' => 'work_type', 'label' => 'Work', 'sub' => 'part'],
+                    ['key' => 'counterparty', 'label' => 'Customer'],
+                    ['key' => 'given', 'label' => 'Given On', 'sortBy' => 'given_raw'],
+                    ['key' => 'returned', 'label' => 'Returned', 'sortBy' => 'returned_raw', 'sortDesc' => true],
+                    ['key' => 'booked', 'label' => 'Booked', 'type' => 'money', 'class' => 'cr'],
+                    ['key' => 'reversed', 'label' => 'Reversed', 'type' => 'money', 'class' => 'dr'],
+                    ['key' => 'reason', 'label' => 'Reason', 'sortable' => false],
+                    ['key' => 'part', 'label' => 'Still with them', 'exportOnly' => true],
+                ],
+            'rows' => $rows,
+        ];
+
+        return Screen::make('admin.reports.paper-returns', 'vue-paper-returns', $props, [
+            'partyType' => $partyType,
+            'partyLabel' => $partyLabel,
+            'partyId' => $partyId,
+            'parties' => PartyModel::selectList($partyType, $partyId),
+            'from' => $from,
+            'to' => $to,
+            'period' => $period,
+            'base' => route('report.paperreturns'),
+            'typeUrls' => collect(PartyModel::TYPES)->map(fn ($label, $type) => route('report.paperreturns', array_filter([
+                'party_type' => $type, 'from' => $from, 'to' => $to,
+            ])))->all(),
+            'totals' => ['files' => $rows->count()]
+                + collect($money)->mapWithKeys(fn ($key) => [$key => round($rows->sum($key), 2)])->all(),
+        ])->toResponse($req);
+    }
+
+    /**
+     * Files handed back to their customers, a row each.
+     *
+     * Only a file whose status is still Paper Returned: one taken back off
+     * that status is no longer returned, and its refund is withdrawn from the
+     * statement with it (WorkFileModel::booted() clears its date).
+     */
+    private static function returnedToCustomers(?int $customerId, ?string $from, ?string $to)
+    {
+        $files = WorkFileModel::with(['customer', 'items.workType'])
+            ->where('status', WorkFileModel::RETURNED)
+            ->whereNotNull('returned_on')
+            ->when($customerId, fn ($q) => $q->where('customer_id', $customerId))
+            ->when($from, fn ($q) => $q->where('returned_on', '>=', $from))
+            ->when($to, fn ($q) => $q->where('returned_on', '<=', $to))
+            ->get();
+
+        $notes = self::historyNotes($files->pluck('id')->all());
+
+        return $files->map(function (WorkFileModel $file) use ($notes) {
+            $charged = round((float) $file->customer_amount, 2);
+            $refunded = round($file->refundToCustomer(), 2);
+            $returned = substr((string) $file->returned_on, 0, 10);
+            $received = substr((string) $file->received_date, 0, 10);
+
+            // Why: what was typed when it went back, on the line of its
+            // history that moved it to returned.
+            $reason = $notes->get($file->id, collect())
+                ->where('to_status', WorkFileModel::RETURNED)
+                ->last()?->remark;
+
+            return [
+                'id' => (string) $file->id,
+                'party_id' => (int) $file->customer_id,
+                'party_name' => (string) ($file->customer?->name ?? 'Customer'),
+                'file_no' => (string) $file->file_no,
+                'edit_url' => route('workfile.edit', $file->id),
+                'registration_no' => (string) $file->registration_no,
+                'work_type' => $file->workLabel() ?: (string) $file->workType?->name,
+                'received' => date('d-m-Y', strtotime($received)),
+                'received_raw' => $received,
+                'returned' => date('d-m-Y', strtotime($returned)),
+                'returned_raw' => $returned,
+                'charged' => $charged,
+                'refunded' => $refunded,
+                'kept' => round($charged - $refunded, 2),
+                'reason' => (string) $reason,
+            ];
+        })->values();
+    }
+
+    /**
+     * Work handed back by vendors: a row a vendor a file.
+     *
+     * Read the way the vendor's statement is written, so the two agree:
+     * an older folder (no work ever named a vendor) off the folder, as it
+     * always was; any other folder vendor by vendor from its works, the day
+     * the last of theirs came back, with the figures vendorLines() writes.
+     * A vendor who handed back one work and still has another is listed with
+     * the one, and said to have the rest. A cancelled folder is left out: its
+     * lines are withdrawn from every statement.
+     */
+    private static function returnedByVendors(?int $vendorId, ?string $from, ?string $to)
+    {
+        $inPeriod = fn ($q, string $column) => $q
+            ->when($from, fn ($q) => $q->where($column, '>=', $from))
+            ->when($to, fn ($q) => $q->where($column, '<=', $to));
+
+        // Every folder with something handed back in the period: a vendor's
+        // last day back is in it only if one of their works came back in it.
+        $ids = DB::table('work_file_item')
+            ->whereNotNull('vendor_id')
+            ->whereNotNull('vendor_returned_on')
+            ->where('status', '<>', WorkFileModel::CANCELLED)
+            ->when($vendorId, fn ($q) => $q->where('vendor_id', $vendorId))
+            ->tap(fn ($q) => $inPeriod($q, 'vendor_returned_on'))
+            ->pluck('work_file_id')
+            ->merge(DB::table('work_file')
+                ->whereNotNull('vendor_id')
+                ->whereNotNull('vendor_returned_on')
+                ->whereRaw(WorkFileModel::olderFolderSql('work_file'))
+                ->when($vendorId, fn ($q) => $q->where('vendor_id', $vendorId))
+                ->tap(fn ($q) => $inPeriod($q, 'vendor_returned_on'))
+                ->pluck('id'))
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty()) {
+            return collect();
+        }
+
+        $files = WorkFileModel::with(['customer', 'items.workType'])
+            ->whereIn('id', $ids)
+            ->where('status', '<>', WorkFileModel::CANCELLED)
+            ->get();
+
+        $notes = self::historyNotes($files->pluck('id')->all());
+        $rows = collect();
+
+        foreach ($files as $file) {
+            $backs = [];
+
+            if (WorkFileModel::isOlderFolder($file->items)) {
+                $backs[(int) $file->vendor_id] = [
+                    'returned' => $file->vendor_returned_on,
+                    'given' => $file->vendor_date ?: $file->received_date,
+                    'works' => $file->workLabel() ?: (string) $file->workType?->name,
+                    'part' => '',
+                    'booked' => max(0.0, (float) $file->vendor_amount),
+                    'reversed' => (float) $file->vendor_amount > 0 ? $file->reversedToVendor() : 0.0,
+                ];
+            } else {
+                $lines = $file->vendorLines();
+
+                foreach ($file->vendorShares() as $vendor => $share) {
+                    if (! $share['returned_on']) {
+                        continue;
+                    }
+
+                    $still = array_values(array_diff($share['works'], $share['back_works']));
+
+                    $backs[(int) $vendor] = [
+                        'returned' => $share['returned_on'],
+                        'given' => $share['date'] ?: $file->received_date,
+                        'works' => implode(', ', $share['back_works']),
+                        'part' => $share['all_back'] ? '' : 'Still with them: '.implode(', ', $still ?: ['the rest']),
+                        // What their statement carries: the credit, and the
+                        // reversal written beside it. Nothing where the work
+                        // was given at nothing, which writes no line.
+                        'booked' => (float) ($lines['vendor'][$vendor]['amount'] ?? $share['amount']),
+                        'reversed' => (float) ($lines['vendor_return'][$vendor]['amount'] ?? 0),
+                    ];
+                }
+            }
+
+            foreach ($backs as $vendor => $back) {
+                $returned = substr((string) $back['returned'], 0, 10);
+
+                if (($vendorId && $vendor !== $vendorId) || ($from && $returned < $from) || ($to && $returned > $to)) {
+                    continue;
+                }
+
+                $rows->push([
+                    'id' => $file->id.'-'.$vendor,
+                    'party_id' => $vendor,
+                    'file_id' => (int) $file->id,
+                    'file_no' => (string) $file->file_no,
+                    'edit_url' => route('workfile.edit', $file->id),
+                    'registration_no' => (string) $file->registration_no,
+                    'work_type' => $back['works'],
+                    'part' => $back['part'],
+                    'counterparty' => (string) ($file->customer?->name ?? ''),
+                    'given' => date('d-m-Y', strtotime(substr((string) $back['given'], 0, 10))),
+                    'given_raw' => substr((string) $back['given'], 0, 10),
+                    'returned' => date('d-m-Y', strtotime($returned)),
+                    'returned_raw' => $returned,
+                    'booked' => round($back['booked'], 2),
+                    'reversed' => round($back['reversed'], 2),
+                ]);
+            }
+        }
+
+        // Named once for every row, and why each came back: the line of the
+        // folder's history the take-back wrote, which names the vendor.
+        $names = PartyModel::whereIn('id', $rows->pluck('party_id')->unique()->all())->pluck('name', 'id');
+
+        return $rows->map(function ($row) use ($names, $notes) {
+            $name = (string) ($names[$row['party_id']] ?? 'Vendor');
+            $said = $notes->get($row['file_id'], collect())
+                ->filter(fn ($note) => mb_stripos((string) $note->remark, 'returned by '.$name) !== false)
+                ->last();
+
+            unset($row['file_id']);
+
+            return ['party_name' => $name] + $row + ['reason' => self::ownClause((string) $said?->remark, $name)];
+        })->values();
+    }
+
+    /**
+     * A take-back's history line, cut to one vendor's part of it.
+     *
+     * Two vendors' work taken back in one go writes one line for both:
+     * "Stuck at the RTO — Fitness papers returned by Raj; Address Change
+     * papers returned by Verma". Found on 2026-11-23, each vendor's row read
+     * the other's part too. The reason typed is kept, and only their clause.
+     */
+    private static function ownClause(string $remark, string $name): string
+    {
+        $cut = mb_strrpos($remark, ' — ');
+
+        if ($cut === false) {
+            return $remark;
+        }
+
+        $why = mb_substr($remark, 0, $cut);
+        $clauses = explode('; ', mb_substr($remark, $cut + 3));
+        $mine = array_filter($clauses, fn ($clause) => mb_stripos($clause, 'returned by '.$name) !== false);
+
+        return $why.' — '.implode('; ', $mine ?: $clauses);
+    }
+
+    /** Every note on these files' histories, oldest first, by file. */
+    private static function historyNotes(array $fileIds)
+    {
+        if (! $fileIds) {
+            return collect();
+        }
+
+        return DB::table('work_file_status_log')
+            ->whereIn('work_file_id', $fileIds)
+            ->whereNotNull('remark')
+            ->orderBy('id')
+            ->get(['id', 'work_file_id', 'to_status', 'remark'])
+            ->groupBy('work_file_id');
+    }
 }
