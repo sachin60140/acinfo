@@ -98,6 +98,52 @@ are in `tests/Feature/FileStickerTest.php` and `resources/js/receive.test.js`;
 [DEPLOY.md](DEPLOY.md#receive-files-asks-for-the-sticker-details) says what to
 do on the server and at the counter when it goes live.
 
+## Return Files
+
+Two screens send papers back, each from the sidebar:
+
+- **Return to Customer** (*Return Files to Customer*) hands a file back and
+  refunds its charge. Ticking a file fills in what was charged; lower it to keep
+  part, or leave it blank to refund all of it. A file charged nothing refunds
+  nothing and goes back with the box blank. A refund of 0 on a file that was
+  charged is refused: blank is how all of it is said.
+- **Return from Vendor** (*Papers Returned by Vendor*) takes a vendor's work
+  back and reverses what was booked to them for it. Blank reverses all of it. A
+  file shared between two vendors is listed once for each.
+
+**Searching the list.** Each screen has a search box beside **Select all**,
+the same as Give to Vendor's, for when the list is longer than the screen and
+the customer or vendor at the counter is one name. It finds a file by:
+
+| Screen | What the search reads |
+| --- | --- |
+| Return to Customer | file number, vehicle, customer, work, details, received date, status |
+| Return from Vendor | file number, vehicle, vendor, date given out, work, details, customer |
+
+Every word typed has to be on the row, so each one narrows: `car4sales hpa` is
+that customer's hypothecation work, and a plate can be typed as it is read,
+`br 01 ab`. A word may match anywhere on the row, so a number such as `01` can
+also match a date.
+
+**The search only changes what is shown, never what is sent:**
+
+- A file ticked before the search was typed stays ticked, keeps its amount and
+  still goes back. The footer says how many ticked files the search is hiding
+  (*1 ticked file is not shown by the search, and still goes back.*), beside
+  any error, since the error may be on one of them.
+- **Select all** ticks, and unticks, only the files shown.
+- The search box posts nothing, and when nothing matches the screen says so.
+
+**In the code:** `resources/js/components/CustomerReturn.vue` and
+`VendorReturn.vue` search the same way `GiveToVendor.vue` does. `matches()`
+reads each row, and rows that do not match are hidden with `v-show`, never
+removed with `v-if`: a removed row would take its tick and amount with it, and
+a file ticked earlier would silently stop going back. The server is
+`WorkFileController::customerReturn()` and `vendorReturn()`, and the search
+never reaches it. Tests are in `resources/js/customer-return.test.js` and
+`resources/js/vendor-return.test.js`, and the refunds in
+`tests/Feature/WorkFileTest.php`.
+
 ---
 
 Everything below is the stock Laravel readme.
