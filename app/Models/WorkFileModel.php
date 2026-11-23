@@ -6533,11 +6533,20 @@ class WorkFileModel extends Model
         return ['always' => self::ALWAYS_ON_RECEIPT, 'asked' => self::REQUIRED_ON_RECEIPT];
     }
 
+    /*
+     * Every detail by name, for the message when one is missing. Every one of
+     * DETAIL_COLUMNS, not just those required today: the rule above is the
+     * place to change what is required, and a detail added to it must already
+     * have its words here (found on 2026-11-23, writing that down: the
+     * seller's mobile had none, and requiring it would have stopped Receive
+     * Files with an error instead of saying what was missing).
+     */
     private const DETAIL_NAMES = [
         'owner_mobile' => "the owner's mobile",
         'lender_name' => "the lender's name",
         'financer_name' => "the financer's name",
         'seller_name' => "the seller's name",
+        'seller_mobile' => "the seller's mobile",
         'buyer_name' => "the buyer's name",
         'buyer_mobile' => "the buyer's mobile",
     ];

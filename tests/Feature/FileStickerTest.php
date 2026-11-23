@@ -352,6 +352,23 @@ class FileStickerTest extends TestCase
         );
     }
 
+    /**
+     * Whatever the rule is changed to require, the server can say it is
+     * missing: every detail has its words, and every detail the rule names is
+     * one the form has a box for.
+     */
+    public function test_every_detail_the_rule_could_require_can_be_named(): void
+    {
+        $names = (new \ReflectionClassConstant(WorkFileModel::class, 'DETAIL_NAMES'))->getValue();
+
+        $this->assertEqualsCanonicalizing(WorkFileModel::DETAIL_COLUMNS, array_keys($names));
+
+        $rule = WorkFileModel::receiptRule();
+        foreach (array_merge($rule['always'], ...array_values($rule['asked'])) as $detail) {
+            $this->assertContains($detail, WorkFileModel::DETAIL_COLUMNS);
+        }
+    }
+
     public function test_receiving_offers_a_sticker_for_every_file(): void
     {
         $this->receive([$this->hpt])
