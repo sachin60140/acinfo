@@ -1311,6 +1311,71 @@ class WorkFileTest extends TestCase
         $this->assertSame(5000.0, PartyLedgerModel::currentBalance($this->customer->id));
     }
 
+    /**
+     * Reported 2026-11-23: a file charged nothing could not go back to its
+     * customer. The screen filled in 0.00 and then refused it as not more than
+     * zero. All of nothing is nothing; it goes back.
+     */
+    public function test_a_file_charged_nothing_goes_back_to_its_customer(): void
+    {
+        $file = $this->receive(['customer_amount' => '0']);
+
+        $this->returnToCustomer([$file->id]);
+
+        $file->refresh();
+        $this->assertSame(WorkFileModel::RETURNED, $file->status);
+        $this->assertNull($file->returned_amount, 'all of the charge, which is nothing');
+        $this->assertSame(0.0, PartyLedgerModel::currentBalance($this->customer->id));
+    }
+
+    /** And a 0 typed for it says the same as leaving the box blank. */
+    public function test_a_file_charged_nothing_may_be_returned_with_a_zero(): void
+    {
+        $one = $this->receive(['customer_amount' => '0']);
+        $two = $this->receive(['customer_amount' => '0']);
+
+        $this->returnToCustomer([$one->id, $two->id], [$one->id => '0', $two->id => '0.00']);
+
+        foreach ([$one, $two] as $file) {
+            $file->refresh();
+            $this->assertSame(WorkFileModel::RETURNED, $file->status);
+            $this->assertNull($file->returned_amount);
+        }
+        $this->assertSame(0.0, PartyLedgerModel::currentBalance($this->customer->id));
+    }
+
+    /** A file that was charged still cannot be refunded nothing: blank is all of it. */
+    public function test_a_zero_refund_of_a_charged_file_is_still_refused(): void
+    {
+        $file = $this->receive();  // charged 5000
+
+        $response = $this->returnToCustomerOverHttp([$file->id], [$file->id => '0']);
+
+        $response->assertSessionHas('error', fn ($error) => str_contains($error, 'more than zero')
+            && str_contains($error, $file->file_no));
+        $this->assertSame('in_office', $file->fresh()->status, 'refused, all of the batch');
+        $this->assertSame(5000.0, PartyLedgerModel::currentBalance($this->customer->id));
+    }
+
+    public function test_a_minus_refund_is_never_an_amount(): void
+    {
+        $file = $this->receive(['customer_amount' => '0']);
+
+        $this->expectException(ValidationException::class);
+
+        $this->returnToCustomer([$file->id], [$file->id => '-1']);
+    }
+
+    private function returnToCustomerOverHttp(array $fileIds, array $amounts)
+    {
+        return $this->actingAs($this->admin())->post(route('workfile.customerreturn'), [
+            'returned_on' => '2026-04-20',
+            'files' => $fileIds,
+            'amounts' => $amounts,
+            'remark' => 'Customer asked for the papers back',
+        ]);
+    }
+
     public function test_only_returnable_files_are_offered_and_accepted(): void
     {
         $file = $this->receive();
