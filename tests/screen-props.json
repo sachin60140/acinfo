@@ -498,6 +498,22 @@
                 }
             },
             "ratesUrl": "string",
+            "requiredOnReceipt": {
+                "always": {
+                    "list_of": "string"
+                },
+                "asked": {
+                    "financer": {
+                        "list_of": "string"
+                    },
+                    "lender": {
+                        "list_of": "string"
+                    },
+                    "parties": {
+                        "list_of": "string"
+                    }
+                }
+            },
             "workTypes": {
                 "list_of": {
                     "asks_for": "null",

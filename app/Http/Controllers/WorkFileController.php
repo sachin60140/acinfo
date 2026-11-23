@@ -785,6 +785,9 @@ class WorkFileController extends Controller
             // What this customer has paid before, looked up when one is chosen.
             'ratesUrl' => route('api.workfile.customerrates'),
             'cancelUrl' => route('workfile.index'),
+            // What a file cannot come in without, as the post above refuses it:
+            // the form marks, holds back and counts by this and nothing else.
+            'requiredOnReceipt' => WorkFileModel::receiptRule(),
             'oldRows' => collect($oldRows)->map(fn ($row) => [
                 'registration_no' => $row['registration_no'] ?? '',
                 'description' => $row['description'] ?? '',

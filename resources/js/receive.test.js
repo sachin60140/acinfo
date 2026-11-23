@@ -544,14 +544,62 @@ describe('the office a price was charged at', () => {
  * aside. The server refuses the batch without them; the form says so first.
  */
 describe('the details a file comes in with', () => {
-    const asking = () =>
+    // The rule as WorkFileModel::receiptRule() sends it; the form keeps no copy.
+    const officeRule = {
+        always: ['owner_mobile'],
+        asked: {
+            lender: ['lender_name'],
+            financer: ['financer_name'],
+            parties: ['seller_name', 'buyer_name', 'buyer_mobile'],
+        },
+    };
+
+    const asking = (requiredOnReceipt = officeRule) =>
         mount({
             workTypes: [
                 { id: 1, name: 'HPT', default_rate: null, asks_for: 'lender' },
                 { id: 2, name: 'TR', default_rate: null, asks_for: 'parties' },
                 { id: 3, name: 'Fitness', default_rate: null, asks_for: null },
             ],
+            requiredOnReceipt,
         });
+
+    const marked = (host) => [...host.querySelectorAll('.rcv-file .ui-label')]
+        .filter((label) => label.querySelector('.ui-label__req'))
+        .map((label) => label.textContent.replace(/\*|for .*/g, '').replace(/\s+/g, ' ').trim())
+        .filter((text) => text !== 'Work & Amount');
+
+    /*
+     * The marks, the browser's own check and the footer follow whatever rule the
+     * server sends, so a change to it there reaches the form with no edit here.
+     */
+    it('marks, holds back and counts by the rule the server sends', async () => {
+        const host = asking({
+            always: [],
+            asked: { parties: ['seller_mobile'] },
+        });
+        await choose(host, 0, 2);
+        await type(host, 'rows[0][works][0][amount]', '3000');
+
+        expect(marked(host)).toEqual(["Seller's Mobile"]);
+        expect(byName(host, 'rows[0][owner_mobile]').required).toBe(false);
+        expect(byName(host, 'rows[0][buyer_mobile]').required).toBe(false);
+        expect(byName(host, 'rows[0][seller_mobile]').required).toBe(true);
+        expect(hint(host)).toContain('it still needs');
+
+        await type(host, 'rows[0][seller_mobile]', '9835011111');
+        expect(hint(host)).toBe('1 file, 1 work, all priced.');
+    });
+
+    it('asks for nothing when the server sends no rule', async () => {
+        const host = mount({
+            workTypes: [{ id: 2, name: 'TR', default_rate: null, asks_for: 'parties' }],
+        });
+        await choose(host, 0, 2);
+
+        expect(marked(host)).toEqual([]);
+        expect([...host.querySelectorAll('.rcv-file input')].filter((box) => box.required && box.type !== 'number' && box.tagName !== 'SELECT').length).toBe(0);
+    });
 
     const choose = async (host, line, typeId) => {
         const select = byName(host, `rows[0][works][${line}][work_type_id]`);

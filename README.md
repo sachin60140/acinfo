@@ -80,23 +80,54 @@ past the browser is refused whole by the server, which names the file by its
 place in the batch, "File 2 needs the lender's name.", and gives back what was
 typed.
 
-**Changing what is asked.** Which works ask for what is the office's setting,
-on **Work Types**, and needs no code: a type set to ask for a lender makes the
-lender required on every file of that type. What each kind of ask requires is
-code, `WorkFileModel::REQUIRED_ON_RECEIPT`, and the receive form keeps its own
-copy in `resources/js/components/ReceiveFileRows.vue`: `REQUIRED_FOR`, which
-the footer counts from, and the `required` marks on the boxes themselves.
-Change all three together, or the form and the server will disagree about what
-is missing.
+**Changing what is asked.** Two different things decide it.
 
-**In the code:** `WorkFileController::receive()` adds
-`WorkFileModel::requiredOnReceipt()`, a rule and a message for each file
-posted, to its other rules. Each rule carries the box's full check
-(`required|digits:10`, not a bare `required`): a rule for one row replaces the
-`rows.*` rule before it, so a bare one would let a short mobile through. Tests
-are in `tests/Feature/FileStickerTest.php` and `resources/js/receive.test.js`;
-[DEPLOY.md](DEPLOY.md#receive-files-asks-for-the-sticker-details) says what to
-do on the server and at the counter when it goes live.
+- **Which works ask for what** is the office's setting, on **Work Types**, and
+  needs no code: a type set to ask for a lender makes the lender required on
+  every file of that type.
+- **What each kind of ask requires**, and what every file needs, is code, kept
+  in one place, `app/Models/WorkFileModel.php`:
+
+  ```php
+  public const REQUIRED_ON_RECEIPT = [
+      WorkTypeModel::ASKS_LENDER => ['lender_name'],
+      WorkTypeModel::ASKS_FINANCER => ['financer_name'],
+      WorkTypeModel::ASKS_PARTIES => ['seller_name', 'buyer_name', 'buyer_mobile'],
+  ];
+
+  public const ALWAYS_ON_RECEIPT = ['owner_mobile'];
+  ```
+
+  To require the seller's mobile too, add `'seller_mobile'` to the parties
+  line; to stop requiring the owner's mobile, leave `ALWAYS_ON_RECEIPT` empty.
+  Nothing else changes. The server refuses a file by these, and sends them to
+  the receive form, which marks the boxes, holds back an empty one and counts
+  what is missing from what it is sent. The form keeps no copy of its own, so
+  the two cannot disagree, and a change here needs no asset rebuild
+  (`npm run build`): a `git pull` deploys it. A detail named here must be one
+  of the form's boxes, `WorkFileModel::DETAIL_COLUMNS`, each of which already
+  has its words for the server's message ("File 1 needs the seller's mobile.").
+
+**In the code:**
+
+- `WorkFileModel::receiptRule()` is the rule as one value.
+  `WorkFileController::receive()` sends it to
+  `resources/js/components/ReceiveFileRows.vue` as the `requiredOnReceipt` prop,
+  shaped `{ always: ['owner_mobile'], asked: { lender: […], financer: […],
+  parties: […] } }`, and the form's `isRequired()` reads it for each box's
+  asterisk, its `required` and the footer's count. Sent nothing, the form asks
+  for nothing.
+- On a post, `receive()` adds `WorkFileModel::requiredOnReceipt()`, a rule and a
+  message for each file posted, to its other rules. Each rule carries the box's
+  full check (`required|digits:10`, not a bare `required`): a rule for one row
+  replaces the `rows.*` rule before it, so a bare one would let a short mobile
+  through.
+- Tests are in `tests/Feature/FileStickerTest.php`, including that the form is
+  sent exactly the rule the post refuses by and that every detail the rule
+  could name has its words, and in `resources/js/receive.test.js`, including
+  that the form follows whatever rule it is sent.
+- [DEPLOY.md](DEPLOY.md#receive-files-asks-for-the-sticker-details) says what
+  to do on the server and at the counter when it goes live.
 
 ## Return Files
 

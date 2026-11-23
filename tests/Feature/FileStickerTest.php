@@ -328,6 +328,47 @@ class FileStickerTest extends TestCase
         $this->assertNull($file->fresh()->lender_name);
     }
 
+    /**
+     * The form is sent the rule the post refuses by, and keeps none of its
+     * own (asked for on 2026-11-23, the rule having been written three times):
+     * what it marks on a file of every kind is exactly what the server will
+     * not take that file without.
+     */
+    public function test_the_receive_form_is_sent_the_rule_the_server_refuses_by(): void
+    {
+        $sent = $this->actingAs($this->admin)->getJson(route('workfile.receive'))
+            ->assertOk()
+            ->json('props.requiredOnReceipt');
+
+        $this->assertSame(WorkFileModel::receiptRule(), $sent);
+
+        [$rules] = WorkFileModel::requiredOnReceipt([[
+            'works' => array_map(fn ($type) => ['work_type_id' => $type->id], [$this->hpt, $this->hpa, $this->to]),
+        ]]);
+
+        $this->assertEqualsCanonicalizing(
+            array_map(fn ($detail) => 'rows.0.'.$detail, array_merge($sent['always'], ...array_values($sent['asked']))),
+            array_keys($rules)
+        );
+    }
+
+    /**
+     * Whatever the rule is changed to require, the server can say it is
+     * missing: every detail has its words, and every detail the rule names is
+     * one the form has a box for.
+     */
+    public function test_every_detail_the_rule_could_require_can_be_named(): void
+    {
+        $names = (new \ReflectionClassConstant(WorkFileModel::class, 'DETAIL_NAMES'))->getValue();
+
+        $this->assertEqualsCanonicalizing(WorkFileModel::DETAIL_COLUMNS, array_keys($names));
+
+        $rule = WorkFileModel::receiptRule();
+        foreach (array_merge($rule['always'], ...array_values($rule['asked'])) as $detail) {
+            $this->assertContains($detail, WorkFileModel::DETAIL_COLUMNS);
+        }
+    }
+
     public function test_receiving_offers_a_sticker_for_every_file(): void
     {
         $this->receive([$this->hpt])
